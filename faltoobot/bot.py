@@ -94,14 +94,13 @@ async def ask_llm(
         model=config.openai_model,
         instructions=config.system_prompt,
         input=transcript,
-        max_output_tokens=config.max_output_tokens,
     )
     text = (response.output_text or "").strip()
     return text or "I couldn't generate a reply just now."
 
 
-async def send_text(client: NewAClient, event: MessageEv, text: str, limit: int) -> None:
-    chunks = split_message(text, min(limit, 3500))
+async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
+    chunks = split_message(text, 3500)
     if not chunks:
         return
     await client.reply_message(chunks[0], event)
@@ -132,7 +131,7 @@ async def handle_prompt(
     await add_turn(db, chat_jid, "user", prompt)
     answer = await ask_llm(openai_client, config, db, chat_jid)
     await add_turn(db, chat_jid, "assistant", answer)
-    await send_text(client, event, answer, config.max_output_chars)
+    await send_text(client, event, answer)
 
 
 async def process_message(

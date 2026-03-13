@@ -1,3 +1,4 @@
+import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,30 +27,53 @@ class Config:
     allow_groups: bool
     allowed_chats: set[str]
     max_history_messages: int
-    max_output_chars: int
-    max_output_tokens: int
 
 
 def app_root() -> Path:
     return Path.home() / ".faltoobot"
 
 
-def default_config_text() -> str:
-    return f"""# Faltoobot config
+def default_config() -> dict[str, dict[str, object]]:
+    return {
+        "openai": {
+            "api_key": "",
+            "model": "gpt-4.1-mini",
+        },
+        "bot": {
+            "trigger_prefix": "!ai",
+            "allow_groups": False,
+            "allowed_chats": [],
+            "max_history_messages": 12,
+            "system_prompt": DEFAULT_SYSTEM_PROMPT,
+        },
+    }
 
-[openai]
-api_key = ""
-model = "gpt-4.1-mini"
-max_output_tokens = 700
 
-[bot]
-trigger_prefix = "!ai"
-allow_groups = false
-allowed_chats = []
-max_history_messages = 12
-max_output_chars = 6000
-system_prompt = "{DEFAULT_SYSTEM_PROMPT}"
-"""
+def merge_config(data: dict[str, object]) -> dict[str, dict[str, object]]:
+    defaults = default_config()
+    openai = as_dict(data.get("openai"))
+    bot = as_dict(data.get("bot"))
+    return {
+        "openai": {
+            "api_key": as_str(openai.get("api_key"), str(defaults["openai"]["api_key"])),
+            "model": as_str(openai.get("model"), str(defaults["openai"]["model"])),
+        },
+        "bot": {
+            "trigger_prefix": as_str(
+                bot.get("trigger_prefix"), str(defaults["bot"]["trigger_prefix"])
+            ),
+            "allow_groups": as_bool(bot.get("allow_groups"), bool(defaults["bot"]["allow_groups"])),
+            "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
+            "max_history_messages": as_int(
+                bot.get("max_history_messages"),
+                int(defaults["bot"]["max_history_messages"]),
+                1,
+            ),
+            "system_prompt": as_str(
+                bot.get("system_prompt"), str(defaults["bot"]["system_prompt"])
+            ),
+        },
+    }
 
 
 def ensure_layout() -> Path:
@@ -59,10 +83,8 @@ def ensure_layout() -> Path:
 
 
 def ensure_config_file() -> Path:
-    root = ensure_layout()
-    path = root / "config.toml"
-    if not path.exists():
-        path.write_text(default_config_text(), encoding="utf-8")
+    path = ensure_layout() / "config.toml"
+    migrate_config_file(path)
     return path
 
 
@@ -72,6 +94,40 @@ def load_toml(path: Path) -> dict[str, object]:
     with path.open("rb") as file:
         data = tomllib.load(file)
     return data if isinstance(data, dict) else {}
+
+
+def quote(value: str) -> str:
+    return json.dumps(value)
+
+
+def render_config(data: dict[str, dict[str, object]]) -> str:
+    allowed = ", ".join(quote(chat) for chat in data["bot"]["allowed_chats"])
+    return "\n".join(
+        [
+            "# Faltoobot config",
+            "",
+            "[openai]",
+            f"api_key = {quote(str(data['openai']['api_key']))}",
+            f"model = {quote(str(data['openai']['model']))}",
+            "",
+            "[bot]",
+            f"trigger_prefix = {quote(str(data['bot']['trigger_prefix']))}",
+            f"allow_groups = {str(bool(data['bot']['allow_groups'])).lower()}",
+            f"allowed_chats = [{allowed}]",
+            f"max_history_messages = {int(data['bot']['max_history_messages'])}",
+            f"system_prompt = {quote(str(data['bot']['system_prompt']))}",
+            "",
+        ]
+    )
+
+
+def migrate_config_file(path: Path) -> bool:
+    text = render_config(merge_config(load_toml(path)))
+    if path.exists() and path.read_text(encoding="utf-8") == text:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
 
 
 def as_dict(value: object) -> dict[str, object]:
@@ -115,7 +171,7 @@ def as_chat_set(value: object) -> set[str]:
 def build_config() -> Config:
     root = ensure_layout()
     path = ensure_config_file()
-    data = load_toml(path)
+    data = merge_config(load_toml(path))
     openai = as_dict(data.get("openai"))
     bot = as_dict(data.get("bot"))
     return Config(
@@ -134,6 +190,4 @@ def build_config() -> Config:
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),
         max_history_messages=as_int(bot.get("max_history_messages"), 12, 1),
-        max_output_chars=as_int(bot.get("max_output_chars"), 6000, 500),
-        max_output_tokens=as_int(openai.get("max_output_tokens"), 700, 100),
     )

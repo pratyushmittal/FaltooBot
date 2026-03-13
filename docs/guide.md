@@ -16,6 +16,7 @@ For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton
 
 - `faltoobot auth` — authenticate the WhatsApp session by scanning a QR code
 - `faltoobot run` — run the bot in the foreground
+- `faltoobot update` — pull the latest git changes, sync dependencies, and run migrations
 - `faltoobot install` — install and start the macOS `launchd` service
 - `faltoobot uninstall` — remove the macOS service
 - `faltoobot status` — show service status
@@ -58,14 +59,12 @@ Example:
 [openai]
 api_key = "your_key_here"
 model = "gpt-4.1-mini"
-max_output_tokens = 700
 
 [bot]
 trigger_prefix = "!ai"
 allow_groups = false
 allowed_chats = []
 max_history_messages = 12
-max_output_chars = 6000
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
 ```
 
@@ -106,6 +105,7 @@ uv lock
 uv run faltoobot paths
 uv run faltoobot auth
 uv run faltoobot run
+uv run faltoobot update
 ```
 
 Add or remove dependencies with:
@@ -144,6 +144,7 @@ The repo currently uses:
 - The bot ignores messages sent by itself.
 - This repo is meant to be used with `uv` for Python dependency management.
 - Configuration lives in `config.toml`, not `.env` files.
+- `faltoobot update` expects a clean git working tree.
 - `faltoobot install` writes a `launchd` runner that uses `uv run faltoobot run`.
 - This repo currently implements `install` as a macOS-only command.
 
