@@ -2,7 +2,7 @@ import asyncio
 import logging
 import signal
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +192,7 @@ async def wait_for_login(client: NewAClient) -> None:
     await client.stop()
 
 
-def install_signal_handlers(stop: Callable[[], Awaitable[None]]) -> None:
+def install_signal_handlers(stop: Callable[[], Coroutine[Any, Any, None]]) -> None:
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, lambda: asyncio.create_task(stop()))

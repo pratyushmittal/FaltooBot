@@ -59,8 +59,8 @@ async def recent_turns(db: aiosqlite.Connection, chat_jid: str, limit: int) -> l
         """,
         (chat_jid, limit),
     )
-    rows = await cursor.fetchall()
-    return [dict(row) for row in reversed(rows)]
+    rows = list(await cursor.fetchall())
+    return [dict(row) for row in rows[::-1]]
 
 
 async def reset_chat(db: aiosqlite.Connection, chat_jid: str) -> None:

@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from openai import AsyncOpenAI
 
@@ -38,7 +38,8 @@ def message(role: Literal["user", "assistant", "system", "developer"], content: 
 
 
 def assistant_message(
-    content: str, phase: Literal["commentary", "final_answer"] = "final_answer"
+    content: str,
+    phase: Literal["commentary", "final_answer"] = "final_answer",
 ) -> Message:
     return {"type": "message", "role": "assistant", "content": content, "phase": phase}
 
@@ -76,14 +77,13 @@ def skill_meta(path: Path) -> Skill | None:
 
 
 def list_skills(config: Config) -> list[Skill]:
-    skills = [
+    return [
         skill
         for path in sorted(skills_dir(config).iterdir())
         if path.is_dir()
         for skill in [skill_meta(path)]
         if skill
     ]
-    return skills
 
 
 def read_skill(config: Config, name: str) -> str:
@@ -95,7 +95,7 @@ def read_skill(config: Config, name: str) -> str:
     raise ValueError(f"Unknown skill: {name}")
 
 
-def skill_tool() -> dict[str, object]:
+def skill_tool() -> dict[str, Any]:
     return {
         "type": "function",
         "name": "skills",
@@ -113,7 +113,7 @@ def skill_tool() -> dict[str, object]:
     }
 
 
-def shell_tool(config: Config) -> dict[str, object]:
+def shell_tool(config: Config) -> dict[str, Any]:
     return {
         "type": "shell",
         "environment": {
@@ -123,26 +123,23 @@ def shell_tool(config: Config) -> dict[str, object]:
     }
 
 
-def web_search_tool() -> dict[str, object]:
+def web_search_tool() -> dict[str, Any]:
     return {"type": "web_search"}
 
 
-def tools(config: Config) -> list[dict[str, object]]:
+def tools(config: Config) -> list[dict[str, Any]]:
     return [shell_tool(config), web_search_tool(), skill_tool()]
 
 
-def input_messages(messages: list[Message]) -> list[dict[str, str]]:
-    return [
-        {key: value for key, value in msg.items() if key in {"type", "role", "content", "phase"}}
-        for msg in messages
-    ]
+def input_messages(messages: list[Message]) -> list[Message]:
+    return messages
 
 
-def input_items(items: list[object]) -> list[object]:
+def input_items(items: list[Any]) -> list[Any]:
     return [item.to_dict() if hasattr(item, "to_dict") else item for item in items]
 
 
-def prune_items(items: list[object]) -> list[object]:
+def prune_items(items: list[Any]) -> list[Any]:
     for index in range(len(items) - 1, -1, -1):
         item = items[index]
         if isinstance(item, dict) and item.get("type") == "compaction":
@@ -150,13 +147,15 @@ def prune_items(items: list[object]) -> list[object]:
     return items
 
 
-def run_shell_call(item: dict[str, object]) -> dict[str, object]:
+def clipped_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    return (value or "")[:MAX_SHELL_OUTPUT]
+
+
+def run_shell_call(item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
-    if not isinstance(action, dict):
-        raise ValueError("Invalid shell action")
-    commands = action.get("commands")
-    if not isinstance(commands, list):
-        raise ValueError("Invalid shell commands")
+    commands = action["commands"]
     timeout_ms = action.get("timeout_ms")
     timeout = (timeout_ms / 1000) if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS / 1000
     try:
@@ -168,14 +167,14 @@ def run_shell_call(item: dict[str, object]) -> dict[str, object]:
             cwd=str(Path.cwd()),
         )
         output = {
-            "stdout": process.stdout[:MAX_SHELL_OUTPUT],
-            "stderr": process.stderr[:MAX_SHELL_OUTPUT],
+            "stdout": clipped_text(process.stdout),
+            "stderr": clipped_text(process.stderr),
             "outcome": {"type": "exit", "exit_code": process.returncode},
         }
     except subprocess.TimeoutExpired as exc:
         output = {
-            "stdout": (exc.stdout or "")[:MAX_SHELL_OUTPUT],
-            "stderr": (exc.stderr or "")[:MAX_SHELL_OUTPUT],
+            "stdout": clipped_text(exc.stdout),
+            "stderr": clipped_text(exc.stderr),
             "outcome": {"type": "timeout"},
         }
     return {
@@ -187,35 +186,32 @@ def run_shell_call(item: dict[str, object]) -> dict[str, object]:
     }
 
 
-def run_local_shell_call(item: dict[str, object]) -> dict[str, object]:
+def run_local_shell_call(item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
-    if not isinstance(action, dict):
-        raise ValueError("Invalid local shell action")
-    command = action.get("command")
-    if not isinstance(command, list):
-        raise ValueError("Invalid local shell command")
-    env = action.get("env")
     timeout_ms = action.get("timeout_ms")
     timeout = (timeout_ms / 1000) if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS / 1000
     try:
         process = subprocess.run(
-            [str(part) for part in command],
+            [str(part) for part in action["command"]],
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=action.get("working_directory") or str(Path.cwd()),
-            env={**os.environ, **(env if isinstance(env, dict) else {})},
+            env={
+                **os.environ,
+                **(action.get("env") if isinstance(action.get("env"), dict) else {}),
+            },
         )
         result: ShellResult = {
-            "stdout": process.stdout[:MAX_SHELL_OUTPUT],
-            "stderr": process.stderr[:MAX_SHELL_OUTPUT],
+            "stdout": clipped_text(process.stdout),
+            "stderr": clipped_text(process.stderr),
             "exit_code": process.returncode,
             "timed_out": False,
         }
     except subprocess.TimeoutExpired as exc:
         result = {
-            "stdout": (exc.stdout or "")[:MAX_SHELL_OUTPUT],
-            "stderr": (exc.stderr or "")[:MAX_SHELL_OUTPUT],
+            "stdout": clipped_text(exc.stdout),
+            "stderr": clipped_text(exc.stderr),
             "exit_code": None,
             "timed_out": True,
         }
@@ -227,15 +223,14 @@ def run_local_shell_call(item: dict[str, object]) -> dict[str, object]:
     }
 
 
-def run_skill_call(config: Config, item: dict[str, object]) -> dict[str, object]:
-    args = json.loads(item.get("arguments") or "{}")
-    if not isinstance(args, dict):
-        raise ValueError("Invalid skills tool arguments")
-    action = args.get("action")
+def run_skill_call(config: Config, item: dict[str, Any]) -> dict[str, Any]:
+    arguments = item.get("arguments")
+    args = json.loads(arguments) if isinstance(arguments, str) else {}
+    action = args.get("action") if isinstance(args, dict) else None
     if action == "list":
         output = json.dumps(list_skills(config), ensure_ascii=False)
     elif action == "read":
-        name = args.get("name")
+        name = args.get("name") if isinstance(args, dict) else None
         if not isinstance(name, str):
             raise ValueError("skills.read requires a name")
         output = read_skill(config, name)
@@ -249,9 +244,11 @@ def run_skill_call(config: Config, item: dict[str, object]) -> dict[str, object]
     }
 
 
-def tool_outputs(config: Config, items: list[dict[str, object]]) -> list[dict[str, object]]:
-    outputs: list[dict[str, object]] = []
+def tool_outputs(config: Config, items: list[Any]) -> list[dict[str, Any]]:
+    outputs: list[dict[str, Any]] = []
     for item in items:
+        if not isinstance(item, dict):
+            continue
         item_type = item.get("type")
         if item_type == "shell_call":
             outputs.append(run_shell_call(item))
@@ -263,21 +260,21 @@ def tool_outputs(config: Config, items: list[dict[str, object]]) -> list[dict[st
 
 
 async def reply(openai_client: AsyncOpenAI, config: Config, messages: list[Message]) -> str:
-    items: list[object] = input_messages(messages)
+    items: list[Any] = input_messages(messages)
     while True:
         response = await openai_client.responses.create(
             model=config.openai_model,
-            input=items,
+            input=items,  # type: ignore[arg-type]
             instructions=config.system_prompt,
             store=False,
-            parallel_tool_calls=False,
+            parallel_tool_calls=True,
             include=["reasoning.encrypted_content", "web_search_call.action.sources"],
             context_management=[{"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}],
-            tools=tools(config),
+            tools=tools(config),  # type: ignore[arg-type]
         )
         outputs = input_items(response.output)
         items = prune_items([*items, *outputs])
-        next_items = tool_outputs(config, [item for item in outputs if isinstance(item, dict)])
+        next_items = tool_outputs(config, outputs)
         if not next_items:
             text = (response.output_text or "").strip()
             return text or "I couldn't generate a reply just now."
