@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from faltoobot.bot import run_auth, run_bot
+from faltoobot.chat import run_chat
 from faltoobot.config import (
     APP_LABEL,
     Config,
@@ -16,7 +17,7 @@ from faltoobot.config import (
     ensure_config_file,
     migrate_config_file,
 )
-from faltoobot.store import open_db
+from faltoobot.store import ensure_sessions_dir
 
 
 def require_macos() -> None:
@@ -94,9 +95,8 @@ async def run_migrations(config: Config) -> list[str]:
     changes: list[str] = []
     if migrate_config_file(config.config_file):
         changes.append("config")
-    db = await open_db(str(config.state_db))
-    await db.close()
-    changes.append("state_db")
+    ensure_sessions_dir(config.sessions_dir)
+    changes.append("sessions")
     if has_service(config):
         install_service(config)
         changes.append("service")
@@ -181,6 +181,8 @@ def parse_args() -> argparse.Namespace:
 
     sub.add_parser("auth", help="authenticate the WhatsApp session")
     sub.add_parser("run", help="run the WhatsApp bot in the foreground")
+    chat = sub.add_parser("chat", help="start a new CLI chat session")
+    chat.add_argument("--name", help="optional session name")
     sub.add_parser("install", help="install the macOS launchd service")
     sub.add_parser("uninstall", help="remove the macOS launchd service")
     sub.add_parser("status", help="show launchd status")
@@ -204,7 +206,7 @@ def show_paths(config: Config, config_only: bool) -> None:
     print(f"home: {config.root}")
     print(f"config: {config.config_file}")
     print(f"session_db: {config.session_db}")
-    print(f"state_db: {config.state_db}")
+    print(f"sessions: {config.sessions_dir}")
     print(f"log: {config.log_file}")
     print(f"launch_agent: {config.launch_agent}")
 
@@ -217,6 +219,9 @@ def main() -> None:
         return
     if args.command == "run":
         asyncio.run(run_bot(config))
+        return
+    if args.command == "chat":
+        asyncio.run(run_chat(config, name=args.name))
         return
     if args.command == "update":
         update_app(config, migrate_only=args.migrate_only)

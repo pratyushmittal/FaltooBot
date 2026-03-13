@@ -6,15 +6,21 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.jid import Jid2String
 from openai import AsyncOpenAI
 
-from faltoobot.agent import assistant_message, message, reply
+from faltoobot.agent import reply
 from faltoobot.config import Config, build_config, normalize_chat
-from faltoobot.store import add_turn, open_db, recent_turns, reserve_message, reset_chat
+from faltoobot.store import (
+    Session,
+    add_turn,
+    recent_items,
+    reserve_message,
+    reset_session,
+    whatsapp_session,
+)
 
 logger = logging.getLogger("faltoobot")
 
@@ -86,19 +92,6 @@ def split_message(text: str, limit: int) -> list[str]:
     return chunks or [text[:limit]]
 
 
-async def ask_llm(
-    openai_client: AsyncOpenAI, config: Config, db: aiosqlite.Connection, chat_jid: str
-) -> str:
-    history = await recent_turns(db, chat_jid, config.max_history_messages)
-    messages = [
-        assistant_message(row["content"])
-        if row["role"] == "assistant"
-        else message("user", row["content"])
-        for row in history
-    ]
-    return await reply(openai_client, config, messages)
-
-
 async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
     chunks = split_message(text, 3500)
     if not chunks:
@@ -109,38 +102,44 @@ async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
         await client.send_message(chat, chunk)
 
 
-async def handle_reset(client: NewAClient, event: MessageEv, db: aiosqlite.Connection) -> None:
-    chat_jid = Jid2String(event.Info.MessageSource.Chat)
-    await reset_chat(db, chat_jid)
+async def handle_reset(client: NewAClient, event: MessageEv, session: Session) -> Session:
+    reset = reset_session(session)
     await client.reply_message("Memory cleared for this chat.", event)
+    return reset
 
 
 async def handle_prompt(
     client: NewAClient,
     event: MessageEv,
     config: Config,
-    db: aiosqlite.Connection,
+    session: Session,
     openai_client: AsyncOpenAI,
-) -> None:
-    chat_jid = Jid2String(event.Info.MessageSource.Chat)
+) -> Session:
     text = message_text(event)
     prompt = text[len(config.trigger_prefix) :].strip() if config.trigger_prefix else text
     if not prompt:
         await client.reply_message(help_text(config), event)
-        return
-    await add_turn(db, chat_jid, "user", prompt)
-    answer = await ask_llm(openai_client, config, db, chat_jid)
-    await add_turn(db, chat_jid, "assistant", answer)
+        return session
+    session = add_turn(session, "user", prompt)
+    result = await reply(
+        openai_client,
+        config,
+        session,
+        recent_items(session, config.max_history_messages),
+    )
+    answer = result["text"]
+    session = add_turn(session, "assistant", answer, items=result["output_items"])
     await send_text(client, event, answer)
+    return session
 
 
 async def process_message(
     client: NewAClient,
     event: MessageEv,
     config: Config,
-    db: aiosqlite.Connection,
     openai_client: AsyncOpenAI,
     chat_locks: dict[str, asyncio.Lock],
+    session_index_lock: asyncio.Lock,
 ) -> None:
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
@@ -155,21 +154,24 @@ async def process_message(
     text = message_text(event)
     if not text:
         return
-    if not await reserve_message(db, chat_jid, event.Info.ID):
-        logger.info("Skipping duplicate message %s from %s", event.Info.ID, chat_jid)
-        return
     async with chat_locks[chat_jid]:
+        async with session_index_lock:
+            session = whatsapp_session(config.sessions_dir, chat_jid)
+        session, is_new = reserve_message(session, event.Info.ID)
+        if not is_new:
+            logger.info("Skipping duplicate message %s from %s", event.Info.ID, chat_jid)
+            return
         logger.info("Received message from %s in %s: %s", sender_jid, chat_jid, text)
         if text == "!help":
             await client.reply_message(help_text(config), event)
             return
         if text == "!reset":
-            await handle_reset(client, event, db)
+            await handle_reset(client, event, session)
             return
         if config.trigger_prefix and not text.startswith(config.trigger_prefix):
             return
         try:
-            await handle_prompt(client, event, config, db, openai_client)
+            await handle_prompt(client, event, config, session, openai_client)
         except Exception as exc:  # comment: this guard keeps the bot alive if one model call fails.
             logger.exception("Failed to handle message %s", event.Info.ID)
             await client.reply_message(f"Sorry, that failed: {exc}", event)
@@ -209,10 +211,10 @@ async def run_auth(config: Config | None = None) -> None:
 async def run_bot(config: Config | None = None) -> None:
     config = config or build_config()
     configure_logging(config.log_file)
-    db = await open_db(str(config.state_db))
     openai_client = AsyncOpenAI(api_key=config.openai_api_key)
     client = NewAClient(str(config.session_db))
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    session_index_lock = asyncio.Lock()
     tasks: set[asyncio.Task[Any]] = set()
 
     async def stop() -> None:
@@ -232,7 +234,14 @@ async def run_bot(config: Config | None = None) -> None:
     @client.event(MessageEv)
     async def _on_message(current_client: NewAClient, event: MessageEv) -> None:
         task = asyncio.create_task(
-            process_message(current_client, event, config, db, openai_client, chat_locks)
+            process_message(
+                current_client,
+                event,
+                config,
+                openai_client,
+                chat_locks,
+                session_index_lock,
+            )
         )
         tasks.add(task)
         task.add_done_callback(tasks.discard)
@@ -241,10 +250,9 @@ async def run_bot(config: Config | None = None) -> None:
         raise RuntimeError(f"openai.api_key is missing. Add it to {config.config_file}")
 
     logger.info("Using session DB: %s", config.session_db)
-    logger.info("Using state DB: %s", config.state_db)
+    logger.info("Using sessions dir: %s", config.sessions_dir)
     await client.connect()
     await client.idle()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    await db.close()
     await openai_client.close()

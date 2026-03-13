@@ -36,6 +36,13 @@ Start the bot:
 uv run faltoobot run
 ```
 
+Start a new CLI session:
+
+```bash
+uv run faltoobot chat
+uv run faltoobot chat --name "Scratchpad"
+```
+
 ## Use
 
 Send messages like:
@@ -44,6 +51,14 @@ Send messages like:
 !ai Say hello
 !help
 !reset
+```
+
+In CLI chat:
+
+```text
+/help
+/reset
+/exit
 ```
 
 ## Update

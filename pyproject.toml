@@ -9,7 +9,6 @@ description = "WhatsApp-first LLM bot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "aiosqlite>=0.21.0",
   "neonize>=0.3.15.post0",
   "openai>=1.107.0",
 ]

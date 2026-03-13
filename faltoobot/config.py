@@ -17,7 +17,7 @@ class Config:
     root: Path
     config_file: Path
     log_file: Path
-    state_db: Path
+    sessions_dir: Path
     session_db: Path
     launch_agent: Path
     run_script: Path
@@ -179,7 +179,7 @@ def build_config() -> Config:
         root=root,
         config_file=path,
         log_file=root / "faltoobot.log",
-        state_db=root / "state.db",
+        sessions_dir=root / "sessions",
         session_db=root / "session.db",
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",

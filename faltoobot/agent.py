@@ -7,6 +7,7 @@ from typing import Any, Literal, TypedDict
 from openai import AsyncOpenAI
 
 from faltoobot.config import Config
+from faltoobot.store import Session
 
 COMPACT_THRESHOLD = 100_000
 DEFAULT_TIMEOUT_MS = 60_000
@@ -31,6 +32,11 @@ class ShellResult(TypedDict):
     stderr: str
     exit_code: int | None
     timed_out: bool
+
+
+class ReplyResult(TypedDict):
+    text: str
+    output_items: list[dict[str, Any]]
 
 
 def message(role: Literal["user", "assistant", "system", "developer"], content: str) -> Message:
@@ -131,7 +137,7 @@ def tools(config: Config) -> list[dict[str, Any]]:
     return [shell_tool(config), web_search_tool(), skill_tool()]
 
 
-def input_messages(messages: list[Message]) -> list[Message]:
+def input_messages(messages: list[Any]) -> list[Any]:
     return messages
 
 
@@ -153,7 +159,7 @@ def clipped_text(value: str | bytes | None) -> str:
     return (value or "")[:MAX_SHELL_OUTPUT]
 
 
-def run_shell_call(item: dict[str, Any]) -> dict[str, Any]:
+def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
     commands = action["commands"]
     timeout_ms = action.get("timeout_ms")
@@ -164,7 +170,7 @@ def run_shell_call(item: dict[str, Any]) -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(Path.cwd()),
+            cwd=str(session.workspace),
         )
         output = {
             "stdout": clipped_text(process.stdout),
@@ -186,7 +192,7 @@ def run_shell_call(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_local_shell_call(item: dict[str, Any]) -> dict[str, Any]:
+def run_local_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
     timeout_ms = action.get("timeout_ms")
     timeout = (timeout_ms / 1000) if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS / 1000
@@ -196,7 +202,7 @@ def run_local_shell_call(item: dict[str, Any]) -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=action.get("working_directory") or str(Path.cwd()),
+            cwd=action.get("working_directory") or str(session.workspace),
             env={
                 **os.environ,
                 **(action.get("env") if isinstance(action.get("env"), dict) else {}),
@@ -244,22 +250,27 @@ def run_skill_call(config: Config, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def tool_outputs(config: Config, items: list[Any]) -> list[dict[str, Any]]:
+def tool_outputs(config: Config, session: Session, items: list[Any]) -> list[dict[str, Any]]:
     outputs: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
         item_type = item.get("type")
         if item_type == "shell_call":
-            outputs.append(run_shell_call(item))
+            outputs.append(run_shell_call(session, item))
         elif item_type == "local_shell_call":
-            outputs.append(run_local_shell_call(item))
+            outputs.append(run_local_shell_call(session, item))
         elif item_type == "function_call" and item.get("name") == "skills":
             outputs.append(run_skill_call(config, item))
     return outputs
 
 
-async def reply(openai_client: AsyncOpenAI, config: Config, messages: list[Message]) -> str:
+async def reply(
+    openai_client: AsyncOpenAI,
+    config: Config,
+    session: Session,
+    messages: list[Any],
+) -> ReplyResult:
     items: list[Any] = input_messages(messages)
     while True:
         response = await openai_client.responses.create(
@@ -274,8 +285,11 @@ async def reply(openai_client: AsyncOpenAI, config: Config, messages: list[Messa
         )
         outputs = input_items(response.output)
         items = prune_items([*items, *outputs])
-        next_items = tool_outputs(config, outputs)
+        next_items = tool_outputs(config, session, outputs)
         if not next_items:
             text = (response.output_text or "").strip()
-            return text or "I couldn't generate a reply just now."
+            return {
+                "text": text or "I couldn't generate a reply just now.",
+                "output_items": [item for item in outputs if isinstance(item, dict)],
+            }
         items.extend(next_items)

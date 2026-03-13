@@ -10,12 +10,16 @@ Phase 1 is a proof of concept with:
 - OpenAI for text generation
 - macOS `launchd` service via `faltoobot install`
 
+Sessions are independent. A direct WhatsApp chat, a WhatsApp group, and each `faltoobot chat`
+run all get separate history and their own workspace.
+
 For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton-byte/neonize), which is Python-friendly and async. It gives us a cleaner Phase 1 path than wrapping `wacli` as a long-running sidecar, especially because `wacli` is designed around single-process store locking.
 
 ## Commands
 
 - `faltoobot auth` — authenticate the WhatsApp session by scanning a QR code
 - `faltoobot run` — run the bot in the foreground
+- `faltoobot chat` — start a new interactive CLI session
 - `faltoobot update` — pull the latest git changes, sync dependencies, and run migrations
 - `faltoobot install` — install and start the macOS `launchd` service
 - `faltoobot uninstall` — remove the macOS service
@@ -48,6 +52,14 @@ Built-in local commands:
 
 - `!help` shows usage
 - `!reset` clears chat memory for the current chat
+
+CLI chat commands:
+
+```text
+/help
+/reset
+/exit
+```
 
 ## Config
 
@@ -104,9 +116,19 @@ Important files:
 - `~/.faltoobot/config.toml`
 - `~/.faltoobot/skills/`
 - `~/.faltoobot/session.db` — WhatsApp session data
-- `~/.faltoobot/state.db` — Faltoobot memory + dedupe state
+- `~/.faltoobot/sessions/` — one folder per Faltoobot session
 - `~/.faltoobot/faltoobot.log`
 - `~/Library/LaunchAgents/com.faltoobot.agent.plist`
+
+Each session lives under:
+
+```text
+~/.faltoobot/sessions/<uuid>/
+```
+
+Each session directory contains:
+- `messages.json` — session name, history, and dedupe state
+- `workspace/` — working directory for shell tool calls in that session
 
 ## Development
 
@@ -119,6 +141,7 @@ uv lock
 uv run faltoobot paths
 uv run faltoobot auth
 uv run faltoobot run
+uv run faltoobot chat
 uv run faltoobot update
 ```
 
