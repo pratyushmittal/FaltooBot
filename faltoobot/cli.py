@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 import os
 import plistlib
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-from faltoobot.config import APP_LABEL, Config, build_config, ensure_env_file
 from faltoobot.bot import run_auth, run_bot
+from faltoobot.config import APP_LABEL, Config, build_config, ensure_env_file
 
 
 def require_macos() -> None:

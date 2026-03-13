@@ -166,6 +166,7 @@ Common `uv` commands:
 
 ```bash
 uv sync
+uv sync --dev
 uv lock
 uv run faltoobot paths
 uv run faltoobot auth
@@ -176,8 +177,30 @@ Add or remove dependencies with:
 
 ```bash
 uv add <package>
+uv add --dev <package>
 uv remove <package>
 ```
+
+## Code quality
+
+Install the dev tools and git hooks:
+
+```bash
+uv sync --dev
+uv run pre-commit install
+```
+
+Run them manually anytime:
+
+```bash
+uv run pre-commit run --all-files
+uv run ruff check .
+uv run ruff format .
+```
+
+The repo currently uses:
+- `ruff` for linting and formatting
+- `pre-commit` for local git hooks
 
 ## Future phase ideas
 

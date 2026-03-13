@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from typing import Any
-import aiosqlite
 
+import aiosqlite
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS processed_messages (

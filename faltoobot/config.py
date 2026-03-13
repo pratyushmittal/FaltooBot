@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
-import os
-
 
 APP_LABEL = "com.faltoobot.agent"
 
@@ -136,7 +135,8 @@ def build_config() -> Config:
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",
         openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip(),
-        openai_model=os.environ.get("FALTOOBOT_OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
+        openai_model=os.environ.get("FALTOOBOT_OPENAI_MODEL", "gpt-4.1-mini").strip()
+        or "gpt-4.1-mini",
         system_prompt=os.environ.get(
             "FALTOOBOT_SYSTEM_PROMPT",
             "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile.",

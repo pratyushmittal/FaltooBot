@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import signal
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
-import asyncio
-import logging
-import signal
 
 import aiosqlite
 from neonize.aioze.client import NewAClient
@@ -16,7 +16,6 @@ from openai import AsyncOpenAI
 
 from faltoobot.config import Config, build_config, normalize_chat
 from faltoobot.store import add_turn, open_db, recent_turns, reserve_message, reset_chat
-
 
 logger = logging.getLogger("faltoobot")
 
@@ -41,7 +40,10 @@ def message_text(event: MessageEv) -> str:
 def is_allowed_chat(config: Config, chat_jid: str, sender_jid: str) -> bool:
     if not config.allowed_chats:
         return True
-    return normalize_chat(chat_jid) in config.allowed_chats or normalize_chat(sender_jid) in config.allowed_chats
+    return (
+        normalize_chat(chat_jid) in config.allowed_chats
+        or normalize_chat(sender_jid) in config.allowed_chats
+    )
 
 
 def should_skip(event: MessageEv, config: Config) -> bool:
@@ -85,7 +87,9 @@ def split_message(text: str, limit: int) -> list[str]:
     return chunks or [text[:limit]]
 
 
-async def ask_llm(openai_client: AsyncOpenAI, config: Config, db: aiosqlite.Connection, chat_jid: str) -> str:
+async def ask_llm(
+    openai_client: AsyncOpenAI, config: Config, db: aiosqlite.Connection, chat_jid: str
+) -> str:
     history = await recent_turns(db, chat_jid, config.max_history_messages)
     transcript = "\n".join(f"{row['role']}: {row['content']}" for row in history)
     response = await openai_client.responses.create(
@@ -147,7 +151,9 @@ async def process_message(
     if should_skip(event, config):
         return
     if not is_allowed_chat(config, chat_jid, sender_jid):
-        logger.info("Ignoring message from %s in %s because it is not allowlisted", sender_jid, chat_jid)
+        logger.info(
+            "Ignoring message from %s in %s because it is not allowlisted", sender_jid, chat_jid
+        )
         return
     text = message_text(event)
     if not text:
