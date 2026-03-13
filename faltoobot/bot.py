@@ -244,7 +244,7 @@ async def run_bot(config: Config | None = None) -> None:
         task.add_done_callback(tasks.discard)
 
     if not config.openai_api_key:
-        raise RuntimeError(f"OPENAI_API_KEY is missing. Add it to {config.env_file}")
+        raise RuntimeError(f"openai.api_key is missing. Add it to {config.config_file}")
 
     logger.info("Using session DB: %s", config.session_db)
     logger.info("Using state DB: %s", config.state_db)

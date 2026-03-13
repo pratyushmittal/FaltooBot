@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from faltoobot.bot import run_auth, run_bot
-from faltoobot.config import APP_LABEL, Config, build_config, ensure_env_file
+from faltoobot.config import APP_LABEL, Config, build_config, ensure_config_file
 
 
 def require_macos() -> None:
@@ -36,9 +36,6 @@ def write_run_script(config: Config) -> None:
         "\n".join(
             [
                 "#!/bin/zsh",
-                "set -a",
-                f"[ -f {config.env_file.as_posix()!r} ] && source {config.env_file.as_posix()!r}",
-                "set +a",
                 f"cd {project_dir.as_posix()!r}",
                 f"exec {uv!r} run faltoobot run",
                 "",
@@ -69,7 +66,7 @@ def run_launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess
 
 def install_service(config: Config) -> None:
     require_macos()
-    ensure_env_file()
+    ensure_config_file()
     config.root.mkdir(parents=True, exist_ok=True)
     write_run_script(config)
     write_launch_agent(config)
@@ -78,7 +75,7 @@ def install_service(config: Config) -> None:
     run_launchctl("enable", service_target(), check=False)
     run_launchctl("kickstart", "-k", service_target())
     print(f"Installed {APP_LABEL}")
-    print(f"env: {config.env_file}")
+    print(f"config: {config.config_file}")
     print(f"logs: {config.log_file}")
 
 
@@ -137,16 +134,16 @@ def parse_args() -> argparse.Namespace:
     logs.add_argument("-n", "--lines", type=int, default=100, help="number of lines to show")
 
     paths = sub.add_parser("paths", help="show important file paths")
-    paths.add_argument("--env", action="store_true", help="only print the env file")
+    paths.add_argument("--config", action="store_true", help="only print the config file")
     return parser.parse_args()
 
 
-def show_paths(config: Config, env_only: bool) -> None:
-    if env_only:
-        print(config.env_file)
+def show_paths(config: Config, config_only: bool) -> None:
+    if config_only:
+        print(config.config_file)
         return
     print(f"home: {config.root}")
-    print(f"env: {config.env_file}")
+    print(f"config: {config.config_file}")
     print(f"session_db: {config.session_db}")
     print(f"state_db: {config.state_db}")
     print(f"log: {config.log_file}")
@@ -175,6 +172,6 @@ def main() -> None:
         tail_file(config.log_file, lines=args.lines, follow=args.follow)
         return
     if args.command == "paths":
-        ensure_env_file()
-        show_paths(config, env_only=args.env)
+        ensure_config_file()
+        show_paths(config, config_only=args.config)
         return
