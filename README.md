@@ -16,7 +16,7 @@ Edit `~/.faltoobot/config.toml`:
 ```toml
 [openai]
 api_key = "your_key_here"
-model = "gpt-4.1-mini"
+model = "gpt-5.4"
 
 [bot]
 trigger_prefix = "!ai"

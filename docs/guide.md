@@ -58,7 +58,7 @@ Example:
 ```toml
 [openai]
 api_key = "your_key_here"
-model = "gpt-4.1-mini"
+model = "gpt-5.4"
 
 [bot]
 trigger_prefix = "!ai"
@@ -66,6 +66,19 @@ allow_groups = false
 allowed_chats = []
 max_history_messages = 12
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
+```
+
+## Tools
+
+The main agent uses:
+- local shell
+- web search
+- skills
+
+Local skills are read from:
+
+```text
+~/.faltoobot/skills/
 ```
 
 ## Allowlist
@@ -89,6 +102,7 @@ Everything lives under:
 
 Important files:
 - `~/.faltoobot/config.toml`
+- `~/.faltoobot/skills/`
 - `~/.faltoobot/session.db` — WhatsApp session data
 - `~/.faltoobot/state.db` — Faltoobot memory + dedupe state
 - `~/.faltoobot/faltoobot.log`

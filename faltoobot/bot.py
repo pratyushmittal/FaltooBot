@@ -12,6 +12,7 @@ from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.jid import Jid2String
 from openai import AsyncOpenAI
 
+from faltoobot.agent import assistant_message, message, reply
 from faltoobot.config import Config, build_config, normalize_chat
 from faltoobot.store import add_turn, open_db, recent_turns, reserve_message, reset_chat
 
@@ -89,14 +90,13 @@ async def ask_llm(
     openai_client: AsyncOpenAI, config: Config, db: aiosqlite.Connection, chat_jid: str
 ) -> str:
     history = await recent_turns(db, chat_jid, config.max_history_messages)
-    transcript = "\n".join(f"{row['role']}: {row['content']}" for row in history)
-    response = await openai_client.responses.create(
-        model=config.openai_model,
-        instructions=config.system_prompt,
-        input=transcript,
-    )
-    text = (response.output_text or "").strip()
-    return text or "I couldn't generate a reply just now."
+    messages = [
+        assistant_message(row["content"])
+        if row["role"] == "assistant"
+        else message("user", row["content"])
+        for row in history
+    ]
+    return await reply(openai_client, config, messages)
 
 
 async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:

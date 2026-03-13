@@ -37,7 +37,7 @@ def default_config() -> dict[str, dict[str, object]]:
     return {
         "openai": {
             "api_key": "",
-            "model": "gpt-4.1-mini",
+            "model": "gpt-5.4",
         },
         "bot": {
             "trigger_prefix": "!ai",
@@ -184,7 +184,7 @@ def build_config() -> Config:
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",
         openai_api_key=as_str(openai.get("api_key"), ""),
-        openai_model=as_str(openai.get("model"), "gpt-4.1-mini"),
+        openai_model=as_str(openai.get("model"), "gpt-5.4"),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         trigger_prefix=as_str(bot.get("trigger_prefix"), "!ai"),
         allow_groups=as_bool(bot.get("allow_groups"), False),
