@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faltoobot"
+version = "0.1.0"
+description = "WhatsApp-first LLM bot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite>=0.21.0",
+  "neonize>=0.3.15.post0",
+  "openai>=1.107.0",
+]
+
+[project.scripts]
+faltoobot = "faltoobot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["faltoobot*"]
