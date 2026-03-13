@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 import signal
@@ -197,10 +195,7 @@ async def wait_for_login(client: NewAClient) -> None:
 
 def install_signal_handlers(stop: Callable[[], Awaitable[None]]) -> None:
     loop = asyncio.get_running_loop()
-    for name in ("SIGINT", "SIGTERM"):
-        signum = getattr(signal, name, None)
-        if signum is None:
-            continue
+    for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, lambda: asyncio.create_task(stop()))
 
 

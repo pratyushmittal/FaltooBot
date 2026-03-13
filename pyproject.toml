@@ -7,7 +7,7 @@ name = "faltoobot"
 version = "0.1.0"
 description = "WhatsApp-first LLM bot"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
   "aiosqlite>=0.21.0",
   "neonize>=0.3.15.post0",
@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
