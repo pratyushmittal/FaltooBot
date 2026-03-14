@@ -202,7 +202,7 @@ async def test_chat_shows_thinking_summary_for_live_reply(
     prepare_home(tmp_path, monkeypatch, thinking="medium")
     console, output = runtime_console()
 
-    async def fake_reply(*args: object, **kwargs: object) -> dict[str, object]:
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
         return {
             "text": "done",
             "output_items": [
@@ -214,7 +214,7 @@ async def test_chat_shows_thinking_summary_for_live_reply(
             "usage": None,
         }
 
-    monkeypatch.setattr("faltoobot.chat.reply", fake_reply)
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
 
     runtime = build_chat_runtime(console=console)
     await runtime.start()
@@ -226,6 +226,33 @@ async def test_chat_shows_thinking_summary_for_live_reply(
     assert text.count("you> hi") == 1
     assert "thinking> Planning the answer." in text
     assert "bot> done" in text
+
+
+@pytest.mark.anyio
+async def test_chat_streams_bot_reply_live(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        callback = kwargs["on_text_delta"]
+        await callback("hel")
+        await callback("lo")
+        return {"text": "hello", "output_items": [], "usage": None}
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("hi")
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    assert "bot> hello" in text
+    assert text.count("bot> hello") == 1
 
 
 @pytest.mark.anyio
@@ -266,7 +293,7 @@ async def test_chat_queues_messages_while_reply_is_running(
             await release.wait()
         return {"text": f"reply:{prompts[-1]}", "output_items": [], "usage": None}
 
-    monkeypatch.setattr("faltoobot.chat.reply", fake_reply)
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
 
     runtime = build_chat_runtime(console=console)
     await runtime.start()

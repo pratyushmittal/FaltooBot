@@ -1,6 +1,8 @@
+import inspect
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -309,6 +311,41 @@ def tool_outputs(config: Config, session: Session, items: list[Any]) -> list[dic
     return outputs
 
 
+def request_args(config: Config, session: Session, items: list[Any]) -> dict[str, Any]:
+    return {
+        "model": config.openai_model,
+        "input": items,  # type: ignore[arg-type]
+        "instructions": system_instructions(config, session),
+        "reasoning": reasoning_config(config),
+        "store": False,
+        "parallel_tool_calls": True,
+        "include": ["reasoning.encrypted_content", "web_search_call.action.sources"],
+        "context_management": [{"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}],
+        "tools": tools(config),  # type: ignore[arg-type]
+    }
+
+
+def reply_result(response: Any) -> ReplyResult:
+    outputs = input_items(response.output)
+    text = (response.output_text or "").strip()
+    return {
+        "text": text or "I couldn't generate a reply just now.",
+        "output_items": [item for item in outputs if isinstance(item, dict)],
+        "usage": response_usage(response),
+    }
+
+
+async def emit_text_delta(
+    callback: Callable[[str], Any] | None,
+    delta: str,
+) -> None:
+    if not callback or not delta:
+        return
+    result = callback(delta)
+    if inspect.isawaitable(result):
+        await result
+
+
 async def reply(
     openai_client: AsyncOpenAI,
     config: Config,
@@ -316,27 +353,33 @@ async def reply(
     messages: list[Any],
 ) -> ReplyResult:
     items: list[Any] = input_messages(messages)
-    instructions = system_instructions(config, session)
     while True:
-        response = await openai_client.responses.create(
-            model=config.openai_model,
-            input=items,  # type: ignore[arg-type]
-            instructions=instructions,
-            reasoning=reasoning_config(config),
-            store=False,
-            parallel_tool_calls=True,
-            include=["reasoning.encrypted_content", "web_search_call.action.sources"],
-            context_management=[{"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}],
-            tools=tools(config),  # type: ignore[arg-type]
-        )
+        response = await openai_client.responses.create(**request_args(config, session, items))
         outputs = input_items(response.output)
         items = prune_items([*items, *outputs])
         next_items = tool_outputs(config, session, outputs)
         if not next_items:
-            text = (response.output_text or "").strip()
-            return {
-                "text": text or "I couldn't generate a reply just now.",
-                "output_items": [item for item in outputs if isinstance(item, dict)],
-                "usage": response_usage(response),
-            }
+            return reply_result(response)
+        items.extend(next_items)
+
+
+async def stream_reply(
+    openai_client: AsyncOpenAI,
+    config: Config,
+    session: Session,
+    messages: list[Any],
+    on_text_delta: Callable[[str], Any] | None = None,
+) -> ReplyResult:
+    items: list[Any] = input_messages(messages)
+    while True:
+        async with openai_client.responses.stream(**request_args(config, session, items)) as stream:
+            async for event in stream:
+                if getattr(event, "type", None) == "response.output_text.delta":
+                    await emit_text_delta(on_text_delta, getattr(event, "delta", ""))
+            response = await stream.get_final_response()
+        outputs = input_items(response.output)
+        items = prune_items([*items, *outputs])
+        next_items = tool_outputs(config, session, outputs)
+        if not next_items:
+            return reply_result(response)
         items.extend(next_items)

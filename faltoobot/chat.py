@@ -19,7 +19,7 @@ from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.text import Text
 
-from faltoobot.agent import reply
+from faltoobot.agent import stream_reply
 from faltoobot.config import Config, build_config
 from faltoobot.store import (
     Session,
@@ -170,6 +170,9 @@ class ChatRuntime:
     own_client: bool = False
     pending_prompts: deque[str] = field(default_factory=deque)
     processing_task: asyncio.Task[None] | None = None
+    stream_start: Callable[[StyleAndTextTuples], None] | None = None
+    stream_delta: Callable[[str], None] | None = None
+    stream_end: Callable[[], None] | None = None
 
     async def start(self) -> None:
         if not self.config.openai_api_key:
@@ -198,6 +201,26 @@ class ChatRuntime:
             self.writer(render_fragments(kind, content))
             return
         self.console.print(render_line(kind, content))
+
+    def write_stream_start(self, kind: str) -> None:
+        fragments = render_fragments(kind, "")
+        if self.stream_start:
+            self.stream_start(fragments)
+            return
+        self.console.file.write(f"{kind}> ")
+
+    def write_stream_delta(self, text: str) -> None:
+        if self.stream_delta:
+            self.stream_delta(text)
+            return
+        if text:
+            self.console.file.write(text)
+
+    def write_stream_end(self) -> None:
+        if self.stream_end:
+            self.stream_end()
+            return
+        self.console.file.write("\n")
 
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
@@ -240,12 +263,24 @@ class ChatRuntime:
         if not self.session or not self.client:
             raise RuntimeError("chat session is not ready")
         self.session = add_turn(self.session, "user", prompt)
+        streamed = False
+
+        async def on_text_delta(delta: str) -> None:
+            nonlocal streamed
+            if not delta:
+                return
+            if not streamed:
+                self.write_stream_start("bot")
+                streamed = True
+            self.write_stream_delta(delta)
+
         try:
-            result = await reply(
+            result = await stream_reply(
                 self.client,
                 self.config,
                 self.session,
                 session_items(self.session),
+                on_text_delta=on_text_delta,
             )
         except Exception as exc:
             self.write("error", str(exc))
@@ -264,9 +299,12 @@ class ChatRuntime:
             items=result["output_items"],
             usage=result["usage"],
         )
-        for text in summary_lines(assistant_turn):
-            self.write("thinking", text)
-        self.write("bot", answer)
+        if streamed:
+            self.write_stream_end()
+        else:
+            for text in summary_lines(assistant_turn):
+                self.write("thinking", text)
+            self.write("bot", answer)
 
 
 def build_chat_runtime(
@@ -274,6 +312,9 @@ def build_chat_runtime(
     name: str | None = None,
     console: Console | None = None,
     writer: Callable[[StyleAndTextTuples], None] | None = None,
+    stream_start: Callable[[StyleAndTextTuples], None] | None = None,
+    stream_delta: Callable[[str], None] | None = None,
+    stream_end: Callable[[], None] | None = None,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
     return ChatRuntime(
@@ -281,6 +322,9 @@ def build_chat_runtime(
         name=name,
         console=console or Console(),
         writer=writer,
+        stream_start=stream_start,
+        stream_delta=stream_delta,
+        stream_end=stream_end,
         client=client,
     )
 
@@ -290,6 +334,13 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         config,
         name=name,
         writer=lambda fragments: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE),
+        stream_start=lambda fragments: print_formatted_text(
+            FormattedText(fragments),
+            style=PROMPT_STYLE,
+            end="",
+        ),
+        stream_delta=lambda text: print_formatted_text(text, style=PROMPT_STYLE, end=""),
+        stream_end=lambda: print_formatted_text("", style=PROMPT_STYLE),
     )
     prompt_session = PromptSession(erase_when_done=True)
     bindings = prompt_bindings()
