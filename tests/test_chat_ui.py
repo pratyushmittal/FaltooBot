@@ -254,6 +254,39 @@ async def test_chat_renders_markdown_for_user_and_bot_messages(
 
 
 @pytest.mark.anyio
+async def test_chat_renders_markdown_for_thinking_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "text": "done",
+            "output_items": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "**bold** thinking"}],
+                }
+            ],
+            "usage": None,
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("hi")
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    assert "**bold**" not in text
+    assert "bold thinking" in text
+
+
+@pytest.mark.anyio
 async def test_chat_streams_bot_reply_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

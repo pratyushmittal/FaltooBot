@@ -150,7 +150,7 @@ def render_markdown_block(kind: str, content: str) -> Group:
 
 
 def rich_renderable(kind: str, content: str) -> Text | Group:
-    if kind in {"you", "bot"} and looks_like_markdown(content):
+    if kind in {"you", "bot", "thinking"} and looks_like_markdown(content):
         return render_markdown_block(kind, content)
     return render_line(kind, content)
 
@@ -227,7 +227,7 @@ class ChatRuntime:
             await self.client.close()
 
     def write(self, kind: str, content: str) -> None:
-        if self.rich_writer and kind in {"you", "bot"}:
+        if self.rich_writer and kind in {"you", "bot", "thinking"}:
             self.rich_writer(render_ansi(kind, content))
             return
         if self.writer:
