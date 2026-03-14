@@ -1,13 +1,19 @@
 import argparse
+import re
 from datetime import datetime
+from pathlib import Path
 
 from openai import AsyncOpenAI
+from textual import events
 from textual.app import App, ComposeResult
+from textual.document._document import Selection
 from textual.widgets import Input, TextArea
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
 from faltoobot.store import Session, add_turn, create_cli_session, recent_items, reset_session
+
+TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]+")
 
 
 def default_session_name() -> str:
@@ -20,6 +26,25 @@ def help_text() -> str:
 
 def session_name(name: str | None) -> str:
     return f"CLI {name or default_session_name()}"
+
+
+class TranscriptArea(TextArea):
+    async def on_click(self, event: events.Click) -> None:
+        if event.chain != 2:
+            return
+        row, column = self.get_target_document_location(event)
+        line = self.document[row]
+        if not line:
+            return
+        index = min(column, len(line) - 1)
+        token = next(
+            (match for match in TOKEN_PATTERN.finditer(line) if match.start() <= index < match.end()),
+            None,
+        )
+        if token is None:
+            return
+        self.selection = Selection((row, token.start()), (row, token.end()))
+        self.focus()
 
 
 class FaltoochatApp(App[None]):
@@ -47,13 +72,17 @@ class FaltoochatApp(App[None]):
         self.lines: list[str] = []
 
     def compose(self) -> ComposeResult:
-        yield TextArea("", id="messages", read_only=True, soft_wrap=True, show_cursor=False)
+        yield TranscriptArea("", id="messages", read_only=True, soft_wrap=True, show_cursor=False)
         yield Input(placeholder="Type a message or /help", id="prompt")
 
     async def on_mount(self) -> None:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
-        self.session = create_cli_session(self.config.sessions_dir, self.chat_name)
+        self.session = create_cli_session(
+            self.config.sessions_dir,
+            self.chat_name,
+            workspace=Path.cwd(),
+        )
         self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
         self.write_line(f"session: {self.session.name} ({self.session.id})")
         self.write_line(f"workspace: {self.session.workspace}")
@@ -63,8 +92,8 @@ class FaltoochatApp(App[None]):
         if self.client:
             await self.client.close()
 
-    def message_log(self) -> TextArea:
-        return self.query_one("#messages", TextArea)
+    def message_log(self) -> TranscriptArea:
+        return self.query_one("#messages", TranscriptArea)
 
     def prompt(self) -> Input:
         return self.query_one("#prompt", Input)

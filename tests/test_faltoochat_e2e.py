@@ -66,6 +66,8 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
         raise RuntimeError("OPENAI_API_KEY must be set to run this E2E test.")
 
     home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     config_path = home / ".faltoobot" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -73,11 +75,13 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
 
     prompt = "Reply with exactly FALTOO_E2E_OK and nothing else."
     payload = await run_chat_turn(home, prompt)
     messages = payload["messages"]
     assert payload["name"] == "CLI E2E Chat"
+    assert payload["workspace"] == str(workspace)
     assert isinstance(messages, list)
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[0]["content"] == prompt
@@ -95,6 +99,8 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
         raise RuntimeError("OPENAI_API_KEY must be set to run this E2E test.")
 
     home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     config_path = home / ".faltoobot" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -102,6 +108,7 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
 
     prompt = "Run `pwd` in the shell tool and reply with only the output."
     payload = await run_chat_turn(home, prompt)
@@ -109,7 +116,6 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     assert isinstance(messages, list)
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[0]["content"] == prompt
-    session_dir = next((home / ".faltoobot" / "sessions").glob("*"))
-    expected_pwd = str(session_dir / "workspace")
-    assert messages[1]["content"] == expected_pwd
+    assert payload["workspace"] == str(workspace)
+    assert messages[1]["content"] == str(workspace)
     assert messages[1]["items"]

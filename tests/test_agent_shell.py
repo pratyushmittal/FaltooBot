@@ -5,7 +5,9 @@ from faltoobot.store import create_cli_session
 
 
 def test_run_shell_call_preserves_requested_max_output_length(tmp_path: Path) -> None:
-    session = create_cli_session(tmp_path / "sessions", "CLI shell test")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = create_cli_session(tmp_path / "sessions", "CLI shell test", workspace=workspace)
     output = run_shell_call(
         session,
         {

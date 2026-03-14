@@ -61,6 +61,7 @@ def session_payload(session: Session) -> dict[str, Any]:
         "name": session.name,
         "kind": session.kind,
         "chat_key": session.chat_key,
+        "workspace": str(session.workspace),
         "processed_message_ids": list(session.processed_message_ids),
         "messages": [
             turn_payload(turn)
@@ -118,7 +119,9 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
         chat_key=payload.get("chat_key") if isinstance(payload.get("chat_key"), str) else None,
         root=root,
         messages_file=messages_path(root),
-        workspace=workspace_path(root),
+        workspace=Path(payload["workspace"])
+        if isinstance(payload.get("workspace"), str)
+        else workspace_path(root),
         processed_message_ids=processed,
         messages=messages,
     )
@@ -165,6 +168,7 @@ def create_session(
     name: str,
     kind: SessionKind,
     chat_key: str | None = None,
+    workspace: Path | None = None,
 ) -> Session:
     root = session_root(sessions_dir, str(uuid4()))
     session = Session(
@@ -174,15 +178,15 @@ def create_session(
         chat_key=chat_key,
         root=root,
         messages_file=messages_path(root),
-        workspace=workspace_path(root),
+        workspace=workspace or workspace_path(root),
         processed_message_ids=(),
         messages=(),
     )
     return save_session(session)
 
 
-def create_cli_session(sessions_dir: Path, name: str) -> Session:
-    return create_session(sessions_dir, name=name, kind="cli")
+def create_cli_session(sessions_dir: Path, name: str, workspace: Path) -> Session:
+    return create_session(sessions_dir, name=name, kind="cli", workspace=workspace)
 
 
 def whatsapp_session(sessions_dir: Path, chat_key: str) -> Session:
