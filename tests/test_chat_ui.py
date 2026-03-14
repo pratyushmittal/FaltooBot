@@ -110,6 +110,9 @@ async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
         def interrupt(self) -> bool:
             return False
 
+        def prompt_message(self) -> list[tuple[str, str]]:
+            return [("class:prompt", "you> ")]
+
     runtime = FakeRuntime()
     monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
     monkeypatch.setattr("faltoobot.chat.build_chat_runtime", lambda *args, **kwargs: runtime)
@@ -411,11 +414,11 @@ async def test_chat_streams_thinking_live(
 async def test_run_chat_streams_while_prompt_is_active(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
     streamed = asyncio.Event()
+    live_states: list[str] = []
 
     class FakePromptSession:
         prompts = 0
@@ -424,10 +427,13 @@ async def test_run_chat_streams_while_prompt_is_active(
             pass
 
         async def prompt_async(self, *args: object, **kwargs: object) -> str:
+            prompt = args[0]
             type(self).prompts += 1
             if type(self).prompts == 1:
                 return "hi"
             await streamed.wait()
+            text = "".join(part for _style, part in prompt()) if callable(prompt) else ""
+            live_states.append(text)
             raise EOFError
 
     async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
@@ -448,20 +454,18 @@ async def test_run_chat_streams_while_prompt_is_active(
 
     await run_chat(config=config)
 
-    stdout = capsys.readouterr().out
-    assert "bot>" in stdout
-    assert "hello" in stdout
+    assert any("bot> hello" in text for text in live_states)
 
 
 @pytest.mark.anyio
 async def test_run_chat_streams_thinking_while_prompt_is_active(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
     streamed = asyncio.Event()
+    live_states: list[str] = []
 
     class FakePromptSession:
         prompts = 0
@@ -470,16 +474,22 @@ async def test_run_chat_streams_thinking_while_prompt_is_active(
             pass
 
         async def prompt_async(self, *args: object, **kwargs: object) -> str:
+            prompt = args[0]
             type(self).prompts += 1
             if type(self).prompts == 1:
                 return "hi"
+            while "thinking> plan" not in ("".join(part for _style, part in prompt()) if callable(prompt) else ""):
+                await asyncio.sleep(0)
+            text = "".join(part for _style, part in prompt()) if callable(prompt) else ""
+            live_states.append(text)
             await streamed.wait()
             raise EOFError
 
     async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
         await kwargs["on_reasoning_delta"]("plan")
-        await kwargs["on_reasoning_done"]()
+        await asyncio.sleep(0)
         streamed.set()
+        await kwargs["on_reasoning_done"]()
         return {
             "text": "hello",
             "output_items": [
@@ -498,9 +508,7 @@ async def test_run_chat_streams_thinking_while_prompt_is_active(
 
     await run_chat(config=config)
 
-    stdout = capsys.readouterr().out
-    assert "thinking>" in stdout
-    assert "plan" in stdout
+    assert any("thinking> plan" in text for text in live_states)
 
 
 @pytest.mark.anyio

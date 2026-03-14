@@ -14,6 +14,7 @@ from typing import Any
 from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.formatted_text import ANSI, FormattedText, StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -134,8 +135,13 @@ def prompt_toolbar(config: Config) -> StyleAndTextTuples:
     return [("class:toolbar", f" {status_text(config)}  Enter send  Ctrl+J newline  Ctrl+Q interrupt ")]
 
 
-def prompt_message(config: Config) -> StyleAndTextTuples:
-    return [*prompt_toolbar(config), ("", "\n"), ("class:prompt", "you> ")]
+def prompt_message(config: Config, live_kind: str | None = None, live_text: str = "") -> StyleAndTextTuples:
+    fragments = [*prompt_toolbar(config), ("", "\n")]
+    if live_kind and live_text:
+        fragments.extend(render_fragments(live_kind, live_text))
+        fragments.append(("", "\n"))
+    fragments.append(("class:prompt", "you> "))
+    return fragments
 
 
 def prompt_bindings(on_interrupt: Callable[[], None] | None = None) -> KeyBindings:
@@ -234,6 +240,8 @@ class ChatRuntime:
     stream_start: Callable[[str], Any] | None = None
     stream_delta: Callable[[str], Any] | None = None
     stream_end: Callable[[], Any] | None = None
+    live_kind: str | None = None
+    live_text: str = ""
 
     def require_session(self) -> Session:
         if self.session is None:
@@ -244,6 +252,27 @@ class ChatRuntime:
         if self.client is None:
             raise RuntimeError("chat session is not ready")
         return self.client
+
+    def prompt_message(self) -> StyleAndTextTuples:
+        return prompt_message(self.config, self.live_kind, self.live_text)
+
+    def refresh_prompt(self) -> None:
+        if app := get_app_or_none():
+            app.invalidate()
+
+    def start_live(self, kind: str) -> None:
+        self.live_kind = kind
+        self.live_text = ""
+        self.refresh_prompt()
+
+    def append_live(self, text: str) -> None:
+        self.live_text += text
+        self.refresh_prompt()
+
+    def end_live(self) -> None:
+        self.live_kind = None
+        self.live_text = ""
+        self.refresh_prompt()
 
     async def start(self) -> None:
         if not self.config.openai_api_key:
@@ -469,27 +498,15 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
     async def write_rich(text: str) -> None:
         await run_in_terminal(lambda: print_formatted_text(ANSI(text)))
 
-    async def stream_start(kind: str) -> None:
-        sys.stdout.write(f"{kind}> ")
-        sys.stdout.flush()
-
-    async def stream_delta(text: str) -> None:
-        sys.stdout.write(text)
-        sys.stdout.flush()
-
-    async def stream_end() -> None:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
     runtime = build_chat_runtime(
         config,
         name=name,
         writer=write_fragments,
         rich_writer=write_rich,
-        stream_start=stream_start,
-        stream_delta=stream_delta,
-        stream_end=stream_end,
     )
+    runtime.stream_start = lambda kind: runtime.start_live(kind)
+    runtime.stream_delta = lambda text: runtime.append_live(text)
+    runtime.stream_end = lambda: runtime.end_live()
     prompt_session = PromptSession(erase_when_done=True)
     bindings = prompt_bindings(runtime.interrupt)
     await runtime.start()
@@ -497,7 +514,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         with patch_stdout():
             while True:
                 prompt = await prompt_session.prompt_async(
-                    prompt_message(runtime.config),
+                    getattr(runtime, "prompt_message", lambda: prompt_message(runtime.config)),
                     style=PROMPT_STYLE,
                     multiline=True,
                     wrap_lines=True,
