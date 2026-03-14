@@ -262,6 +262,13 @@ def turn_items(turn: Turn) -> list[dict[str, Any]]:
     return [{"type": "message", "role": turn.role, "content": turn.content}]
 
 
+def last_instructions(session: Session) -> str | None:
+    for turn in reversed(session.messages):
+        if turn.instructions:
+            return turn.instructions
+    return None
+
+
 def add_turn(
     session: Session,
     role: Role,
@@ -270,6 +277,9 @@ def add_turn(
     usage: dict[str, Any] | None = None,
     instructions: str | None = None,
 ) -> Session:
+    next_instructions = instructions if isinstance(instructions, str) else None
+    if role == "assistant" and next_instructions == last_instructions(session):
+        next_instructions = None
     return save_session(
         replace(
             session,
@@ -281,7 +291,7 @@ def add_turn(
                     created_at=now(),
                     items=tuple(item for item in (items or []) if isinstance(item, dict)),
                     usage=usage if isinstance(usage, dict) else None,
-                    instructions=instructions if isinstance(instructions, str) else None,
+                    instructions=next_instructions,
                 ),
             ),
         )

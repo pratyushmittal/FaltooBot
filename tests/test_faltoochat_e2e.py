@@ -79,8 +79,7 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
     assert messages[1]["content"] == "FALTOO_E2E_OK"
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
-    assert "instructions" in messages[1]
-    assert "Reply with exactly the requested text when asked to do so." in messages[1]["instructions"]
+    assert "Reply with exactly the requested text when asked to do so." in messages[1].get("instructions", "")
 
 
 @pytest.mark.anyio
@@ -114,7 +113,7 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     assert messages[1]["content"] == str(workspace)
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
-    assert "instructions" in messages[1]
+    assert "instructions" not in messages[1] or isinstance(messages[1]["instructions"], str)
 
 
 @pytest.mark.anyio
@@ -156,3 +155,5 @@ async def test_faltoochat_reuses_existing_session_for_workspace(
         "Reply with exactly SECOND_RUN_OK and nothing else.",
         "SECOND_RUN_OK",
     ]
+    assert second_messages[1]["instructions"]
+    assert "instructions" not in second_messages[3]
