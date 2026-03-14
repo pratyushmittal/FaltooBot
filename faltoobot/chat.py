@@ -80,7 +80,7 @@ def history_entries(session: Session) -> list[tuple[str, str]]:
 
 
 def prompt_toolbar(config: Config) -> StyleAndTextTuples:
-    return [("class:toolbar", f" {status_text(config)}  Enter send  Esc+Enter newline ")]
+    return [("class:toolbar", f" {status_text(config)}  Enter send  Shift+Enter newline ")]
 
 
 def prompt_bindings() -> KeyBindings:
@@ -90,7 +90,7 @@ def prompt_bindings() -> KeyBindings:
     def submit(event: Any) -> None:
         event.current_buffer.validate_and_handle()
 
-    @bindings.add("escape", "enter")
+    @bindings.add("s-enter")
     @bindings.add("c-j")
     def newline(event: Any) -> None:
         event.current_buffer.insert_text("\n")

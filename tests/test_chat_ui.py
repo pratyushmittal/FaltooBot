@@ -55,6 +55,7 @@ def test_chat_shows_model_and_thinking_status(tmp_path: Path, monkeypatch: pytes
 
     assert f"model: {config.openai_model}" in text
     assert f"thinking: {config.openai_thinking}" in text
+    assert "Shift+Enter newline" in text
 
 
 @pytest.mark.anyio
