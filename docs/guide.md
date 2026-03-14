@@ -81,7 +81,6 @@ thinking = "none"
 [bot]
 allow_groups = false
 allowed_chats = []
-max_history_messages = 12
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
 ```
 

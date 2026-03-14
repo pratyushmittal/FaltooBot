@@ -215,10 +215,10 @@ def whatsapp_session(sessions_dir: Path, chat_key: str) -> Session:
     return session
 
 
-def recent_items(session: Session, limit: int) -> list[dict[str, Any]]:
+def session_items(session: Session) -> list[dict[str, Any]]:
     return [
         item
-        for turn in session.messages[-max(1, limit) :]
+        for turn in session.messages
         for item in turn_items(turn)
     ]
 

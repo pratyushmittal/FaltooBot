@@ -11,7 +11,7 @@ from textual.widgets import Input, Static, TextArea
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
-from faltoobot.store import Session, add_turn, create_cli_session, recent_items, reset_session
+from faltoobot.store import Session, add_turn, create_cli_session, reset_session, session_items
 
 TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]+")
 
@@ -149,7 +149,7 @@ class FaltoochatApp(App[None]):
                 self.client,
                 self.config,
                 self.session,
-                recent_items(self.session, self.config.max_history_messages),
+                session_items(self.session),
             )
         except Exception as exc:
             self.write_line(f"error> {exc}")

@@ -207,16 +207,6 @@ def prompt_bool(label: str, current: bool) -> bool:
         print("Enter y or n.")
 
 
-def prompt_int(label: str, current: int, minimum: int) -> int:
-    while True:
-        raw = input(f"{label} [{current}] (blank keeps current): ").strip()
-        if not raw:
-            return current
-        if raw.isdigit() and int(raw) >= minimum:
-            return int(raw)
-        print(f"Enter an integer >= {minimum}.")
-
-
 def prompt_model(current: str) -> str:
     print("OpenAI model:")
     for index, model in enumerate(MODEL_OPTIONS, start=1):
@@ -301,11 +291,6 @@ def configure_app(config: Config) -> None:
                 ),
                 "allowed_chats": prompt_allowed_chats(
                     list(bot.get("allowed_chats") or []),
-                ),
-                "max_history_messages": prompt_int(
-                    "Max history messages",
-                    int(bot.get("max_history_messages") or 12),
-                    1,
                 ),
                 "system_prompt": prompt_text(
                     "System prompt",

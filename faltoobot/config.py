@@ -30,7 +30,6 @@ class Config:
     system_prompt: str
     allow_groups: bool
     allowed_chats: set[str]
-    max_history_messages: int
 
 
 def app_root() -> Path:
@@ -47,7 +46,6 @@ def default_config() -> dict[str, dict[str, Any]]:
         "bot": {
             "allow_groups": False,
             "allowed_chats": [],
-            "max_history_messages": 12,
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
         },
     }
@@ -66,11 +64,6 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "bot": {
             "allow_groups": as_bool(bot.get("allow_groups"), defaults["bot"]["allow_groups"]),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
-            "max_history_messages": as_int(
-                bot.get("max_history_messages"),
-                defaults["bot"]["max_history_messages"],
-                1,
-            ),
             "system_prompt": as_str(bot.get("system_prompt"), defaults["bot"]["system_prompt"]),
         },
     }
@@ -117,7 +110,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
             f"allowed_chats = [{allowed}]",
-            f"max_history_messages = {int(bot['max_history_messages'])}",
             f"system_prompt = {quote(str(bot['system_prompt']))}",
             "",
         ]
@@ -192,5 +184,4 @@ def build_config() -> Config:
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),
-        max_history_messages=as_int(bot.get("max_history_messages"), 12, 1),
     )

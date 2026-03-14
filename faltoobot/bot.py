@@ -16,9 +16,9 @@ from faltoobot.config import Config, build_config, normalize_chat
 from faltoobot.store import (
     Session,
     add_turn,
-    recent_items,
     reserve_message,
     reset_session,
+    session_items,
     whatsapp_session,
 )
 
@@ -123,7 +123,7 @@ async def handle_prompt(
         openai_client,
         config,
         session,
-        recent_items(session, config.max_history_messages),
+        session_items(session),
     )
     answer = result["text"]
     session = add_turn(session, "assistant", answer, items=result["output_items"])

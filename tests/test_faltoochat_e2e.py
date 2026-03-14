@@ -21,7 +21,6 @@ def config_text(system_prompt: str) -> str:
             "[bot]",
             "allow_groups = false",
             "allowed_chats = []",
-            "max_history_messages = 12",
             f'system_prompt = {json.dumps(system_prompt)}',
             "",
         ]

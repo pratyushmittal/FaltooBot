@@ -24,5 +24,5 @@ async def test_chat_shows_model_and_thinking_status() -> None:
     app = build_chat_app()
     async with app.run_test():
         status = app.query_one("#status", Static)
-        assert "model:" in status.content
-        assert "thinking: none" in status.content
+        assert f"model: {app.config.openai_model}" in status.content
+        assert f"thinking: {app.config.openai_thinking}" in status.content
