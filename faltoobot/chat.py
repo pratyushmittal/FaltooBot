@@ -1,8 +1,5 @@
 import argparse
 import asyncio
-import io
-import math
-import shutil
 import subprocess
 import sys
 from collections import deque
@@ -13,7 +10,6 @@ from typing import Any
 
 from openai import AsyncOpenAI
 from rich.console import Console, Group
-from rich.constrain import Constrain
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
@@ -45,11 +41,6 @@ BODY_STYLES = {
     "opened": "#d7e3ef",
 }
 STATUS_STYLE = "bold #8ea4bc on #0b1520"
-MESSAGE_WIDTH = 80
-STREAM_INLINE_STYLES = (
-    ("`", "bold #ffe7c2 on #243244"),
-    ("**", "bold"),
-)
 
 
 def default_session_name() -> str:
@@ -109,83 +100,24 @@ def render_line(kind: str, content: str) -> Text:
     return text
 
 
-def merge_styles(kind: str, extra: str = "") -> str:
-    base = BODY_STYLES.get(kind, "#eef3f9")
-    return f"{base} {extra}".strip()
-
-
-def stream_renderable(kind: str, content: str) -> Text:
-    if kind not in RICH_KINDS:
-        return render_line(kind, content)
-    text = Text()
-    text.append(f"{kind}> ", style=PREFIX_STYLES[kind])
-    index = 0
-    while index < len(content):
-        marker = next((token for token, _ in STREAM_INLINE_STYLES if content.startswith(token, index)), None)
-        if marker is not None:
-            end = content.find(marker, index + len(marker))
-            if end != -1:
-                marker_style = next(style for token, style in STREAM_INLINE_STYLES if token == marker)
-                text.append(content[index + len(marker) : end], style=merge_styles(kind, marker_style))
-                index = end + len(marker)
-                continue
-            text.append(marker, style=merge_styles(kind))
-            index += len(marker)
-            continue
-        next_marker = min(
-            (
-                position
-                for token, _ in STREAM_INLINE_STYLES
-                for position in [content.find(token, index)]
-                if position != -1
-            ),
-            default=len(content),
-        )
-        text.append(content[index:next_marker], style=merge_styles(kind))
-        index = next_marker
-    return text
-
-
 def looks_like_markdown(content: str) -> bool:
     return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
 
 
 def render_markdown_block(kind: str, content: str) -> Group:
-    return Group(
-        render_line(kind, ""),
-        Padding(Constrain(Markdown(content), width=MESSAGE_WIDTH - 2), (0, 0, 0, 2)),
-    )
+    return Group(render_line(kind, ""), Padding(Markdown(content), (0, 0, 0, 2)))
 
 
-def rich_renderable(kind: str, content: str) -> Text | Group | Constrain:
+def rich_renderable(kind: str, content: str) -> Text | Group:
     if kind in RICH_KINDS and looks_like_markdown(content):
         return render_markdown_block(kind, content)
-    renderable = render_line(kind, content)
-    return Constrain(renderable, width=MESSAGE_WIDTH) if kind in RICH_KINDS else renderable
-
-
-def render_ansi(kind: str, content: str, *, streaming: bool = False) -> str:
-    capture = io.StringIO()
-    width = shutil.get_terminal_size((100, 20)).columns
-    renderable = stream_renderable(kind, content) if streaming else rich_renderable(kind, content)
-    if streaming and kind in RICH_KINDS:
-        renderable = Constrain(renderable, width=MESSAGE_WIDTH)
-    Console(file=capture, force_terminal=True, color_system="truecolor", width=width).print(renderable)
-    return capture.getvalue()
+    return render_line(kind, content)
 
 
 def stream_text(kind: str, delta: str) -> str:
     if kind != "thinking":
         return delta
     return delta.replace("**", "").replace("`", "").replace("\n", " ")
-
-
-def wrapped_line_count(text: str, width: int) -> int:
-    return sum(max(1, math.ceil(max(0, len(line)) / max(1, width))) for line in text.splitlines() or [""])
-
-
-def streamed_line_count(kind: str, content: str, width: int) -> int:
-    return wrapped_line_count(f"{kind}> {content}", width)
 
 
 async def read_input(prompt: str) -> str:
@@ -244,34 +176,14 @@ class ChatRuntime:
         self.console.print(Text(input_hint(self.config), style=STATUS_STYLE))
 
     def start_stream(self, kind: str) -> None:
-        self.console.file.write(f"{kind}> ")
-        self.console.file.flush()
+        self.console.print(Text(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold")), end="")
 
-    def append_stream(self, text: str) -> None:
+    def append_stream(self, kind: str, text: str) -> None:
         if text:
-            self.console.file.write(text)
-            self.console.file.flush()
+            self.console.print(Text(text, style=BODY_STYLES.get(kind, "#eef3f9")), end="")
 
     def end_stream(self) -> None:
-        self.console.file.write("\n")
-        self.console.file.flush()
-
-    def replace_streamed_output(self, blocks: list[tuple[str, str]]) -> None:
-        if not blocks or not self.console.is_terminal:
-            return
-        width = max(1, min(self.console.width, MESSAGE_WIDTH))
-        lines = sum(streamed_line_count(kind, content, width) for kind, content in blocks)
-        self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
-        self.console.file.flush()
-
-    def redraw_stream(self, kind: str, content: str, lines: int) -> int:
-        if not self.console.is_terminal:
-            return lines
-        if lines:
-            self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
-        self.console.file.write(render_ansi(kind, content, streaming=True))
-        self.console.file.flush()
-        return streamed_line_count(kind, content, max(1, min(self.console.width, MESSAGE_WIDTH)))
+        self.console.print()
 
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
@@ -332,62 +244,40 @@ class ChatRuntime:
         session = add_turn(self.require_session(), "user", prompt)
         self.session = session
         active_stream: str | None = None
-        active_text = ""
-        active_lines = 0
-        streamed_blocks: list[tuple[str, str]] = []
         streamed_bot = False
         streamed_thinking = False
 
         def start_stream(kind: str) -> None:
-            nonlocal active_stream, active_text, active_lines
+            nonlocal active_stream
             if active_stream == kind:
                 return
             if active_stream:
-                streamed_blocks.append((active_stream, active_text))
-                if not self.console.is_terminal:
-                    self.end_stream()
-            if not self.console.is_terminal:
-                self.start_stream(kind)
+                self.end_stream()
+            self.start_stream(kind)
             active_stream = kind
-            active_text = ""
-            active_lines = 0
 
         async def on_text_delta(delta: str) -> None:
-            nonlocal streamed_bot, active_lines, active_text
+            nonlocal streamed_bot
             if not delta:
                 return
             start_stream("bot")
             streamed_bot = True
-            chunk = stream_text("bot", delta)
-            active_text += chunk
-            if self.console.is_terminal:
-                active_lines = self.redraw_stream("bot", active_text, active_lines)
-                return
-            self.append_stream(chunk)
+            self.append_stream("bot", stream_text("bot", delta))
 
         async def on_reasoning_delta(delta: str) -> None:
-            nonlocal streamed_thinking, active_lines, active_text
+            nonlocal streamed_thinking
             if not delta:
                 return
             start_stream("thinking")
             streamed_thinking = True
-            chunk = stream_text("thinking", delta)
-            active_text += chunk
-            if self.console.is_terminal:
-                active_lines = self.redraw_stream("thinking", active_text, active_lines)
-                return
-            self.append_stream(chunk)
+            self.append_stream("thinking", stream_text("thinking", delta))
 
         async def on_reasoning_done() -> None:
-            nonlocal active_lines, active_stream, active_text
+            nonlocal active_stream
             if active_stream != "thinking":
                 return
-            streamed_blocks.append(("thinking", active_text))
-            if not self.console.is_terminal:
-                self.end_stream()
+            self.end_stream()
             active_stream = None
-            active_lines = 0
-            active_text = ""
 
         self.current_reply_task = asyncio.create_task(
             stream_reply(
@@ -404,16 +294,12 @@ class ChatRuntime:
             result = await self.current_reply_task
         except asyncio.CancelledError:
             if active_stream:
-                streamed_blocks.append((active_stream, active_text))
-                if not self.console.is_terminal:
-                    self.end_stream()
+                self.end_stream()
             self.write("meta", "reply interrupted")
             return
         except Exception as exc:
             if active_stream:
-                streamed_blocks.append((active_stream, active_text))
-                if not self.console.is_terminal:
-                    self.end_stream()
+                self.end_stream()
             self.write("error", str(exc))
             return
         finally:
@@ -435,20 +321,11 @@ class ChatRuntime:
             instructions=result["instructions"],
         )
         if active_stream:
-            streamed_blocks.append((active_stream, active_text))
-            if not self.console.is_terminal:
-                self.end_stream()
-        if streamed_blocks:
-            self.replace_streamed_output(streamed_blocks)
+            self.end_stream()
         if not streamed_thinking:
             for text in summary_lines(assistant_turn):
                 self.write("thinking", text)
-        elif streamed_blocks and self.console.is_terminal:
-            for text in summary_lines(assistant_turn):
-                self.write("thinking", text)
         if not streamed_bot:
-            self.write("bot", answer)
-        elif streamed_blocks and self.console.is_terminal:
             self.write("bot", answer)
 
 

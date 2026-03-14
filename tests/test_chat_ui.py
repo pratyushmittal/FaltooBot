@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 from io import StringIO
 from pathlib import Path
 
@@ -262,36 +261,6 @@ async def test_chat_renders_markdown_for_thinking_messages(
 
 
 @pytest.mark.anyio
-async def test_chat_wraps_long_bot_paragraphs_to_80_columns(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-    long_text = " ".join(["galaxy"] * 24)
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        return {
-            "text": long_text,
-            "output_items": [],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    lines = [line for line in output.getvalue().splitlines() if "galaxy" in line or line.startswith("bot> ")]
-    assert len(lines) > 1
-    assert max(len(line) for line in lines) <= 80
-
-
-@pytest.mark.anyio
 async def test_chat_streams_bot_reply_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -353,46 +322,13 @@ async def test_chat_streams_inline_styles_in_terminal(
     await started.wait()
 
     raw = output.getvalue()
-    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
-    assert "\x1b[1A" in raw
-    assert "bot> bold hi" in plain
+    assert "\x1b[1A" not in raw
+    assert "\x1b[" in raw
+    assert "**bold** hi" in raw
 
     release.set()
     await runtime.wait_until_idle()
     await runtime.close()
-
-
-@pytest.mark.anyio
-async def test_chat_restores_rich_formatting_after_stream_in_terminal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    output = StringIO()
-    console = Console(file=output, force_terminal=True, color_system="truecolor", width=120)
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        await kwargs["on_text_delta"]("**bold** ")
-        await kwargs["on_text_delta"]("answer")
-        return {
-            "text": "**bold** answer",
-            "output_items": [],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
-    assert "\x1b[1A" in text
-    assert "bold answer" in plain
 
 
 @pytest.mark.anyio
