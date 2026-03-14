@@ -204,7 +204,6 @@ class ChatRuntime:
         text = prompt.strip()
         if not text:
             return True
-        self.write("you", text)
         command_result = await self.handle_command(text)
         if command_result is not None:
             return command_result
@@ -362,9 +361,9 @@ def build_chat_runtime(
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
     runtime = build_chat_runtime(config, name=name)
     await runtime.start()
+    runtime.write_status()
     try:
         while True:
-            runtime.write_status()
             try:
                 prompt = await read_input("you> ")
             except EOFError:

@@ -193,7 +193,6 @@ async def test_chat_shows_thinking_summary_for_live_reply(
     await runtime.close()
 
     text = output.getvalue()
-    assert text.count("you> hi") == 1
     assert "thinking> Planning the answer." in text
     assert "bot> done" in text
 
@@ -224,7 +223,6 @@ async def test_chat_renders_markdown_for_user_and_bot_messages(
 
     text = output.getvalue()
     assert "**bold**" not in text
-    assert "bold prompt" in text
     assert "bold answer" in text
 
 
@@ -397,8 +395,6 @@ async def test_chat_queues_messages_while_reply_is_running(
 
     text = output.getvalue()
     assert prompts == ["first", "second"]
-    assert text.count("you> first") == 1
-    assert text.count("you> second") == 1
     assert "bot> reply:first" in text
     assert "bot> reply:second" in text
 
