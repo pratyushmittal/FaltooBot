@@ -134,6 +134,10 @@ def prompt_toolbar(config: Config) -> StyleAndTextTuples:
     return [("class:toolbar", f" {status_text(config)}  Enter send  Ctrl+J newline  Ctrl+Q interrupt ")]
 
 
+def prompt_message(config: Config) -> StyleAndTextTuples:
+    return [*prompt_toolbar(config), ("", "\n"), ("class:prompt", "you> ")]
+
+
 def prompt_bindings(on_interrupt: Callable[[], None] | None = None) -> KeyBindings:
     bindings = KeyBindings()
 
@@ -493,11 +497,10 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         with patch_stdout(raw=True):
             while True:
                 prompt = await prompt_session.prompt_async(
-                    [("class:prompt", "you> ")],
+                    prompt_message(runtime.config),
                     style=PROMPT_STYLE,
                     multiline=True,
                     wrap_lines=True,
-                    bottom_toolbar=lambda: prompt_toolbar(runtime.config),
                     prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
                     key_bindings=bindings,
                 )
