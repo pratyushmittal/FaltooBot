@@ -27,7 +27,6 @@ from faltoobot.store import (
     add_turn,
     cli_session,
     existing_cli_session,
-    reset_session,
     session_items,
 )
 
@@ -237,8 +236,12 @@ class ChatRuntime:
             return True
         if text == "/reset":
             if self.session:
-                self.session = reset_session(self.session)
-            self.write("meta", "memory cleared")
+                self.session = cli_session(
+                    self.config.sessions_dir,
+                    session_name(None),
+                    self.session.workspace,
+                )
+                self.write("meta", f"new session: {self.session.name} ({self.session.id})")
             return True
         if text == "/exit":
             return False

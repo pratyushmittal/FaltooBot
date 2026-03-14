@@ -8,7 +8,7 @@ from rich.console import Console
 
 from faltoobot.chat import build_chat_runtime, prompt_bindings, prompt_toolbar, run_chat
 from faltoobot.config import build_config
-from faltoobot.store import add_turn, cli_session
+from faltoobot.store import add_turn, cli_session, existing_cli_session
 
 
 def config_text(system_prompt: str, thinking: str = "none") -> str:
@@ -272,6 +272,35 @@ async def test_command_is_printed_once(
 
     text = output.getvalue()
     assert text.count("you> /tree") == 1
+
+
+@pytest.mark.anyio
+async def test_reset_creates_new_session_for_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+    config = build_config()
+    original = cli_session(config.sessions_dir, "CLI original", workspace)
+    original = add_turn(original, "user", "first")
+    add_turn(original, "assistant", "reply")
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    original_id = runtime.session.id if runtime.session else ""
+    assert await runtime.submit("/reset")
+    await runtime.close()
+
+    assert runtime.session is not None
+    assert runtime.session.id != original_id
+    assert runtime.session.workspace == workspace
+    assert runtime.session.messages == ()
+    reloaded_original = existing_cli_session(config.sessions_dir, workspace)
+    assert reloaded_original is not None
+    assert reloaded_original.id == runtime.session.id
+    assert original.messages_file.exists()
+    assert "new session:" in output.getvalue()
 
 
 @pytest.mark.anyio
