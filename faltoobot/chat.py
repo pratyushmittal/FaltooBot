@@ -241,7 +241,7 @@ def build_chat_runtime(
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
     runtime = build_chat_runtime(config, name=name)
-    prompt_session = PromptSession()
+    prompt_session = PromptSession(erase_when_done=True)
     bindings = prompt_bindings()
     await runtime.start()
     try:
@@ -252,7 +252,6 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
                     style=PROMPT_STYLE,
                     multiline=True,
                     wrap_lines=True,
-                    erase_when_done=True,
                     bottom_toolbar=lambda: prompt_toolbar(runtime.config),
                     prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
                     key_bindings=bindings,
