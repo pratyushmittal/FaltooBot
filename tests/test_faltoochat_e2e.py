@@ -16,6 +16,7 @@ def config_text(system_prompt: str) -> str:
             "[openai]",
             'api_key = ""',
             'model = "gpt-5.2"',
+            'thinking = "none"',
             "",
             "[bot]",
             "allow_groups = false",
@@ -87,6 +88,7 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
     assert messages[0]["content"] == prompt
     assert messages[1]["content"] == "FALTOO_E2E_OK"
     assert messages[1]["items"]
+    assert messages[1]["usage"]["total_tokens"] > 0
 
 
 @pytest.mark.anyio
@@ -119,3 +121,4 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     assert payload["workspace"] == str(workspace)
     assert messages[1]["content"] == str(workspace)
     assert messages[1]["items"]
+    assert messages[1]["usage"]["total_tokens"] > 0

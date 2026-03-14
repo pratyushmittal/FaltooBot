@@ -17,6 +17,7 @@ Configure `~/.faltoobot/config.toml` interactively:
 [openai]
 api_key = "your_key_here"
 model = "gpt-5.2"
+thinking = "none"
 ```
 
 You can rerun `uv run faltoobot configure` anytime to update the file.

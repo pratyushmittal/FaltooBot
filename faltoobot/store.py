@@ -15,6 +15,7 @@ class Turn:
     content: str
     created_at: str
     items: tuple[dict[str, Any], ...] = ()
+    usage: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,8 @@ def turn_payload(turn: Turn) -> dict[str, Any]:
     }
     if turn.items:
         payload["items"] = list(turn.items)
+    if turn.usage:
+        payload["usage"] = turn.usage
     return payload
 
 
@@ -100,6 +103,7 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
             content=item["content"],
             created_at=item["created_at"],
             items=tuple(entry for entry in item_items(item) if isinstance(entry, dict)),
+            usage=item_usage(item),
         )
         for item in raw_messages
         if isinstance(raw_messages, list)
@@ -132,6 +136,11 @@ def item_items(item: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_items, list):
         return []
     return [entry for entry in raw_items if isinstance(entry, dict)]
+
+
+def item_usage(item: dict[str, Any]) -> dict[str, Any] | None:
+    usage = item.get("usage")
+    return usage if isinstance(usage, dict) else None
 
 
 def load_session(root: Path) -> Session:
@@ -225,6 +234,7 @@ def add_turn(
     role: Role,
     content: str,
     items: list[dict[str, Any]] | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> Session:
     return save_session(
         replace(
@@ -236,6 +246,7 @@ def add_turn(
                     content=content,
                     created_at=now(),
                     items=tuple(item for item in (items or []) if isinstance(item, dict)),
+                    usage=usage if isinstance(usage, dict) else None,
                 ),
             ),
         )

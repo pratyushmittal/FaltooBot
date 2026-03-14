@@ -37,6 +37,7 @@ class ShellResult(TypedDict):
 class ReplyResult(TypedDict):
     text: str
     output_items: list[dict[str, Any]]
+    usage: dict[str, Any] | None
 
 
 def message(role: Literal["user", "assistant", "system", "developer"], content: str) -> Message:
@@ -136,6 +137,15 @@ def input_messages(messages: list[Any]) -> list[Any]:
 
 def input_items(items: list[Any]) -> list[Any]:
     return [item.to_dict() if hasattr(item, "to_dict") else item for item in items]
+
+
+def response_usage(response: Any) -> dict[str, Any] | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    if hasattr(usage, "to_dict"):
+        usage = usage.to_dict()
+    return usage if isinstance(usage, dict) else None
 
 
 def prune_items(items: list[Any]) -> list[Any]:
@@ -276,6 +286,7 @@ async def reply(
             model=config.openai_model,
             input=items,  # type: ignore[arg-type]
             instructions=config.system_prompt,
+            reasoning={"effort": config.openai_thinking},
             store=False,
             parallel_tool_calls=True,
             include=["reasoning.encrypted_content", "web_search_call.action.sources"],
@@ -290,5 +301,6 @@ async def reply(
             return {
                 "text": text or "I couldn't generate a reply just now.",
                 "output_items": [item for item in outputs if isinstance(item, dict)],
+                "usage": response_usage(response),
             }
         items.extend(next_items)

@@ -14,6 +14,7 @@ from faltoobot.chat import run_chat
 from faltoobot.config import (
     APP_LABEL,
     MODEL_OPTIONS,
+    THINKING_OPTIONS,
     Config,
     build_config,
     ensure_config_file,
@@ -242,6 +243,22 @@ def prompt_model(current: str) -> str:
         print(f"Enter a number between 1 and {custom_index}.")
 
 
+def prompt_thinking(current: str) -> str:
+    print("Thinking mode:")
+    for index, value in enumerate(THINKING_OPTIONS, start=1):
+        current_marker = " (current)" if value == current else ""
+        print(f"  {index}. {value}{current_marker}")
+    while True:
+        default_choice = str(THINKING_OPTIONS.index(current) + 1) if current in THINKING_OPTIONS else "1"
+        raw = input(f"Select thinking mode [{default_choice}]: ").strip()
+        choice = default_choice if not raw else raw
+        if choice.isdigit():
+            index = int(choice)
+            if 1 <= index <= len(THINKING_OPTIONS):
+                return THINKING_OPTIONS[index - 1]
+        print(f"Enter a number between 1 and {len(THINKING_OPTIONS)}.")
+
+
 def prompt_allowed_chats(current: list[str]) -> list[str]:
     current_text = ", ".join(current) if current else "<none>"
     raw = input(
@@ -275,6 +292,7 @@ def configure_app(config: Config) -> None:
                     secret=True,
                 ),
                 "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
+                "thinking": prompt_thinking(str(openai.get("thinking") or THINKING_OPTIONS[0])),
             },
             "bot": {
                 "allow_groups": prompt_bool(

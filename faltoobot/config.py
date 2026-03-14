@@ -7,6 +7,7 @@ from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
 MODEL_OPTIONS = ("gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
+THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_SYSTEM_PROMPT = (
     "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "
     "Keep replies practical and readable on mobile."
@@ -25,6 +26,7 @@ class Config:
     run_script: Path
     openai_api_key: str
     openai_model: str
+    openai_thinking: str
     system_prompt: str
     allow_groups: bool
     allowed_chats: set[str]
@@ -40,6 +42,7 @@ def default_config() -> dict[str, dict[str, Any]]:
         "openai": {
             "api_key": "",
             "model": MODEL_OPTIONS[0],
+            "thinking": THINKING_OPTIONS[0],
         },
         "bot": {
             "allow_groups": False,
@@ -58,6 +61,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "openai": {
             "api_key": as_str(openai.get("api_key"), defaults["openai"]["api_key"]),
             "model": as_str(openai.get("model"), defaults["openai"]["model"]),
+            "thinking": as_str(openai.get("thinking"), defaults["openai"]["thinking"]),
         },
         "bot": {
             "allow_groups": as_bool(bot.get("allow_groups"), defaults["bot"]["allow_groups"]),
@@ -108,6 +112,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "[openai]",
             f"api_key = {quote(str(openai['api_key']))}",
             f"model = {quote(str(openai['model']))}",
+            f"thinking = {quote(str(openai['thinking']))}",
             "",
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
@@ -183,6 +188,7 @@ def build_config() -> Config:
         run_script=root / "run.sh",
         openai_api_key=as_str(openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")),
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
+        openai_thinking=as_str(openai.get("thinking"), THINKING_OPTIONS[0]),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),

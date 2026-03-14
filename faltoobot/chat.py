@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 from textual import events
 from textual.app import App, ComposeResult
 from textual.document._document import Selection
-from textual.widgets import Input, TextArea
+from textual.widgets import Input, Static, TextArea
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
@@ -26,6 +26,14 @@ def help_text() -> str:
 
 def session_name(name: str | None) -> str:
     return f"CLI {name or default_session_name()}"
+
+
+def thinking_mode(config: Config) -> str:
+    return config.openai_thinking
+
+
+def status_text(config: Config) -> str:
+    return f"model: {config.openai_model}  thinking: {thinking_mode(config)}"
 
 
 class TranscriptArea(TextArea):
@@ -59,7 +67,13 @@ class FaltoochatApp(App[None]):
     }
 
     Input {
-        dock: bottom;
+        margin-top: 1;
+    }
+
+    #status {
+        color: $text-muted;
+        margin: 0 1;
+        height: auto;
     }
     """
 
@@ -74,6 +88,7 @@ class FaltoochatApp(App[None]):
     def compose(self) -> ComposeResult:
         yield TranscriptArea("", id="messages", read_only=True, soft_wrap=True, show_cursor=False)
         yield Input(placeholder="Type a message or /help", id="prompt")
+        yield Static(status_text(self.config), id="status")
 
     async def on_mount(self) -> None:
         if not self.config.openai_api_key:
@@ -140,7 +155,13 @@ class FaltoochatApp(App[None]):
             self.write_line(f"error> {exc}")
         else:
             answer = result["text"]
-            self.session = add_turn(self.session, "assistant", answer, items=result["output_items"])
+            self.session = add_turn(
+                self.session,
+                "assistant",
+                answer,
+                items=result["output_items"],
+                usage=result["usage"],
+            )
             self.write_line(f"bot> {answer}")
         finally:
             input_box.disabled = False

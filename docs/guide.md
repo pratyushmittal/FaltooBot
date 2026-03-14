@@ -76,6 +76,7 @@ Example:
 [openai]
 api_key = "your_key_here"
 model = "gpt-5.2"
+thinking = "none"
 
 [bot]
 allow_groups = false
