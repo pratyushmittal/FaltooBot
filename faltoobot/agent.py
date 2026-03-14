@@ -40,6 +40,37 @@ class ReplyResult(TypedDict):
     usage: dict[str, Any] | None
 
 
+def agents_file(path: Path) -> Path:
+    return path / "AGENTS.md"
+
+
+def read_agents_text(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8").strip()
+    return text or None
+
+
+def instruction_parts(config: Config, session: Session) -> list[str]:
+    parts = [config.system_prompt]
+    seen = set[Path]()
+    for base, label in (
+        (config.root, "Global AGENTS.md"),
+        (session.workspace, "Session AGENTS.md"),
+    ):
+        agents_path = agents_file(base).resolve()
+        if agents_path in seen:
+            continue
+        seen.add(agents_path)
+        if text := read_agents_text(agents_path):
+            parts.append(f"{label}:\n{text}")
+    return parts
+
+
+def system_instructions(config: Config, session: Session) -> str:
+    return "\n\n".join(part for part in instruction_parts(config, session) if part)
+
+
 def message(role: Literal["user", "assistant", "system", "developer"], content: str) -> Message:
     return {"type": "message", "role": role, "content": content}
 
@@ -281,11 +312,12 @@ async def reply(
     messages: list[Any],
 ) -> ReplyResult:
     items: list[Any] = input_messages(messages)
+    instructions = system_instructions(config, session)
     while True:
         response = await openai_client.responses.create(
             model=config.openai_model,
             input=items,  # type: ignore[arg-type]
-            instructions=config.system_prompt,
+            instructions=instructions,
             reasoning={"effort": config.openai_thinking},
             store=False,
             parallel_tool_calls=True,
