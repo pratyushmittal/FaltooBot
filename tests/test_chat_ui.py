@@ -357,6 +357,42 @@ async def test_textual_app_shows_completed_reply_without_restart(
 
 
 @pytest.mark.anyio
+async def test_textual_app_preserves_live_thinking_line_breaks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_reasoning_delta"]("**Calculating a date**\n\nDetails here")
+        await release.wait()
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "enter")
+        await pilot.pause()
+        assert app.runtime.live_entry is not None
+        assert app.runtime.live_entry.kind == "thinking"
+        assert app.runtime.live_entry.content == "Calculating a date\n\nDetails here"
+        transcript = app.query_one("#transcript", RichLog)
+        lines = [line.text for line in transcript.lines]
+        assert any("Calculating a date" in line for line in lines)
+        assert any("Details here" in line for line in lines)
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
 async def test_textual_app_shift_enter_keeps_multiline_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

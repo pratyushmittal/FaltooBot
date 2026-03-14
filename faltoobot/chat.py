@@ -209,7 +209,7 @@ def rich_renderable(kind: str, content: str) -> Text | Group:
 def stream_text(kind: str, delta: str) -> str:
     if kind != "thinking":
         return delta
-    return delta.replace("**", "").replace("`", "").replace("\n", " ")
+    return delta.replace("**", "").replace("`", "")
 
 
 @dataclass(slots=True)
