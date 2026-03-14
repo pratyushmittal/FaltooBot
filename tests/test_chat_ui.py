@@ -293,6 +293,46 @@ async def test_chat_streams_bot_reply_live(
 
 
 @pytest.mark.anyio
+async def test_chat_streams_inline_styles_in_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, color_system="truecolor", width=120)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_text_delta"]("**bold** ")
+        await kwargs["on_text_delta"]("hi")
+        started.set()
+        await release.wait()
+        return {
+            "text": "**bold** hi",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("hi")
+    await started.wait()
+
+    raw = output.getvalue()
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
+    assert "\x1b[1A" in raw
+    assert "bot> bold hi" in plain
+
+    release.set()
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+
+@pytest.mark.anyio
 async def test_chat_restores_rich_formatting_after_stream_in_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -322,7 +362,6 @@ async def test_chat_restores_rich_formatting_after_stream_in_terminal(
     text = output.getvalue()
     plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
     assert "\x1b[1A" in text
-    assert "**bold** answer" in text
     assert "bold answer" in plain
 
 

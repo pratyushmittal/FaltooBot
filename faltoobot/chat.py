@@ -44,6 +44,10 @@ BODY_STYLES = {
     "opened": "#d7e3ef",
 }
 STATUS_STYLE = "bold #8ea4bc on #0b1520"
+STREAM_INLINE_STYLES = (
+    ("`", "bold #ffe7c2 on #243244"),
+    ("**", "bold"),
+)
 
 
 def default_session_name() -> str:
@@ -103,6 +107,43 @@ def render_line(kind: str, content: str) -> Text:
     return text
 
 
+def merge_styles(kind: str, extra: str = "") -> str:
+    base = BODY_STYLES.get(kind, "#eef3f9")
+    return f"{base} {extra}".strip()
+
+
+def stream_renderable(kind: str, content: str) -> Text:
+    if kind not in RICH_KINDS:
+        return render_line(kind, content)
+    text = Text()
+    text.append(f"{kind}> ", style=PREFIX_STYLES[kind])
+    index = 0
+    while index < len(content):
+        marker = next((token for token, _ in STREAM_INLINE_STYLES if content.startswith(token, index)), None)
+        if marker is not None:
+            end = content.find(marker, index + len(marker))
+            if end != -1:
+                marker_style = next(style for token, style in STREAM_INLINE_STYLES if token == marker)
+                text.append(content[index + len(marker) : end], style=merge_styles(kind, marker_style))
+                index = end + len(marker)
+                continue
+            text.append(marker, style=merge_styles(kind))
+            index += len(marker)
+            continue
+        next_marker = min(
+            (
+                position
+                for token, _ in STREAM_INLINE_STYLES
+                for position in [content.find(token, index)]
+                if position != -1
+            ),
+            default=len(content),
+        )
+        text.append(content[index:next_marker], style=merge_styles(kind))
+        index = next_marker
+    return text
+
+
 def looks_like_markdown(content: str) -> bool:
     return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
 
@@ -117,13 +158,11 @@ def rich_renderable(kind: str, content: str) -> Text | Group:
     return render_line(kind, content)
 
 
-def render_ansi(kind: str, content: str) -> str:
+def render_ansi(kind: str, content: str, *, streaming: bool = False) -> str:
     capture = io.StringIO()
     width = shutil.get_terminal_size((100, 20)).columns
-    Console(file=capture, force_terminal=True, color_system="truecolor", width=width).print(
-        rich_renderable(kind, content),
-        end="",
-    )
+    renderable = stream_renderable(kind, content) if streaming else rich_renderable(kind, content)
+    Console(file=capture, force_terminal=True, color_system="truecolor", width=width).print(renderable)
     return capture.getvalue()
 
 
@@ -217,6 +256,15 @@ class ChatRuntime:
         self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
         self.console.file.flush()
 
+    def redraw_stream(self, kind: str, content: str, lines: int) -> int:
+        if not self.console.is_terminal:
+            return lines
+        if lines:
+            self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
+        self.console.file.write(render_ansi(kind, content, streaming=True))
+        self.console.file.flush()
+        return streamed_line_count(kind, content, max(1, self.console.width))
+
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
         if not text:
@@ -277,48 +325,60 @@ class ChatRuntime:
         self.session = session
         active_stream: str | None = None
         active_text = ""
+        active_lines = 0
         streamed_blocks: list[tuple[str, str]] = []
         streamed_bot = False
         streamed_thinking = False
 
         def start_stream(kind: str) -> None:
-            nonlocal active_stream, active_text
+            nonlocal active_stream, active_text, active_lines
             if active_stream == kind:
                 return
             if active_stream:
                 streamed_blocks.append((active_stream, active_text))
-                self.end_stream()
-            self.start_stream(kind)
+                if not self.console.is_terminal:
+                    self.end_stream()
+            if not self.console.is_terminal:
+                self.start_stream(kind)
             active_stream = kind
             active_text = ""
+            active_lines = 0
 
         async def on_text_delta(delta: str) -> None:
-            nonlocal streamed_bot, active_text
+            nonlocal streamed_bot, active_lines, active_text
             if not delta:
                 return
             start_stream("bot")
             streamed_bot = True
             chunk = stream_text("bot", delta)
             active_text += chunk
+            if self.console.is_terminal:
+                active_lines = self.redraw_stream("bot", active_text, active_lines)
+                return
             self.append_stream(chunk)
 
         async def on_reasoning_delta(delta: str) -> None:
-            nonlocal streamed_thinking, active_text
+            nonlocal streamed_thinking, active_lines, active_text
             if not delta:
                 return
             start_stream("thinking")
             streamed_thinking = True
             chunk = stream_text("thinking", delta)
             active_text += chunk
+            if self.console.is_terminal:
+                active_lines = self.redraw_stream("thinking", active_text, active_lines)
+                return
             self.append_stream(chunk)
 
         async def on_reasoning_done() -> None:
-            nonlocal active_stream, active_text
+            nonlocal active_lines, active_stream, active_text
             if active_stream != "thinking":
                 return
             streamed_blocks.append(("thinking", active_text))
-            self.end_stream()
+            if not self.console.is_terminal:
+                self.end_stream()
             active_stream = None
+            active_lines = 0
             active_text = ""
 
         self.current_reply_task = asyncio.create_task(
@@ -337,13 +397,15 @@ class ChatRuntime:
         except asyncio.CancelledError:
             if active_stream:
                 streamed_blocks.append((active_stream, active_text))
-                self.end_stream()
+                if not self.console.is_terminal:
+                    self.end_stream()
             self.write("meta", "reply interrupted")
             return
         except Exception as exc:
             if active_stream:
                 streamed_blocks.append((active_stream, active_text))
-                self.end_stream()
+                if not self.console.is_terminal:
+                    self.end_stream()
             self.write("error", str(exc))
             return
         finally:
@@ -366,7 +428,8 @@ class ChatRuntime:
         )
         if active_stream:
             streamed_blocks.append((active_stream, active_text))
-            self.end_stream()
+            if not self.console.is_terminal:
+                self.end_stream()
         if streamed_blocks:
             self.replace_streamed_output(streamed_blocks)
         if not streamed_thinking:
