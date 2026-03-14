@@ -374,7 +374,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         config,
         name=name,
         writer=lambda fragments: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE),
-        rich_writer=lambda text: print_formatted_text(ANSI(text), end=""),
+        rich_writer=lambda text: print_formatted_text(ANSI(text)),
         stream_start=lambda fragments: print_formatted_text(
             FormattedText(fragments),
             style=PROMPT_STYLE,

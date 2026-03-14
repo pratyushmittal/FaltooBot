@@ -143,6 +143,39 @@ async def test_run_chat_uses_prompt_toolkit_writer(
 
 
 @pytest.mark.anyio
+async def test_run_chat_replays_existing_history_with_newlines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    session = cli_session(config.sessions_dir, "CLI test", workspace)
+    add_turn(session, "user", "hello")
+    printed: list[tuple[str, str]] = []
+
+    class FakePromptSession:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def prompt_async(self, *args: object, **kwargs: object) -> str:
+            raise EOFError
+
+    def fake_print_formatted_text(*values: object, **kwargs: object) -> None:
+        printed.append(("".join(str(value) for value in values), kwargs.get("end", "\n")))
+
+    monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
+    monkeypatch.setattr("faltoobot.chat.print_formatted_text", fake_print_formatted_text)
+    monkeypatch.setattr(
+        "faltoobot.chat.render_ansi",
+        lambda kind, content: f"{kind}> {content}",
+    )
+
+    await run_chat(config=config)
+
+    assert any("you> hello" in text and end == "\n" for text, end in printed)
+
+
+@pytest.mark.anyio
 async def test_tree_opens_current_session_messages_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
