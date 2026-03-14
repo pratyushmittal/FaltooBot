@@ -126,7 +126,13 @@ async def handle_prompt(
         session_items(session),
     )
     answer = result["text"]
-    session = add_turn(session, "assistant", answer, items=result["output_items"])
+    session = add_turn(
+        session,
+        "assistant",
+        answer,
+        items=result["output_items"],
+        instructions=result["instructions"],
+    )
     await send_text(client, event, answer)
     return session
 

@@ -79,6 +79,8 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
     assert messages[1]["content"] == "FALTOO_E2E_OK"
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
+    assert "instructions" in messages[1]
+    assert "Reply with exactly the requested text when asked to do so." in messages[1]["instructions"]
 
 
 @pytest.mark.anyio
@@ -112,6 +114,7 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     assert messages[1]["content"] == str(workspace)
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
+    assert "instructions" in messages[1]
 
 
 @pytest.mark.anyio

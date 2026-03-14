@@ -40,6 +40,7 @@ class ReplyResult(TypedDict):
     text: str
     output_items: list[dict[str, Any]]
     usage: dict[str, Any] | None
+    instructions: str
 
 
 def agents_file(path: Path) -> Path:
@@ -332,6 +333,7 @@ def reply_result(response: Any) -> ReplyResult:
         "text": text or "I couldn't generate a reply just now.",
         "output_items": [item for item in outputs if isinstance(item, dict)],
         "usage": response_usage(response),
+        "instructions": "",
     }
 
 
@@ -353,13 +355,14 @@ async def reply(
     messages: list[Any],
 ) -> ReplyResult:
     items: list[Any] = input_messages(messages)
+    instructions = system_instructions(config, session)
     while True:
         response = await openai_client.responses.create(**request_args(config, session, items))
         outputs = input_items(response.output)
         items = prune_items([*items, *outputs])
         next_items = tool_outputs(config, session, outputs)
         if not next_items:
-            return reply_result(response)
+            return {**reply_result(response), "instructions": instructions}
         items.extend(next_items)
 
 
@@ -371,6 +374,7 @@ async def stream_reply(
     on_text_delta: Callable[[str], Any] | None = None,
 ) -> ReplyResult:
     items: list[Any] = input_messages(messages)
+    instructions = system_instructions(config, session)
     while True:
         async with openai_client.responses.stream(**request_args(config, session, items)) as stream:
             async for event in stream:
@@ -381,5 +385,5 @@ async def stream_reply(
         items = prune_items([*items, *outputs])
         next_items = tool_outputs(config, session, outputs)
         if not next_items:
-            return reply_result(response)
+            return {**reply_result(response), "instructions": instructions}
         items.extend(next_items)

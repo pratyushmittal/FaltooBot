@@ -212,6 +212,7 @@ async def test_chat_shows_thinking_summary_for_live_reply(
                 }
             ],
             "usage": None,
+            "instructions": "test instructions",
         }
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
@@ -237,7 +238,12 @@ async def test_chat_renders_markdown_for_user_and_bot_messages(
     console, output = runtime_console()
 
     async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        return {"text": "**bold** answer", "output_items": [], "usage": None}
+        return {
+            "text": "**bold** answer",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
 
@@ -271,6 +277,7 @@ async def test_chat_renders_markdown_for_thinking_messages(
                 }
             ],
             "usage": None,
+            "instructions": "test instructions",
         }
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
@@ -298,7 +305,12 @@ async def test_chat_streams_bot_reply_live(
         callback = kwargs["on_text_delta"]
         await callback("hel")
         await callback("lo")
-        return {"text": "hello", "output_items": [], "usage": None}
+        return {
+            "text": "hello",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
 
@@ -378,7 +390,12 @@ async def test_chat_queues_messages_while_reply_is_running(
         if len(prompts) == 1:
             started.set()
             await release.wait()
-        return {"text": f"reply:{prompts[-1]}", "output_items": [], "usage": None}
+        return {
+            "text": f"reply:{prompts[-1]}",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
 

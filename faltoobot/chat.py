@@ -335,6 +335,7 @@ class ChatRuntime:
             answer,
             items=result["output_items"],
             usage=result["usage"],
+            instructions=result["instructions"],
         )
         if streamed:
             self.write_stream_end()

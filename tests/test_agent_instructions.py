@@ -88,6 +88,7 @@ async def test_reply_includes_global_and_session_agents_in_instructions(
 
     assert result["text"] == "ok"
     instructions = client.responses.calls[0]["instructions"]
+    assert result["instructions"] == instructions
     assert instructions == system_instructions(config, session)
     assert "Global AGENTS.md:\nGlobal guardrails." in instructions
     assert "Session AGENTS.md:\nSession rules." in instructions
@@ -132,3 +133,4 @@ async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytes
 
     assert deltas == ["hel", "lo"]
     assert result["text"] == "hello"
+    assert result["instructions"] == system_instructions(config, session)
