@@ -116,6 +116,33 @@ async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
 
 
 @pytest.mark.anyio
+async def test_run_chat_uses_prompt_toolkit_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    printed: list[str] = []
+
+    class FakePromptSession:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def prompt_async(self, *args: object, **kwargs: object) -> str:
+            raise EOFError
+
+    def fake_print_formatted_text(*values: object, **kwargs: object) -> None:
+        printed.extend(text for value in values for _style, text in value)
+
+    monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
+    monkeypatch.setattr("faltoobot.chat.print_formatted_text", fake_print_formatted_text)
+
+    await run_chat(config=config)
+
+    assert " faltoochat " in printed
+
+
+@pytest.mark.anyio
 async def test_tree_opens_current_session_messages_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

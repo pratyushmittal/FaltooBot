@@ -3,6 +3,7 @@ import asyncio
 import subprocess
 import sys
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +11,10 @@ from typing import Any
 
 from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.formatted_text import FormattedText, StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.text import Text
@@ -31,7 +33,17 @@ from faltoobot.store import (
 
 PROMPT_STYLE = Style.from_dict(
     {
+        "banner": "bold #08111b bg:#ffb347",
+        "banner_text": "bold #08111b bg:#ffb347",
+        "meta": "#8ea4bc",
         "prompt": "bold #ffb347",
+        "you": "#fff4df",
+        "bot": "bold #76c7ff",
+        "bot_text": "#e8f0f8",
+        "thinking": "bold #93a8bd",
+        "thinking_text": "#aab9c9",
+        "error": "bold #ff7b72",
+        "error_text": "#ffd5cf",
         "continuation": "#516a86",
         "toolbar": "fg:#8ea4bc bg:#0b1520",
     }
@@ -124,11 +136,35 @@ def render_line(kind: str, content: str) -> Text:
     return text
 
 
+def render_fragments(kind: str, content: str) -> StyleAndTextTuples:
+    if kind == "meta":
+        return [("class:meta", content)]
+    prefix_style = {
+        "you": "class:prompt",
+        "bot": "class:bot",
+        "thinking": "class:thinking",
+        "error": "class:error",
+        "opened": "class:meta",
+        "banner": "class:banner",
+    }.get(kind, "class:prompt")
+    body_style = {
+        "you": "class:you",
+        "bot": "class:bot_text",
+        "thinking": "class:thinking_text",
+        "error": "class:error_text",
+        "opened": "class:meta",
+        "banner": "class:banner_text",
+    }.get(kind, "")
+    prefix = f"{kind}> " if kind != "banner" else ""
+    return [(prefix_style, prefix), (body_style, content)]
+
+
 @dataclass(slots=True)
 class ChatRuntime:
     config: Config
     name: str | None = None
     console: Console = field(default_factory=Console)
+    writer: Callable[[StyleAndTextTuples], None] | None = None
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
@@ -145,7 +181,7 @@ class ChatRuntime:
         if self.client is None:
             self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
             self.own_client = True
-        self.console.print(Text(" faltoochat ", style="bold #08111b on #ffb347"))
+        self.write("banner", " faltoochat ")
         self.write("meta", f"session: {self.session.name} ({self.session.id})")
         self.write("meta", f"workspace: {self.session.workspace}")
         self.write("meta", help_text())
@@ -158,6 +194,9 @@ class ChatRuntime:
             await self.client.close()
 
     def write(self, kind: str, content: str) -> None:
+        if self.writer:
+            self.writer(render_fragments(kind, content))
+            return
         self.console.print(render_line(kind, content))
 
     async def submit(self, prompt: str) -> bool:
@@ -234,13 +273,24 @@ def build_chat_runtime(
     config: Config | None = None,
     name: str | None = None,
     console: Console | None = None,
+    writer: Callable[[StyleAndTextTuples], None] | None = None,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
-    return ChatRuntime(config or build_config(), name=name, console=console or Console(), client=client)
+    return ChatRuntime(
+        config or build_config(),
+        name=name,
+        console=console or Console(),
+        writer=writer,
+        client=client,
+    )
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    runtime = build_chat_runtime(config, name=name)
+    runtime = build_chat_runtime(
+        config,
+        name=name,
+        writer=lambda fragments: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE),
+    )
     prompt_session = PromptSession(erase_when_done=True)
     bindings = prompt_bindings()
     await runtime.start()
