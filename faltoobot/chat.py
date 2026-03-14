@@ -113,21 +113,45 @@ class FaltoochatApp(App[None]):
     CSS = """
     Screen {
         layout: vertical;
+        background: #08111b;
+        color: #eef3f9;
     }
 
     #messages {
         height: 1fr;
-        border: round $accent;
+        margin: 1 1 0 1;
+        padding: 1 2;
+        background: #0f1b28;
+        color: #e8f0f8;
+        scrollbar-background: #0f1b28;
+        scrollbar-background-hover: #16263a;
+        scrollbar-color: #30465f;
+        scrollbar-color-active: #e39b31;
     }
 
     #prompt {
         margin-top: 1;
-        height: 3;
+        margin: 1 1 0 1;
+        padding: 0 1;
+        min-height: 3;
+        height: 4;
+        background: #1a2432;
+        color: #fff4df;
+        scrollbar-background: #1a2432;
+        scrollbar-background-hover: #243244;
+        scrollbar-color: #516a86;
+        scrollbar-color-active: #ffb347;
+    }
+
+    #prompt:focus {
+        background: #223247;
     }
 
     #status {
-        color: $text-muted;
-        margin: 0 1;
+        color: #8ea4bc;
+        background: #0b1520;
+        margin: 0 1 1 1;
+        padding: 0 2;
         height: auto;
     }
     """
