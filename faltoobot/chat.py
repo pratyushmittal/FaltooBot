@@ -1,5 +1,7 @@
 import argparse
 import asyncio
+import io
+import shutil
 import subprocess
 import sys
 from collections import deque
@@ -11,12 +13,14 @@ from typing import Any
 
 from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import FormattedText, StyleAndTextTuples
+from prompt_toolkit.formatted_text import ANSI, FormattedText, StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.styles import Style
-from rich.console import Console
+from rich.console import Console, Group
+from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.text import Text
 
 from faltoobot.agent import stream_reply
@@ -135,6 +139,32 @@ def render_line(kind: str, content: str) -> Text:
     return text
 
 
+def looks_like_markdown(content: str) -> bool:
+    return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
+
+
+def render_markdown_block(kind: str, content: str) -> Group:
+    prefix = render_line(kind, "")
+    body = Padding(Markdown(content), (0, 0, 0, 2))
+    return Group(prefix, body)
+
+
+def rich_renderable(kind: str, content: str) -> Text | Group:
+    if kind in {"you", "bot"} and looks_like_markdown(content):
+        return render_markdown_block(kind, content)
+    return render_line(kind, content)
+
+
+def render_ansi(kind: str, content: str) -> str:
+    capture = io.StringIO()
+    width = shutil.get_terminal_size((100, 20)).columns
+    Console(file=capture, force_terminal=True, color_system="truecolor", width=width).print(
+        rich_renderable(kind, content),
+        end="",
+    )
+    return capture.getvalue()
+
+
 def render_fragments(kind: str, content: str) -> StyleAndTextTuples:
     if kind == "meta":
         return [("class:meta", content)]
@@ -164,6 +194,7 @@ class ChatRuntime:
     name: str | None = None
     console: Console = field(default_factory=Console)
     writer: Callable[[StyleAndTextTuples], None] | None = None
+    rich_writer: Callable[[str], None] | None = None
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
@@ -196,10 +227,13 @@ class ChatRuntime:
             await self.client.close()
 
     def write(self, kind: str, content: str) -> None:
+        if self.rich_writer and kind in {"you", "bot"}:
+            self.rich_writer(render_ansi(kind, content))
+            return
         if self.writer:
             self.writer(render_fragments(kind, content))
             return
-        self.console.print(render_line(kind, content))
+        self.console.print(rich_renderable(kind, content))
 
     def write_stream_start(self, kind: str) -> None:
         fragments = render_fragments(kind, "")
@@ -315,6 +349,7 @@ def build_chat_runtime(
     name: str | None = None,
     console: Console | None = None,
     writer: Callable[[StyleAndTextTuples], None] | None = None,
+    rich_writer: Callable[[str], None] | None = None,
     stream_start: Callable[[StyleAndTextTuples], None] | None = None,
     stream_delta: Callable[[str], None] | None = None,
     stream_end: Callable[[], None] | None = None,
@@ -325,6 +360,7 @@ def build_chat_runtime(
         name=name,
         console=console or Console(),
         writer=writer,
+        rich_writer=rich_writer,
         stream_start=stream_start,
         stream_delta=stream_delta,
         stream_end=stream_end,
@@ -337,6 +373,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         config,
         name=name,
         writer=lambda fragments: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE),
+        rich_writer=lambda text: print_formatted_text(ANSI(text), end=""),
         stream_start=lambda fragments: print_formatted_text(
             FormattedText(fragments),
             style=PROMPT_STYLE,

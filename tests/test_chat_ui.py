@@ -229,6 +229,31 @@ async def test_chat_shows_thinking_summary_for_live_reply(
 
 
 @pytest.mark.anyio
+async def test_chat_renders_markdown_for_user_and_bot_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        return {"text": "**bold** answer", "output_items": [], "usage": None}
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("**bold** prompt")
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    assert "**bold**" not in text
+    assert "bold prompt" in text
+    assert "bold answer" in text
+
+
+@pytest.mark.anyio
 async def test_chat_streams_bot_reply_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
