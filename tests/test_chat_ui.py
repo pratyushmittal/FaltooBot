@@ -137,5 +137,25 @@ async def test_chat_shows_thinking_summary_for_live_reply(
     await runtime.close()
 
     text = output.getvalue()
+    assert text.count("you> hi") == 1
     assert "thinking> Planning the answer." in text
     assert "bot> done" in text
+
+
+@pytest.mark.anyio
+async def test_command_is_printed_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+    opened: list[Path] = []
+    monkeypatch.setattr("faltoobot.chat.open_in_default_editor", lambda path: opened.append(path))
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("/tree")
+    await runtime.close()
+
+    text = output.getvalue()
+    assert text.count("you> /tree") == 1

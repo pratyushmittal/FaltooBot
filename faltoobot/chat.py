@@ -158,6 +158,7 @@ class ChatRuntime:
         text = prompt.strip()
         if not text:
             return True
+        self.write("you", text)
         if text == "/help":
             self.write("meta", help_text())
             return True
@@ -179,7 +180,6 @@ class ChatRuntime:
     async def handle_prompt(self, prompt: str) -> None:
         if not self.session or not self.client:
             raise RuntimeError("chat session is not ready")
-        self.write("you", prompt)
         self.session = add_turn(self.session, "user", prompt)
         try:
             result = await reply(
@@ -231,6 +231,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
                 style=PROMPT_STYLE,
                 multiline=True,
                 wrap_lines=True,
+                erase_when_done=True,
                 bottom_toolbar=lambda: prompt_toolbar(runtime.config),
                 prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
                 key_bindings=bindings,
