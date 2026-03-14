@@ -5,21 +5,12 @@ import shutil
 import subprocess
 import sys
 from collections import deque
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
-from prompt_toolkit import PromptSession
-from prompt_toolkit.application import run_in_terminal
-from prompt_toolkit.application.current import get_app_or_none
-from prompt_toolkit.formatted_text import ANSI, FormattedText, StyleAndTextTuples
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.shortcuts import print_formatted_text
-from prompt_toolkit.styles import Style
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.padding import Padding
@@ -51,40 +42,7 @@ BODY_STYLES = {
     "error": "#ffd5cf",
     "opened": "#d7e3ef",
 }
-FRAGMENT_PREFIX_STYLES = {
-    "you": "class:prompt",
-    "bot": "class:bot",
-    "thinking": "class:thinking",
-    "error": "class:error",
-    "opened": "class:meta",
-    "banner": "class:banner",
-}
-FRAGMENT_BODY_STYLES = {
-    "you": "class:you",
-    "bot": "class:bot_text",
-    "thinking": "class:thinking_text",
-    "error": "class:error_text",
-    "opened": "class:meta",
-    "banner": "class:banner_text",
-}
-
-PROMPT_STYLE = Style.from_dict(
-    {
-        "banner": "bold #08111b bg:#ffb347",
-        "banner_text": "bold #08111b bg:#ffb347",
-        "meta": "#8ea4bc",
-        "prompt": "bold #ffb347",
-        "you": "#fff4df",
-        "bot": "bold #76c7ff",
-        "bot_text": "#e8f0f8",
-        "thinking": "bold #93a8bd",
-        "thinking_text": "#aab9c9",
-        "error": "bold #ff7b72",
-        "error_text": "#ffd5cf",
-        "continuation": "#516a86",
-        "toolbar": "fg:#8ea4bc bg:#0b1520",
-    }
-)
+STATUS_STYLE = "bold #8ea4bc on #0b1520"
 
 
 def default_session_name() -> str:
@@ -101,6 +59,10 @@ def session_name(name: str | None) -> str:
 
 def status_text(config: Config) -> str:
     return f"model: {config.openai_model}  thinking: {config.openai_thinking}"
+
+
+def input_hint(config: Config) -> str:
+    return f"{status_text(config)}  Enter send  Ctrl+C interrupt"
 
 
 def open_in_default_editor(path: Path) -> None:
@@ -131,40 +93,6 @@ def history_entries(session: Session) -> list[tuple[str, str]]:
     ]
 
 
-def prompt_toolbar(config: Config) -> StyleAndTextTuples:
-    return [("class:toolbar", f" {status_text(config)}  Enter send  Ctrl+J newline  Ctrl+Q interrupt ")]
-
-
-def prompt_message(config: Config, live_kind: str | None = None, live_text: str = "") -> StyleAndTextTuples:
-    fragments = [*prompt_toolbar(config), ("", "\n")]
-    if live_kind and live_text:
-        fragments.extend(render_fragments(live_kind, live_text))
-        fragments.append(("", "\n"))
-    fragments.append(("class:prompt", "you> "))
-    return fragments
-
-
-def prompt_bindings(on_interrupt: Callable[[], None] | None = None) -> KeyBindings:
-    bindings = KeyBindings()
-
-    @bindings.add("enter")
-    def submit(event: Any) -> None:
-        event.current_buffer.validate_and_handle()
-
-    @bindings.add("c-j")
-    @bindings.add("escape", "enter")
-    def newline(event: Any) -> None:
-        event.current_buffer.insert_text("\n")
-
-    @bindings.add("c-q")
-    def interrupt(event: Any) -> None:
-        del event
-        if on_interrupt:
-            on_interrupt()
-
-    return bindings
-
-
 def render_line(kind: str, content: str) -> Text:
     if kind == "meta":
         return Text(content, style="dim #8ea4bc")
@@ -179,13 +107,11 @@ def looks_like_markdown(content: str) -> bool:
 
 
 def render_markdown_block(kind: str, content: str) -> Group:
-    prefix = render_line(kind, "")
-    body = Padding(Markdown(content), (0, 0, 0, 2))
-    return Group(prefix, body)
+    return Group(render_line(kind, ""), Padding(Markdown(content), (0, 0, 0, 2)))
 
 
 def rich_renderable(kind: str, content: str) -> Text | Group:
-    if kind in {"you", "bot", "thinking"} and looks_like_markdown(content):
+    if kind in RICH_KINDS and looks_like_markdown(content):
         return render_markdown_block(kind, content)
     return render_line(kind, content)
 
@@ -200,28 +126,14 @@ def render_ansi(kind: str, content: str) -> str:
     return capture.getvalue()
 
 
-def render_fragments(kind: str, content: str) -> StyleAndTextTuples:
-    if kind == "meta":
-        return [("class:meta", content)]
-    prefix = f"{kind}> " if kind != "banner" else ""
-    return [
-        (FRAGMENT_PREFIX_STYLES.get(kind, "class:prompt"), prefix),
-        (FRAGMENT_BODY_STYLES.get(kind, ""), content),
-    ]
-
-
 def stream_text(kind: str, delta: str) -> str:
     if kind != "thinking":
         return delta
     return delta.replace("**", "").replace("`", "").replace("\n", " ")
 
 
-async def emit_callback(callback: Callable[..., Any] | None, *args: Any) -> None:
-    if not callback:
-        return
-    result = callback(*args)
-    if asyncio.iscoroutine(result):
-        await result
+async def read_input(prompt: str) -> str:
+    return await asyncio.to_thread(input, prompt)
 
 
 @dataclass(slots=True)
@@ -229,19 +141,12 @@ class ChatRuntime:
     config: Config
     name: str | None = None
     console: Console = field(default_factory=Console)
-    writer: Callable[[StyleAndTextTuples], Any] | None = None
-    rich_writer: Callable[[str], Any] | None = None
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
     pending_prompts: deque[str] = field(default_factory=deque)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[dict[str, Any]] | None = None
-    stream_start: Callable[[str], Any] | None = None
-    stream_delta: Callable[[str], Any] | None = None
-    stream_end: Callable[[], Any] | None = None
-    live_kind: str | None = None
-    live_text: str = ""
 
     def require_session(self) -> Session:
         if self.session is None:
@@ -252,27 +157,6 @@ class ChatRuntime:
         if self.client is None:
             raise RuntimeError("chat session is not ready")
         return self.client
-
-    def prompt_message(self) -> StyleAndTextTuples:
-        return prompt_message(self.config, self.live_kind, self.live_text)
-
-    def refresh_prompt(self) -> None:
-        if app := get_app_or_none():
-            app.invalidate()
-
-    def start_live(self, kind: str) -> None:
-        self.live_kind = kind
-        self.live_text = ""
-        self.refresh_prompt()
-
-    def append_live(self, text: str) -> None:
-        self.live_text += text
-        self.refresh_prompt()
-
-    def end_live(self) -> None:
-        self.live_kind = None
-        self.live_text = ""
-        self.refresh_prompt()
 
     async def start(self) -> None:
         if not self.config.openai_api_key:
@@ -285,51 +169,42 @@ class ChatRuntime:
             self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
             self.own_client = True
         session = self.require_session()
-        await self.write("banner", " faltoochat ")
-        await self.write("meta", f"session: {session.name} ({session.id})")
-        await self.write("meta", f"workspace: {session.workspace}")
-        await self.write("meta", help_text())
+        self.write("banner", " faltoochat ")
+        self.write("meta", f"session: {session.name} ({session.id})")
+        self.write("meta", f"workspace: {session.workspace}")
+        self.write("meta", help_text())
         for kind, content in history_entries(session):
-            await self.write(kind, content)
+            self.write(kind, content)
 
     async def close(self) -> None:
         await self.wait_until_idle()
         if self.client and self.own_client:
             await self.client.close()
 
-    async def write(self, kind: str, content: str) -> None:
-        if self.rich_writer and kind in RICH_KINDS:
-            await emit_callback(self.rich_writer, render_ansi(kind, content))
-            return
-        if self.writer:
-            await emit_callback(self.writer, render_fragments(kind, content))
-            return
+    def write(self, kind: str, content: str) -> None:
         self.console.print(rich_renderable(kind, content))
 
-    async def write_stream_start(self, kind: str) -> None:
-        if self.stream_start:
-            await emit_callback(self.stream_start, kind)
-            return
-        self.console.file.write(f"{kind}> ")
+    def write_status(self) -> None:
+        self.console.print(Text(input_hint(self.config), style=STATUS_STYLE))
 
-    async def write_stream_delta(self, text: str) -> None:
-        if self.stream_delta:
-            await emit_callback(self.stream_delta, text)
-            return
+    def start_stream(self, kind: str) -> None:
+        self.console.file.write(f"{kind}> ")
+        self.console.file.flush()
+
+    def append_stream(self, text: str) -> None:
         if text:
             self.console.file.write(text)
+            self.console.file.flush()
 
-    async def write_stream_end(self) -> None:
-        if self.stream_end:
-            await emit_callback(self.stream_end)
-            return
+    def end_stream(self) -> None:
         self.console.file.write("\n")
+        self.console.file.flush()
 
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
         if not text:
             return True
-        await self.write("you", text)
+        self.write("you", text)
         command_result = await self.handle_command(text)
         if command_result is not None:
             return command_result
@@ -340,12 +215,12 @@ class ChatRuntime:
     async def handle_command(self, text: str) -> bool | None:
         match text:
             case "/help":
-                await self.write("meta", help_text())
+                self.write("meta", help_text())
                 return True
             case "/tree":
                 session = self.require_session()
                 open_in_default_editor(session.messages_file)
-                await self.write("opened", str(session.messages_file))
+                self.write("opened", str(session.messages_file))
                 return True
             case "/reset":
                 session = self.require_session()
@@ -355,7 +230,7 @@ class ChatRuntime:
                     session.workspace,
                 )
                 new_session = self.require_session()
-                await self.write("meta", f"new session: {new_session.name} ({new_session.id})")
+                self.write("meta", f"new session: {new_session.name} ({new_session.id})")
                 return True
             case "/exit":
                 return False
@@ -388,36 +263,36 @@ class ChatRuntime:
         streamed_bot = False
         streamed_thinking = False
 
-        async def start_stream(kind: str) -> None:
+        def start_stream(kind: str) -> None:
             nonlocal active_stream
             if active_stream == kind:
                 return
             if active_stream:
-                await self.write_stream_end()
-            await self.write_stream_start(kind)
+                self.end_stream()
+            self.start_stream(kind)
             active_stream = kind
 
         async def on_text_delta(delta: str) -> None:
             nonlocal streamed_bot
             if not delta:
                 return
-            await start_stream("bot")
+            start_stream("bot")
             streamed_bot = True
-            await self.write_stream_delta(stream_text("bot", delta))
+            self.append_stream(stream_text("bot", delta))
 
         async def on_reasoning_delta(delta: str) -> None:
             nonlocal streamed_thinking
             if not delta:
                 return
-            await start_stream("thinking")
+            start_stream("thinking")
             streamed_thinking = True
-            await self.write_stream_delta(stream_text("thinking", delta))
+            self.append_stream(stream_text("thinking", delta))
 
         async def on_reasoning_done() -> None:
             nonlocal active_stream
             if active_stream != "thinking":
                 return
-            await self.write_stream_end()
+            self.end_stream()
             active_stream = None
 
         self.current_reply_task = asyncio.create_task(
@@ -435,14 +310,17 @@ class ChatRuntime:
             result = await self.current_reply_task
         except asyncio.CancelledError:
             if active_stream:
-                await self.write_stream_end()
-            await self.write("meta", "reply interrupted")
+                self.end_stream()
+            self.write("meta", "reply interrupted")
             return
         except Exception as exc:
-            await self.write("error", str(exc))
+            if active_stream:
+                self.end_stream()
+            self.write("error", str(exc))
             return
         finally:
             self.current_reply_task = None
+
         answer = result["text"]
         assistant_turn = Turn(
             role="assistant",
@@ -451,7 +329,7 @@ class ChatRuntime:
             items=tuple(result["output_items"]),
         )
         self.session = add_turn(
-            self.session,
+            self.require_session(),
             "assistant",
             answer,
             items=result["output_items"],
@@ -459,71 +337,51 @@ class ChatRuntime:
             instructions=result["instructions"],
         )
         if active_stream:
-            await self.write_stream_end()
+            self.end_stream()
         if not streamed_thinking:
             for text in summary_lines(assistant_turn):
-                await self.write("thinking", text)
+                self.write("thinking", text)
         if not streamed_bot:
-            await self.write("bot", answer)
+            self.write("bot", answer)
 
 
 def build_chat_runtime(
     config: Config | None = None,
     name: str | None = None,
     console: Console | None = None,
-    writer: Callable[[StyleAndTextTuples], Any] | None = None,
-    rich_writer: Callable[[str], Any] | None = None,
-    stream_start: Callable[[str], Any] | None = None,
-    stream_delta: Callable[[str], Any] | None = None,
-    stream_end: Callable[[], Any] | None = None,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
     return ChatRuntime(
-        config or build_config(),
+        config=config or build_config(),
         name=name,
         console=console or Console(),
-        writer=writer,
-        rich_writer=rich_writer,
-        stream_start=stream_start,
-        stream_delta=stream_delta,
-        stream_end=stream_end,
         client=client,
     )
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    async def write_fragments(fragments: StyleAndTextTuples) -> None:
-        await run_in_terminal(lambda: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE))
-
-    async def write_rich(text: str) -> None:
-        await run_in_terminal(lambda: print_formatted_text(ANSI(text)))
-
-    runtime = build_chat_runtime(
-        config,
-        name=name,
-        writer=write_fragments,
-        rich_writer=write_rich,
-    )
-    runtime.stream_start = lambda kind: runtime.start_live(kind)
-    runtime.stream_delta = lambda text: runtime.append_live(text)
-    runtime.stream_end = lambda: runtime.end_live()
-    prompt_session = PromptSession(erase_when_done=True)
-    bindings = prompt_bindings(runtime.interrupt)
+    runtime = build_chat_runtime(config, name=name)
     await runtime.start()
     try:
-        with patch_stdout():
-            while True:
-                prompt = await prompt_session.prompt_async(
-                    getattr(runtime, "prompt_message", lambda: prompt_message(runtime.config)),
-                    style=PROMPT_STYLE,
-                    multiline=True,
-                    wrap_lines=True,
-                    prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
-                    key_bindings=bindings,
-                )
-                if not await runtime.submit(prompt):
-                    break
-    except (EOFError, KeyboardInterrupt):
+        while True:
+            runtime.write_status()
+            try:
+                prompt = await read_input("you> ")
+            except EOFError:
+                runtime.console.print()
+                break
+            except KeyboardInterrupt:
+                runtime.console.print()
+                break
+            if not await runtime.submit(prompt):
+                break
+            while runtime.processing_task:
+                try:
+                    await runtime.wait_until_idle()
+                except KeyboardInterrupt:
+                    if not runtime.interrupt():
+                        raise
+    except KeyboardInterrupt:
         runtime.console.print()
     finally:
         await runtime.close()
@@ -537,6 +395,4 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    import asyncio
-
     asyncio.run(run_chat(name=args.name))
