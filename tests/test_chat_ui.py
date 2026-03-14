@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from faltoobot.chat import build_chat_runtime, prompt_toolbar
+from faltoobot.chat import build_chat_runtime, prompt_bindings, prompt_toolbar, run_chat
 from faltoobot.config import build_config
 from faltoobot.store import add_turn, cli_session
 
@@ -57,6 +57,62 @@ def test_chat_shows_model_and_thinking_status(tmp_path: Path, monkeypatch: pytes
     assert f"model: {config.openai_model}" in text
     assert f"thinking: {config.openai_thinking}" in text
     assert "Ctrl+J newline" in text
+
+
+def test_prompt_bindings_build_successfully() -> None:
+    bindings = prompt_bindings()
+    keys = {tuple(binding.keys) for binding in bindings.bindings}
+
+    assert any(len(key) == 1 and str(key[0]) in {"Keys.ControlM", "Keys.Enter"} for key in keys)
+    assert any(len(key) == 1 and str(key[0]) == "Keys.ControlJ" for key in keys)
+    assert any(
+        len(key) == 2
+        and str(key[0]) == "Keys.Escape"
+        and str(key[1]) in {"Keys.ControlM", "Keys.Enter"}
+        for key in keys
+    )
+
+
+@pytest.mark.anyio
+async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    calls: list[dict[str, object]] = []
+
+    class FakePromptSession:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            calls.append({"init": kwargs})
+
+        async def prompt_async(self, *args: object, **kwargs: object) -> str:
+            calls.append({"prompt_async": kwargs})
+            raise EOFError
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.config = config
+            self.console = Console(file=StringIO(), force_terminal=False, width=80)
+            self.started = False
+            self.closed = False
+
+        async def start(self) -> None:
+            self.started = True
+
+        async def close(self) -> None:
+            self.closed = True
+
+    runtime = FakeRuntime()
+    monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
+    monkeypatch.setattr("faltoobot.chat.build_chat_runtime", lambda *args, **kwargs: runtime)
+
+    await run_chat(config=config)
+
+    assert runtime.started
+    assert runtime.closed
+    assert calls[0]["init"] == {"erase_when_done": True}
+    assert "erase_when_done" not in calls[1]["prompt_async"]
 
 
 @pytest.mark.anyio
