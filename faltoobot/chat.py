@@ -1,5 +1,7 @@
 import argparse
 import re
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -28,7 +30,7 @@ def default_session_name() -> str:
 
 
 def help_text() -> str:
-    return "Commands: /help, /reset, /exit"
+    return "Commands: /help, /tree, /reset, /exit"
 
 
 def session_name(name: str | None) -> str:
@@ -41,6 +43,11 @@ def thinking_mode(config: Config) -> str:
 
 def status_text(config: Config) -> str:
     return f"model: {config.openai_model}  thinking: {thinking_mode(config)}"
+
+
+def open_in_default_editor(path: Path) -> None:
+    command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
+    subprocess.Popen(command)  # noqa: S603
 
 
 class TranscriptArea(TextArea):
@@ -134,6 +141,11 @@ class FaltoochatApp(App[None]):
             return
         if prompt == "/help":
             self.write_line(help_text())
+            return
+        if prompt == "/tree":
+            if self.session:
+                open_in_default_editor(self.session.messages_file)
+                self.write_line(f"opened> {self.session.messages_file}")
             return
         if prompt == "/reset":
             if self.session:

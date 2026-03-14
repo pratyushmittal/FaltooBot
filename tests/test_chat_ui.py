@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static
@@ -34,3 +37,49 @@ async def test_chat_focuses_input_on_mount() -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.query_one(Input).has_focus
+
+
+@pytest.mark.anyio
+async def test_tree_opens_current_session_messages_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_dir = home / ".faltoobot"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.toml").write_text(
+        "\n".join(
+            [
+                "# Faltoobot config",
+                "",
+                "[openai]",
+                'api_key = "test-key"',
+                'model = "gpt-5.2"',
+                'thinking = "none"',
+                "",
+                "[bot]",
+                "allow_groups = false",
+                "allowed_chats = []",
+                f'system_prompt = {json.dumps("Test prompt.")}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
+
+    opened: list[Path] = []
+    monkeypatch.setattr("faltoobot.chat.open_in_default_editor", lambda path: opened.append(path))
+
+    app = build_chat_app()
+    async with app.run_test() as pilot:
+        input_widget = app.query_one(Input)
+        input_widget.value = "/tree"
+        input_widget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.session is not None
+        assert opened == [app.session.messages_file]
