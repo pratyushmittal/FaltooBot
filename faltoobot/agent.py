@@ -4,7 +4,7 @@ import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, TypedDict
 
 from openai import AsyncOpenAI
 
@@ -14,13 +14,6 @@ from faltoobot.store import Session
 COMPACT_THRESHOLD = 100_000
 DEFAULT_TIMEOUT_MS = 60_000
 MAX_SHELL_OUTPUT = 12_000
-
-
-class Message(TypedDict, total=False):
-    role: Literal["user", "assistant", "system", "developer"]
-    content: str
-    phase: Literal["commentary", "final_answer"]
-    type: Literal["message"]
 
 
 class Skill(TypedDict):
@@ -76,17 +69,6 @@ def system_instructions(config: Config, session: Session) -> str:
 
 def reasoning_config(config: Config) -> dict[str, str]:
     return {"effort": config.openai_thinking, "summary": "auto"}
-
-
-def message(role: Literal["user", "assistant", "system", "developer"], content: str) -> Message:
-    return {"type": "message", "role": role, "content": content}
-
-
-def assistant_message(
-    content: str,
-    phase: Literal["commentary", "final_answer"] = "final_answer",
-) -> Message:
-    return {"type": "message", "role": "assistant", "content": content, "phase": phase}
 
 
 def skills_dir(config: Config) -> Path:
@@ -157,27 +139,19 @@ def skill_tool() -> dict[str, Any]:
     }
 
 
-def shell_tool(config: Config) -> dict[str, Any]:
-    return {"type": "shell", "environment": {"type": "local"}}
+def tools() -> list[dict[str, Any]]:
+    return [
+        {"type": "shell", "environment": {"type": "local"}},
+        {"type": "web_search"},
+        skill_tool(),
+    ]
 
 
-def web_search_tool() -> dict[str, Any]:
-    return {"type": "web_search"}
-
-
-def tools(config: Config) -> list[dict[str, Any]]:
-    return [shell_tool(config), web_search_tool(), skill_tool()]
-
-
-def input_messages(messages: list[Any]) -> list[Any]:
-    return messages
-
-
-def input_items(items: list[Any]) -> list[Any]:
+def normalized_items(items: list[Any]) -> list[Any]:
     return [item.to_dict() if hasattr(item, "to_dict") else item for item in items]
 
 
-def response_usage(response: Any) -> dict[str, Any] | None:
+def usage_dict(response: Any) -> dict[str, Any] | None:
     usage = getattr(response, "usage", None)
     if usage is None:
         return None
@@ -186,7 +160,7 @@ def response_usage(response: Any) -> dict[str, Any] | None:
     return usage if isinstance(usage, dict) else None
 
 
-def prune_items(items: list[Any]) -> list[Any]:
+def compacted_items(items: list[Any]) -> list[Any]:
     for index in range(len(items) - 1, -1, -1):
         item = items[index]
         if isinstance(item, dict) and item.get("type") == "compaction":
@@ -205,18 +179,21 @@ def shell_output_limit(action: dict[str, Any]) -> int:
     return value if isinstance(value, int) and value > 0 else MAX_SHELL_OUTPUT
 
 
+def timeout_seconds(action: dict[str, Any]) -> float:
+    timeout_ms = action.get("timeout_ms")
+    timeout = timeout_ms if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS
+    return timeout / 1000
+
+
 def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
-    commands = action["commands"]
     max_output_length = shell_output_limit(action)
-    timeout_ms = action.get("timeout_ms")
-    timeout = (timeout_ms / 1000) if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS / 1000
     try:
         process = subprocess.run(
-            ["/bin/bash", "-lc", "\n".join(str(command) for command in commands)],
+            ["/bin/bash", "-lc", "\n".join(str(command) for command in action["commands"])],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout_seconds(action),
             cwd=str(session.workspace),
         )
         output = {
@@ -241,14 +218,12 @@ def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
 
 def run_local_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
-    timeout_ms = action.get("timeout_ms")
-    timeout = (timeout_ms / 1000) if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS / 1000
     try:
         process = subprocess.run(
             [str(part) for part in action["command"]],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout_seconds(action),
             cwd=action.get("working_directory") or str(session.workspace),
             env={
                 **os.environ,
@@ -297,50 +272,54 @@ def run_skill_call(config: Config, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def tool_outputs(config: Config, session: Session, items: list[Any]) -> list[dict[str, Any]]:
+def collect_tool_outputs(config: Config, session: Session, items: list[Any]) -> list[dict[str, Any]]:
     outputs: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        item_type = item.get("type")
-        if item_type == "shell_call":
-            outputs.append(run_shell_call(session, item))
-        elif item_type == "local_shell_call":
-            outputs.append(run_local_shell_call(session, item))
-        elif item_type == "function_call" and item.get("name") == "skills":
-            outputs.append(run_skill_call(config, item))
+        match item.get("type"), item.get("name"):
+            case "shell_call", _:
+                outputs.append(run_shell_call(session, item))
+            case "local_shell_call", _:
+                outputs.append(run_local_shell_call(session, item))
+            case "function_call", "skills":
+                outputs.append(run_skill_call(config, item))
+            case _:
+                pass
     return outputs
 
 
-def request_args(config: Config, session: Session, items: list[Any]) -> dict[str, Any]:
+def request_args(
+    config: Config,
+    session: Session,
+    items: list[Any],
+    instructions: str,
+) -> dict[str, Any]:
     return {
         "model": config.openai_model,
         "input": items,  # type: ignore[arg-type]
-        "instructions": system_instructions(config, session),
+        "instructions": instructions,
         "reasoning": reasoning_config(config),
         "store": False,
         "parallel_tool_calls": True,
         "include": ["reasoning.encrypted_content", "web_search_call.action.sources"],
         "context_management": [{"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}],
-        "tools": tools(config),  # type: ignore[arg-type]
+        "tools": tools(),  # type: ignore[arg-type]
     }
 
 
-def reply_result(response: Any) -> ReplyResult:
-    outputs = input_items(response.output)
+def build_reply_result(response: Any, instructions: str) -> ReplyResult:
+    outputs = normalized_items(response.output)
     text = (response.output_text or "").strip()
     return {
         "text": text or "I couldn't generate a reply just now.",
         "output_items": [item for item in outputs if isinstance(item, dict)],
-        "usage": response_usage(response),
-        "instructions": "",
+        "usage": usage_dict(response),
+        "instructions": instructions,
     }
 
 
-async def emit_text_delta(
-    callback: Callable[[str], Any] | None,
-    delta: str,
-) -> None:
+async def emit_text_delta(callback: Callable[[str], Any] | None, delta: str) -> None:
     if not callback or not delta:
         return
     result = callback(delta)
@@ -356,22 +335,38 @@ async def emit_event(callback: Callable[[], Any] | None) -> None:
         await result
 
 
+async def resolve_reply(
+    config: Config,
+    session: Session,
+    messages: list[Any],
+    instructions: str,
+    request: Callable[[list[Any]], Any],
+) -> ReplyResult:
+    items = list(messages)
+    while True:
+        response = await request(items)
+        outputs = normalized_items(response.output)
+        items = compacted_items([*items, *outputs])
+        next_items = collect_tool_outputs(config, session, outputs)
+        if not next_items:
+            return build_reply_result(response, instructions)
+        items.extend(next_items)
+
+
 async def reply(
     openai_client: AsyncOpenAI,
     config: Config,
     session: Session,
     messages: list[Any],
 ) -> ReplyResult:
-    items: list[Any] = input_messages(messages)
     instructions = system_instructions(config, session)
-    while True:
-        response = await openai_client.responses.create(**request_args(config, session, items))
-        outputs = input_items(response.output)
-        items = prune_items([*items, *outputs])
-        next_items = tool_outputs(config, session, outputs)
-        if not next_items:
-            return {**reply_result(response), "instructions": instructions}
-        items.extend(next_items)
+    return await resolve_reply(
+        config,
+        session,
+        messages,
+        instructions,
+        lambda items: openai_client.responses.create(**request_args(config, session, items, instructions)),
+    )
 
 
 async def stream_reply(
@@ -383,10 +378,12 @@ async def stream_reply(
     on_reasoning_delta: Callable[[str], Any] | None = None,
     on_reasoning_done: Callable[[], Any] | None = None,
 ) -> ReplyResult:
-    items: list[Any] = input_messages(messages)
     instructions = system_instructions(config, session)
-    while True:
-        async with openai_client.responses.stream(**request_args(config, session, items)) as stream:
+
+    async def stream_request(items: list[Any]) -> Any:
+        async with openai_client.responses.stream(
+            **request_args(config, session, items, instructions)
+        ) as stream:
             async for event in stream:
                 event_type = getattr(event, "type", None)
                 if event_type == "response.output_text.delta":
@@ -395,10 +392,6 @@ async def stream_reply(
                     await emit_text_delta(on_reasoning_delta, getattr(event, "delta", ""))
                 elif event_type == "response.reasoning_summary_text.done":
                     await emit_event(on_reasoning_done)
-            response = await stream.get_final_response()
-        outputs = input_items(response.output)
-        items = prune_items([*items, *outputs])
-        next_items = tool_outputs(config, session, outputs)
-        if not next_items:
-            return {**reply_result(response), "instructions": instructions}
-        items.extend(next_items)
+            return await stream.get_final_response()
+
+    return await resolve_reply(config, session, messages, instructions, stream_request)
