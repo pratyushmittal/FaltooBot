@@ -41,6 +41,7 @@ BODY_STYLES = {
     "opened": "#d7e3ef",
 }
 STATUS_STYLE = "bold #8ea4bc on #0b1520"
+TURN_KIND = {"user": "you", "assistant": "bot"}
 
 
 def default_session_name() -> str:
@@ -80,15 +81,15 @@ def summary_lines(turn: Turn) -> list[str]:
     ]
 
 
-def history_entries(session: Session) -> list[tuple[str, str]]:
+def turn_entries(turn: Turn) -> list[tuple[str, str]]:
     return [
-        entry
-        for turn in session.messages
-        for entry in [
-            *(("thinking", text) for text in summary_lines(turn)),
-            ("you" if turn.role == "user" else "bot", turn.content),
-        ]
+        *(("thinking", text) for text in summary_lines(turn)),
+        (TURN_KIND.get(turn.role, "bot"), turn.content),
     ]
+
+
+def history_entries(session: Session) -> list[tuple[str, str]]:
+    return [entry for turn in session.messages for entry in turn_entries(turn)]
 
 
 def render_line(kind: str, content: str) -> Text:
@@ -125,6 +126,13 @@ async def read_input(prompt: str) -> str:
 
 
 @dataclass(slots=True)
+class StreamState:
+    active_kind: str | None = None
+    saw_bot: bool = False
+    saw_thinking: bool = False
+
+
+@dataclass(slots=True)
 class ChatRuntime:
     config: Config
     name: str | None = None
@@ -146,23 +154,38 @@ class ChatRuntime:
             raise RuntimeError("chat session is not ready")
         return self.client
 
+    def cli_session(self, workspace: Path, name: str | None = None) -> Session:
+        if name is None:
+            existing = existing_cli_session(self.config.sessions_dir, workspace)
+            if existing is not None:
+                return existing
+        return cli_session(self.config.sessions_dir, session_name(name), workspace=workspace)
+
+    def start_client(self) -> None:
+        if self.client is None:
+            self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
+            self.own_client = True
+
+    def write_entries(self, entries: list[tuple[str, str]]) -> None:
+        for kind, content in entries:
+            self.write(kind, content)
+
     async def start(self) -> None:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
         workspace = Path.cwd()
-        self.session = (
-            existing_cli_session(self.config.sessions_dir, workspace) if self.name is None else None
-        ) or cli_session(self.config.sessions_dir, session_name(self.name), workspace=workspace)
-        if self.client is None:
-            self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
-            self.own_client = True
+        self.session = self.cli_session(workspace, self.name)
+        self.start_client()
         session = self.require_session()
-        self.write("banner", " faltoochat ")
-        self.write("meta", f"session: {session.name} ({session.id})")
-        self.write("meta", f"workspace: {session.workspace}")
-        self.write("meta", help_text())
-        for kind, content in history_entries(session):
-            self.write(kind, content)
+        self.write_entries(
+            [
+                ("banner", " faltoochat "),
+                ("meta", f"session: {session.name} ({session.id})"),
+                ("meta", f"workspace: {session.workspace}"),
+                ("meta", help_text()),
+                *history_entries(session),
+            ]
+        )
 
     async def close(self) -> None:
         await self.wait_until_idle()
@@ -184,6 +207,49 @@ class ChatRuntime:
 
     def end_stream(self) -> None:
         self.console.print()
+
+    def stream_delta(self, state: StreamState, kind: str, delta: str) -> None:
+        if not delta:
+            return
+        if state.active_kind != kind:
+            self.close_stream(state)
+            self.start_stream(kind)
+            state.active_kind = kind
+        if kind == "bot":
+            state.saw_bot = True
+        elif kind == "thinking":
+            state.saw_thinking = True
+        self.append_stream(kind, stream_text(kind, delta))
+
+    def close_stream(self, state: StreamState) -> None:
+        if state.active_kind is None:
+            return
+        self.end_stream()
+        state.active_kind = None
+
+    def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
+        answer = result["text"]
+        turn = Turn(
+            role="assistant",
+            content=answer,
+            created_at="",
+            items=tuple(result["output_items"]),
+        )
+        self.session = add_turn(
+            self.require_session(),
+            "assistant",
+            answer,
+            items=result["output_items"],
+            usage=result["usage"],
+            instructions=result["instructions"],
+        )
+        return turn
+
+    def render_assistant_turn(self, turn: Turn, state: StreamState) -> None:
+        if not state.saw_thinking:
+            self.write_entries([("thinking", text) for text in summary_lines(turn)])
+        if not state.saw_bot:
+            self.write("bot", turn.content)
 
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
@@ -208,11 +274,7 @@ class ChatRuntime:
                 return True
             case "/reset":
                 session = self.require_session()
-                self.session = cli_session(
-                    self.config.sessions_dir,
-                    session_name(None),
-                    session.workspace,
-                )
+                self.session = self.cli_session(session.workspace, default_session_name())
                 new_session = self.require_session()
                 self.write("meta", f"new session: {new_session.name} ({new_session.id})")
                 return True
@@ -243,41 +305,18 @@ class ChatRuntime:
     async def handle_prompt(self, prompt: str) -> None:
         session = add_turn(self.require_session(), "user", prompt)
         self.session = session
-        active_stream: str | None = None
-        streamed_bot = False
-        streamed_thinking = False
-
-        def start_stream(kind: str) -> None:
-            nonlocal active_stream
-            if active_stream == kind:
-                return
-            if active_stream:
-                self.end_stream()
-            self.start_stream(kind)
-            active_stream = kind
+        state = StreamState()
 
         async def on_text_delta(delta: str) -> None:
-            nonlocal streamed_bot
-            if not delta:
-                return
-            start_stream("bot")
-            streamed_bot = True
-            self.append_stream("bot", stream_text("bot", delta))
+            self.stream_delta(state, "bot", delta)
 
         async def on_reasoning_delta(delta: str) -> None:
-            nonlocal streamed_thinking
-            if not delta:
-                return
-            start_stream("thinking")
-            streamed_thinking = True
-            self.append_stream("thinking", stream_text("thinking", delta))
+            self.stream_delta(state, "thinking", delta)
 
         async def on_reasoning_done() -> None:
-            nonlocal active_stream
-            if active_stream != "thinking":
+            if state.active_kind != "thinking":
                 return
-            self.end_stream()
-            active_stream = None
+            self.close_stream(state)
 
         self.current_reply_task = asyncio.create_task(
             stream_reply(
@@ -293,40 +332,18 @@ class ChatRuntime:
         try:
             result = await self.current_reply_task
         except asyncio.CancelledError:
-            if active_stream:
-                self.end_stream()
+            self.close_stream(state)
             self.write("meta", "reply interrupted")
             return
         except Exception as exc:
-            if active_stream:
-                self.end_stream()
+            self.close_stream(state)
             self.write("error", str(exc))
             return
         finally:
             self.current_reply_task = None
 
-        answer = result["text"]
-        assistant_turn = Turn(
-            role="assistant",
-            content=answer,
-            created_at="",
-            items=tuple(result["output_items"]),
-        )
-        self.session = add_turn(
-            self.require_session(),
-            "assistant",
-            answer,
-            items=result["output_items"],
-            usage=result["usage"],
-            instructions=result["instructions"],
-        )
-        if active_stream:
-            self.end_stream()
-        if not streamed_thinking:
-            for text in summary_lines(assistant_turn):
-                self.write("thinking", text)
-        if not streamed_bot:
-            self.write("bot", answer)
+        self.close_stream(state)
+        self.render_assistant_turn(self.store_assistant_turn(result), state)
 
 
 def build_chat_runtime(
