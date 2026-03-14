@@ -364,6 +364,62 @@ async def test_chat_streams_bot_reply_live(
 
 
 @pytest.mark.anyio
+async def test_run_chat_streams_while_prompt_is_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    streamed = asyncio.Event()
+    printed: list[tuple[str, str]] = []
+    run_in_terminal_calls: list[int] = []
+
+    class FakePromptSession:
+        prompts = 0
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def prompt_async(self, *args: object, **kwargs: object) -> str:
+            type(self).prompts += 1
+            if type(self).prompts == 1:
+                return "hi"
+            await streamed.wait()
+            raise EOFError
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        callback = kwargs["on_text_delta"]
+        await callback("hel")
+        await callback("lo")
+        streamed.set()
+        return {
+            "text": "hello",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    async def fake_run_in_terminal(func: object, **kwargs: object) -> None:
+        del kwargs
+        run_in_terminal_calls.append(1)
+        func()  # type: ignore[operator]
+
+    def fake_print_formatted_text(*values: object, **kwargs: object) -> None:
+        printed.append(("".join(str(value) for value in values), kwargs.get("end", "\n")))
+
+    monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.run_in_terminal", fake_run_in_terminal)
+    monkeypatch.setattr("faltoobot.chat.print_formatted_text", fake_print_formatted_text)
+
+    await run_chat(config=config)
+
+    assert len(run_in_terminal_calls) >= 3
+    assert any("hel" in text and end == "" for text, end in printed)
+    assert any("lo" in text and end == "" for text, end in printed)
+
+
+@pytest.mark.anyio
 async def test_command_is_printed_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

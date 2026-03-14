@@ -13,6 +13,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.formatted_text import ANSI, FormattedText, StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -194,6 +195,14 @@ def render_fragments(kind: str, content: str) -> StyleAndTextTuples:
     return [(prefix_style, prefix), (body_style, content)]
 
 
+async def emit_callback(callback: Callable[..., Any] | None, *args: Any) -> None:
+    if not callback:
+        return
+    result = callback(*args)
+    if asyncio.iscoroutine(result):
+        await result
+
+
 @dataclass(slots=True)
 class ChatRuntime:
     config: Config
@@ -207,9 +216,9 @@ class ChatRuntime:
     pending_prompts: deque[str] = field(default_factory=deque)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[dict[str, Any]] | None = None
-    stream_start: Callable[[StyleAndTextTuples], None] | None = None
-    stream_delta: Callable[[str], None] | None = None
-    stream_end: Callable[[], None] | None = None
+    stream_start: Callable[[StyleAndTextTuples], Any] | None = None
+    stream_delta: Callable[[str], Any] | None = None
+    stream_end: Callable[[], Any] | None = None
 
     async def start(self) -> None:
         if not self.config.openai_api_key:
@@ -242,23 +251,23 @@ class ChatRuntime:
             return
         self.console.print(rich_renderable(kind, content))
 
-    def write_stream_start(self, kind: str) -> None:
+    async def write_stream_start(self, kind: str) -> None:
         fragments = render_fragments(kind, "")
         if self.stream_start:
-            self.stream_start(fragments)
+            await emit_callback(self.stream_start, fragments)
             return
         self.console.file.write(f"{kind}> ")
 
-    def write_stream_delta(self, text: str) -> None:
+    async def write_stream_delta(self, text: str) -> None:
         if self.stream_delta:
-            self.stream_delta(text)
+            await emit_callback(self.stream_delta, text)
             return
         if text:
             self.console.file.write(text)
 
-    def write_stream_end(self) -> None:
+    async def write_stream_end(self) -> None:
         if self.stream_end:
-            self.stream_end()
+            await emit_callback(self.stream_end)
             return
         self.console.file.write("\n")
 
@@ -320,9 +329,9 @@ class ChatRuntime:
             if not delta:
                 return
             if not streamed:
-                self.write_stream_start("bot")
+                await self.write_stream_start("bot")
                 streamed = True
-            self.write_stream_delta(delta)
+            await self.write_stream_delta(delta)
 
         self.current_reply_task = asyncio.create_task(
             stream_reply(
@@ -337,7 +346,7 @@ class ChatRuntime:
             result = await self.current_reply_task
         except asyncio.CancelledError:
             if streamed:
-                self.write_stream_end()
+                await self.write_stream_end()
             self.write("meta", "reply interrupted")
             return
         except Exception as exc:
@@ -361,7 +370,7 @@ class ChatRuntime:
             instructions=result["instructions"],
         )
         if streamed:
-            self.write_stream_end()
+            await self.write_stream_end()
         else:
             for text in summary_lines(assistant_turn):
                 self.write("thinking", text)
@@ -374,9 +383,9 @@ def build_chat_runtime(
     console: Console | None = None,
     writer: Callable[[StyleAndTextTuples], None] | None = None,
     rich_writer: Callable[[str], None] | None = None,
-    stream_start: Callable[[StyleAndTextTuples], None] | None = None,
-    stream_delta: Callable[[str], None] | None = None,
-    stream_end: Callable[[], None] | None = None,
+    stream_start: Callable[[StyleAndTextTuples], Any] | None = None,
+    stream_delta: Callable[[str], Any] | None = None,
+    stream_end: Callable[[], Any] | None = None,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
     return ChatRuntime(
@@ -393,18 +402,25 @@ def build_chat_runtime(
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
+    async def stream_start(fragments: StyleAndTextTuples) -> None:
+        await run_in_terminal(
+            lambda: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE, end=""),
+        )
+
+    async def stream_delta(text: str) -> None:
+        await run_in_terminal(lambda: print_formatted_text(text, style=PROMPT_STYLE, end=""))
+
+    async def stream_end() -> None:
+        await run_in_terminal(lambda: print_formatted_text("", style=PROMPT_STYLE))
+
     runtime = build_chat_runtime(
         config,
         name=name,
         writer=lambda fragments: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE),
         rich_writer=lambda text: print_formatted_text(ANSI(text)),
-        stream_start=lambda fragments: print_formatted_text(
-            FormattedText(fragments),
-            style=PROMPT_STYLE,
-            end="",
-        ),
-        stream_delta=lambda text: print_formatted_text(text, style=PROMPT_STYLE, end=""),
-        stream_end=lambda: print_formatted_text("", style=PROMPT_STYLE),
+        stream_start=stream_start,
+        stream_delta=stream_delta,
+        stream_end=stream_end,
     )
     prompt_session = PromptSession(erase_when_done=True)
     bindings = prompt_bindings(runtime.interrupt)
