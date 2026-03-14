@@ -129,6 +129,7 @@ source = { editable = "." }
 dependencies = [
     { name = "neonize" },
     { name = "openai" },
+    { name = "ratatui" },
     { name = "rich" },
 ]
 
@@ -144,6 +145,7 @@ dev = [
 requires-dist = [
     { name = "neonize", specifier = ">=0.3.15.post0" },
     { name = "openai", specifier = ">=1.107.0" },
+    { name = "ratatui", specifier = ">=0.4.2" },
     { name = "rich", specifier = ">=14.2.0" },
 ]
 
@@ -655,6 +657,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
 ]
+
+[[package]]
+name = "ratatui"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/ef/61a985816192cd3ee50ad5570a72f1fc6d22b86047771d5b72a05bbdc3eb/ratatui-0.4.2.tar.gz", hash = "sha256:2778b066378f8e1629b4b5e1076f1957c8c439b45cdeaf51970d1949730bb0d5", size = 5370149, upload-time = "2025-09-13T18:11:14.947Z" }
 
 [[package]]
 name = "requests"
