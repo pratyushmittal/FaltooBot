@@ -348,6 +348,14 @@ async def emit_text_delta(
         await result
 
 
+async def emit_event(callback: Callable[[], Any] | None) -> None:
+    if not callback:
+        return
+    result = callback()
+    if inspect.isawaitable(result):
+        await result
+
+
 async def reply(
     openai_client: AsyncOpenAI,
     config: Config,
@@ -372,14 +380,21 @@ async def stream_reply(
     session: Session,
     messages: list[Any],
     on_text_delta: Callable[[str], Any] | None = None,
+    on_reasoning_delta: Callable[[str], Any] | None = None,
+    on_reasoning_done: Callable[[], Any] | None = None,
 ) -> ReplyResult:
     items: list[Any] = input_messages(messages)
     instructions = system_instructions(config, session)
     while True:
         async with openai_client.responses.stream(**request_args(config, session, items)) as stream:
             async for event in stream:
-                if getattr(event, "type", None) == "response.output_text.delta":
+                event_type = getattr(event, "type", None)
+                if event_type == "response.output_text.delta":
                     await emit_text_delta(on_text_delta, getattr(event, "delta", ""))
+                elif event_type == "response.reasoning_summary_text.delta":
+                    await emit_text_delta(on_reasoning_delta, getattr(event, "delta", ""))
+                elif event_type == "response.reasoning_summary_text.done":
+                    await emit_event(on_reasoning_done)
             response = await stream.get_final_response()
         outputs = input_items(response.output)
         items = prune_items([*items, *outputs])

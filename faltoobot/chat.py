@@ -333,16 +333,41 @@ class ChatRuntime:
         if not self.session or not self.client:
             raise RuntimeError("chat session is not ready")
         self.session = add_turn(self.session, "user", prompt)
-        streamed = False
+        active_stream: str | None = None
+        streamed_bot = False
+        streamed_thinking = False
+
+        async def start_stream(kind: str) -> None:
+            nonlocal active_stream
+            if active_stream == kind:
+                return
+            if active_stream:
+                await self.write_stream_end()
+            await self.write_stream_start(kind)
+            active_stream = kind
 
         async def on_text_delta(delta: str) -> None:
-            nonlocal streamed
+            nonlocal streamed_bot
             if not delta:
                 return
-            if not streamed:
-                await self.write_stream_start("bot")
-                streamed = True
+            await start_stream("bot")
+            streamed_bot = True
             await self.write_stream_delta(delta)
+
+        async def on_reasoning_delta(delta: str) -> None:
+            nonlocal streamed_thinking
+            if not delta:
+                return
+            await start_stream("thinking")
+            streamed_thinking = True
+            await self.write_stream_delta(delta)
+
+        async def on_reasoning_done() -> None:
+            nonlocal active_stream
+            if active_stream != "thinking":
+                return
+            await self.write_stream_end()
+            active_stream = None
 
         self.current_reply_task = asyncio.create_task(
             stream_reply(
@@ -351,12 +376,14 @@ class ChatRuntime:
                 self.session,
                 session_items(self.session),
                 on_text_delta=on_text_delta,
+                on_reasoning_delta=on_reasoning_delta,
+                on_reasoning_done=on_reasoning_done,
             )
         )
         try:
             result = await self.current_reply_task
         except asyncio.CancelledError:
-            if streamed:
+            if active_stream:
                 await self.write_stream_end()
             await self.write_async("meta", "reply interrupted")
             return
@@ -380,11 +407,12 @@ class ChatRuntime:
             usage=result["usage"],
             instructions=result["instructions"],
         )
-        if streamed:
+        if active_stream:
             await self.write_stream_end()
-        else:
+        if not streamed_thinking:
             for text in summary_lines(assistant_turn):
                 await self.write_async("thinking", text)
+        if not streamed_bot:
             await self.write_async("bot", answer)
 
 

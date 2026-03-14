@@ -48,6 +48,8 @@ class FakeStreamManager:
     def __aiter__(self) -> "FakeStreamManager":
         self._events = iter(
             [
+                FakeStreamEvent("response.reasoning_summary_text.delta", "plan"),
+                FakeStreamEvent("response.reasoning_summary_text.done"),
                 FakeStreamEvent("response.output_text.delta", "hel"),
                 FakeStreamEvent("response.output_text.delta", "lo"),
             ]
@@ -122,6 +124,8 @@ async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytes
     session = create_cli_session(config.sessions_dir, "CLI test", workspace)
     client = FakeClient()
     deltas: list[str] = []
+    reasoning_deltas: list[str] = []
+    reasoning_done: list[str] = []
 
     result = await stream_reply(
         client,
@@ -129,8 +133,12 @@ async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytes
         session,
         [{"type": "message", "role": "user", "content": "hi"}],  # type: ignore[arg-type]
         on_text_delta=deltas.append,
+        on_reasoning_delta=reasoning_deltas.append,
+        on_reasoning_done=lambda: reasoning_done.append("done"),
     )
 
     assert deltas == ["hel", "lo"]
+    assert reasoning_deltas == ["plan"]
+    assert reasoning_done == ["done"]
     assert result["text"] == "hello"
     assert result["instructions"] == system_instructions(config, session)
