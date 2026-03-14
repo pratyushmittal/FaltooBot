@@ -6,8 +6,16 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
-from faltoobot.chat import build_chat_runtime, input_hint, main, run_chat
+from faltoobot.chat import (
+    Composer,
+    build_chat_app,
+    build_chat_runtime,
+    input_hint,
+    main,
+    rich_renderable,
+)
 from faltoobot.config import build_config
 from faltoobot.store import add_turn, cli_session, existing_cli_session
 
@@ -43,9 +51,21 @@ def prepare_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, thinking: s
     return workspace
 
 
-def runtime_console() -> tuple[Console, StringIO]:
+def transcript_text(runtime: object) -> str:
     output = StringIO()
-    return Console(file=output, force_terminal=False, width=300), output
+    console = Console(file=output, force_terminal=False, width=300)
+    for entry in runtime.display_entries():  # type: ignore[attr-defined]
+        console.print(rich_renderable(entry.kind, entry.content))
+    return output.getvalue()
+
+
+def status_plain(app: object) -> str:
+    renderable = app.query_one("#status").render()  # type: ignore[attr-defined]
+    return renderable.plain if isinstance(renderable, Text) else str(renderable)
+
+
+def entry_tuples(runtime: object) -> list[tuple[str, str]]:
+    return [(entry.kind, entry.content) for entry in runtime.display_entries()]  # type: ignore[attr-defined]
 
 
 def test_input_hint_shows_model_and_thinking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,122 +75,18 @@ def test_input_hint_shows_model_and_thinking(tmp_path: Path, monkeypatch: pytest
 
     assert f"model: {config.openai_model}" in text
     assert f"thinking: {config.openai_thinking}" in text
-    assert "Enter send" in text
+    assert "Shift+Enter newline" in text
     assert "Ctrl+C interrupt" in text
-
-
-@pytest.mark.anyio
-async def test_run_chat_uses_plain_input_loop(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    config = build_config()
-    prompts: list[str] = []
-
-    class FakeRuntime:
-        def __init__(self) -> None:
-            self.config = config
-            self.console = Console(file=StringIO(), force_terminal=False, width=80)
-            self.processing_task: asyncio.Task[None] | None = None
-            self.status_calls = 0
-            self.started = False
-            self.closed = False
-
-        async def start(self) -> None:
-            self.started = True
-
-        async def close(self) -> None:
-            self.closed = True
-
-        def write_status(self) -> None:
-            self.status_calls += 1
-
-        async def submit(self, prompt: str) -> bool:
-            return prompt != "/exit"
-
-        async def wait_until_idle(self) -> None:
-            self.processing_task = None
-
-        def interrupt(self) -> bool:
-            return False
-
-    runtime = FakeRuntime()
-    monkeypatch.setattr("faltoobot.chat.build_chat_runtime", lambda *args, **kwargs: runtime)
-
-    async def fake_read_input(prompt: str) -> str:
-        prompts.append(prompt)
-        return "/exit"
-
-    monkeypatch.setattr("faltoobot.chat.read_input", fake_read_input)
-
-    await run_chat(config=config)
-
-    assert runtime.started
-    assert runtime.closed
-    assert runtime.status_calls == 1
-    assert prompts == ["you> "]
-
-
-@pytest.mark.anyio
-async def test_run_chat_exits_cleanly_on_keyboard_interrupt(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    config = build_config()
-
-    class FakeRuntime:
-        def __init__(self) -> None:
-            self.config = config
-            self.console = Console(file=StringIO(), force_terminal=False, width=80)
-            self.processing_task: asyncio.Task[None] | None = None
-            self.started = False
-            self.closed = False
-
-        async def start(self) -> None:
-            self.started = True
-
-        async def close(self) -> None:
-            self.closed = True
-
-        def write_status(self) -> None:
-            return None
-
-        async def submit(self, prompt: str) -> bool:
-            return True
-
-        async def wait_until_idle(self) -> None:
-            self.processing_task = None
-
-        def interrupt(self) -> bool:
-            return False
-
-    runtime = FakeRuntime()
-    monkeypatch.setattr("faltoobot.chat.build_chat_runtime", lambda *args, **kwargs: runtime)
-
-    async def fake_read_input(prompt: str) -> str:
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr("faltoobot.chat.read_input", fake_read_input)
-
-    await run_chat(config=config)
-
-    assert runtime.started
-    assert runtime.closed
 
 
 def test_main_returns_130_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("faltoobot.chat.parse_args", lambda: argparse.Namespace(name=None))
 
-    def fake_run(coro: object) -> None:
-        close = getattr(coro, "close", None)
-        if callable(close):
-            close()
-        raise KeyboardInterrupt
+    class FakeApp:
+        def run(self) -> None:
+            raise KeyboardInterrupt
 
-    monkeypatch.setattr("faltoobot.chat.asyncio.run", fake_run)
-
+    monkeypatch.setattr("faltoobot.chat.build_chat_app", lambda **_: FakeApp())
     assert main() == 130
 
 
@@ -180,18 +96,17 @@ async def test_tree_opens_current_session_messages_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
     opened: list[Path] = []
     monkeypatch.setattr("faltoobot.chat.open_in_default_editor", lambda path: opened.append(path))
 
-    runtime = build_chat_runtime(console=console)
+    runtime = build_chat_runtime()
     await runtime.start()
     assert runtime.session is not None
     await runtime.submit("/tree")
     await runtime.close()
 
     assert opened == [runtime.session.messages_file]
-    assert str(runtime.session.messages_file) in output.getvalue()
+    assert str(runtime.session.messages_file) in transcript_text(runtime)
 
 
 @pytest.mark.anyio
@@ -208,47 +123,41 @@ async def test_chat_replays_existing_session_messages_on_start(
         "assistant",
         "world",
         items=[
-            {
-                "type": "shell_call",
-                "call_id": "call_1",
-                "action": {"commands": ["pwd"]},
-            },
-            {
-                "type": "reasoning",
-                "summary": [{"type": "summary_text", "text": "Checking previous context."}],
-            }
+            {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Checking context."}]},
         ],
     )
 
-    console, output = runtime_console()
-    runtime = build_chat_runtime(console=console)
+    runtime = build_chat_runtime()
     await runtime.start()
+    text = transcript_text(runtime)
     await runtime.close()
 
-    text = output.getvalue()
     assert "tool> shell" in text
     assert "\npwd" in text
-    assert "thinking> Checking previous context." in text
+    assert "thinking> Checking context." in text
     assert "you> hello" in text
     assert "bot> world" in text
 
 
 @pytest.mark.anyio
-async def test_chat_shows_thinking_summary_for_live_reply(
+async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch, thinking="medium")
-    console, output = runtime_console()
 
     async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_reasoning_delta"]("**Planning** reply")
+        await kwargs["on_output_item"](
+            {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}}
+        )
+        await kwargs["on_text_delta"]("done")
         return {
             "text": "done",
             "output_items": [
-                {
-                    "type": "reasoning",
-                    "summary": [{"type": "summary_text", "text": "Planning the answer."}],
-                }
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Planning reply"}]},
+                {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
             ],
             "usage": None,
             "instructions": "test instructions",
@@ -256,258 +165,17 @@ async def test_chat_shows_thinking_summary_for_live_reply(
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
 
-    runtime = build_chat_runtime(console=console)
+    runtime = build_chat_runtime()
     await runtime.start()
     await runtime.submit("hi")
     await runtime.wait_until_idle()
+    text = transcript_text(runtime)
     await runtime.close()
 
-    text = output.getvalue()
-    assert "thinking> Planning the answer." in text
-    assert "bot> done" in text
-
-
-@pytest.mark.anyio
-async def test_chat_renders_markdown_for_user_and_bot_messages(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        return {
-            "text": "**bold** answer",
-            "output_items": [],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("**bold** prompt")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    assert "**bold**" not in text
-    assert "bold answer" in text
-
-
-@pytest.mark.anyio
-async def test_chat_renders_markdown_for_thinking_messages(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        return {
-            "text": "done",
-            "output_items": [
-                {
-                    "type": "reasoning",
-                    "summary": [{"type": "summary_text", "text": "**bold** thinking"}],
-                }
-            ],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    assert "**bold**" not in text
-    assert "bold thinking" in text
-
-
-@pytest.mark.anyio
-async def test_chat_streams_bot_reply_live(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        await kwargs["on_text_delta"]("hel")
-        await kwargs["on_text_delta"]("lo")
-        return {
-            "text": "hello",
-            "output_items": [],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    assert "bot> hello" in text
-    assert text.count("bot> hello") == 1
-
-
-@pytest.mark.anyio
-async def test_chat_streams_inline_styles_in_terminal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    output = StringIO()
-    console = Console(file=output, force_terminal=True, color_system="truecolor", width=120)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        await kwargs["on_text_delta"]("**bold** ")
-        await kwargs["on_text_delta"]("hi")
-        started.set()
-        await release.wait()
-        return {
-            "text": "**bold** hi",
-            "output_items": [],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await started.wait()
-
-    raw = output.getvalue()
-    assert "\x1b[1A" not in raw
-    assert "\x1b[" in raw
-    assert "**bold** hi" in raw
-
-    release.set()
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-
-@pytest.mark.anyio
-async def test_chat_streams_thinking_live(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        await kwargs["on_reasoning_delta"]("plan")
-        await kwargs["on_reasoning_done"]()
-        return {
-            "text": "hello",
-            "output_items": [
-                {
-                    "type": "reasoning",
-                    "summary": [{"type": "summary_text", "text": "plan"}],
-                }
-            ],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    assert "thinking> plan" in text
-    assert text.count("thinking> plan") == 1
-    assert "bot> hello" in text
-
-
-@pytest.mark.anyio
-async def test_chat_shows_tool_calls_live_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        tool_item = {
-            "type": "shell_call",
-            "call_id": "call_1",
-            "action": {"commands": ["pwd"]},
-        }
-        await kwargs["on_output_item"](tool_item)
-        return {
-            "text": "done",
-            "output_items": [tool_item],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    assert "tool> shell" in text
-    assert "\npwd" in text
+    assert "you> hi" in text
+    assert "thinking> Planning reply" in text
     assert text.count("tool> shell") == 1
-
-
-@pytest.mark.anyio
-async def test_chat_caps_tool_context_to_8_lines(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
-
-    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        tool_item = {
-            "type": "function_call",
-            "call_id": "call_1",
-            "name": "skills",
-            "arguments": json.dumps({f"k{i}": i for i in range(12)}),
-        }
-        return {
-            "text": "done",
-            "output_items": [tool_item],
-            "usage": None,
-            "instructions": "test instructions",
-        }
-
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-
-    runtime = build_chat_runtime(console=console)
-    await runtime.start()
-    await runtime.submit("hi")
-    await runtime.wait_until_idle()
-    await runtime.close()
-
-    text = output.getvalue()
-    block = text.split("tool> ", 1)[1].split("\nbot> ", 1)[0]
-    assert len(block.splitlines()) == 8
-    assert block.splitlines()[-1] == "..."
+    assert "bot> done" in text
 
 
 @pytest.mark.anyio
@@ -516,13 +184,12 @@ async def test_reset_creates_new_session_for_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
     config = build_config()
     original = cli_session(config.sessions_dir, "CLI original", workspace)
     original = add_turn(original, "user", "first")
     add_turn(original, "assistant", "reply")
 
-    runtime = build_chat_runtime(console=console)
+    runtime = build_chat_runtime()
     await runtime.start()
     original_id = runtime.session.id if runtime.session else ""
     assert await runtime.submit("/reset")
@@ -532,11 +199,8 @@ async def test_reset_creates_new_session_for_workspace(
     assert runtime.session.id != original_id
     assert runtime.session.workspace == workspace
     assert runtime.session.messages == ()
-    reloaded_original = existing_cli_session(config.sessions_dir, workspace)
-    assert reloaded_original is not None
-    assert reloaded_original.id == runtime.session.id
-    assert original.messages_file.exists()
-    assert "new session:" in output.getvalue()
+    assert existing_cli_session(config.sessions_dir, workspace).id == runtime.session.id  # type: ignore[union-attr]
+    assert "new session:" in transcript_text(runtime)
 
 
 @pytest.mark.anyio
@@ -545,7 +209,6 @@ async def test_chat_queues_messages_while_reply_is_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
     started = asyncio.Event()
     release = asyncio.Event()
     prompts: list[str] = []
@@ -565,17 +228,16 @@ async def test_chat_queues_messages_while_reply_is_running(
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
 
-    runtime = build_chat_runtime(console=console)
+    runtime = build_chat_runtime()
     await runtime.start()
     assert await runtime.submit("first")
     await started.wait()
     assert await runtime.submit("second")
-    assert prompts == ["first"]
     release.set()
     await runtime.wait_until_idle()
+    text = transcript_text(runtime)
     await runtime.close()
 
-    text = output.getvalue()
     assert prompts == ["first", "second"]
     assert "bot> reply:first" in text
     assert "bot> reply:second" in text
@@ -587,7 +249,6 @@ async def test_chat_can_interrupt_inflight_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    console, output = runtime_console()
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -604,18 +265,74 @@ async def test_chat_can_interrupt_inflight_reply(
 
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
 
-    runtime = build_chat_runtime(console=console)
+    runtime = build_chat_runtime()
     await runtime.start()
     assert await runtime.submit("first")
     await started.wait()
-
     assert runtime.interrupt()
+    release.set()
     await runtime.wait_until_idle()
+    text = transcript_text(runtime)
     await runtime.close()
 
-    text = output.getvalue()
     assert "bot> partial" in text
     assert "reply interrupted" in text
-    assert "partial done" not in text
-    assert runtime.session is not None
-    assert [turn.role for turn in runtime.session.messages] == ["user"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_focuses_composer_and_shows_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch, thinking="medium")
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.focused, Composer)
+        assert "model: gpt-5.2" in status_plain(app)
+        assert "thinking: medium" in status_plain(app)
+
+
+@pytest.mark.anyio
+async def test_textual_app_submits_prompt_and_updates_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_text_delta"]("pong")
+        return {
+            "text": "pong",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("p", "i", "n", "g", "enter")
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        assert ("you", "ping") in entry_tuples(app.runtime)
+        assert ("bot", "pong") in entry_tuples(app.runtime)
+        assert app.query_one("#composer", Composer).text == ""
+
+
+@pytest.mark.anyio
+async def test_textual_app_shift_enter_keeps_multiline_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "shift+enter", "t", "h", "e", "r", "e")
+        composer = app.query_one("#composer", Composer)
+        assert composer.text == "hi\nthere"

@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,11 @@ from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.message import Message
+from textual.widgets import RichLog, Static, TextArea
 
 from faltoobot.agent import stream_reply
 from faltoobot.config import Config, build_config
@@ -48,6 +54,20 @@ TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
 
 
+@dataclass(frozen=True, slots=True)
+class Entry:
+    kind: str
+    content: str
+
+
+@dataclass(slots=True)
+class StreamState:
+    active_kind: str | None = None
+    saw_bot: bool = False
+    saw_thinking: bool = False
+    tool_keys: set[str] = field(default_factory=set)
+
+
 def default_session_name() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -64,25 +84,18 @@ def status_text(config: Config) -> str:
     return f"model: {config.openai_model}  thinking: {config.openai_thinking}"
 
 
-def input_hint(config: Config) -> str:
-    return f"{status_text(config)}  Enter send  Ctrl+C interrupt"
+def input_hint(config: Config, *, replying: bool = False, queued: int = 0) -> str:
+    parts = [status_text(config), "Enter send", "Shift+Enter newline", "Ctrl+C interrupt"]
+    if replying:
+        parts.append("replying")
+    if queued:
+        parts.append(f"queued {queued}")
+    return "  ".join(parts)
 
 
 def open_in_default_editor(path: Path) -> None:
     command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
     subprocess.Popen(command)  # noqa: S603
-
-
-def summary_lines(turn: Turn) -> list[str]:
-    return [
-        text
-        for item in turn.items
-        if item.get("type") == "reasoning"
-        for summary in item.get("summary", [])
-        if isinstance(summary, dict)
-        for text in [summary.get("text")]
-        if isinstance(text, str) and text.strip()
-    ]
 
 
 def tool_lines(item: dict[str, Any]) -> list[str]:
@@ -134,17 +147,17 @@ def tool_entry(item: dict[str, Any]) -> str | None:
     return "\n".join(clipped)
 
 
-def item_entries(item: dict[str, Any]) -> list[tuple[str, str]]:
+def item_entries(item: dict[str, Any]) -> list[Entry]:
     if item.get("type") == "reasoning":
         return [
-            ("thinking", text)
+            Entry("thinking", text)
             for summary in item.get("summary", [])
             if isinstance(summary, dict)
             for text in [summary.get("text")]
             if isinstance(text, str) and text.strip()
         ]
     if text := tool_entry(item):
-        return [("tool", text)]
+        return [Entry("tool", text)]
     return []
 
 
@@ -157,20 +170,22 @@ def item_key(item: dict[str, Any]) -> str | None:
     return item_id(item) or tool_entry(item)
 
 
-def turn_entries(turn: Turn) -> list[tuple[str, str]]:
+def turn_entries(turn: Turn) -> list[Entry]:
     return [
         *(entry for item in turn.items for entry in item_entries(item)),
-        (TURN_KIND.get(turn.role, "bot"), turn.content),
+        Entry(TURN_KIND.get(turn.role, "bot"), turn.content),
     ]
 
 
-def history_entries(session: Session) -> list[tuple[str, str]]:
+def history_entries(session: Session) -> list[Entry]:
     return [entry for turn in session.messages for entry in turn_entries(turn)]
 
 
 def render_line(kind: str, content: str) -> Text:
     if kind == "meta":
         return Text(content, style="dim #8ea4bc")
+    if kind == "banner":
+        return Text(content, style="bold #0a0c10 on #ffb347")
     text = Text()
     text.append(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold"))
     text.append(content, style=BODY_STYLES.get(kind, "#eef3f9"))
@@ -197,49 +212,19 @@ def stream_text(kind: str, delta: str) -> str:
     return delta.replace("**", "").replace("`", "").replace("\n", " ")
 
 
-async def read_input(prompt: str) -> str:
-    loop = asyncio.get_running_loop()
-    future: asyncio.Future[str] = loop.create_future()
-    fileno = sys.stdin.fileno()
-
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-
-    def on_readable() -> None:
-        if future.done():
-            return
-        line = sys.stdin.readline()
-        if line == "":
-            future.set_exception(EOFError())
-            return
-        future.set_result(line.rstrip("\n"))
-
-    loop.add_reader(fileno, on_readable)
-    try:
-        return await future
-    finally:
-        loop.remove_reader(fileno)
-
-
-@dataclass(slots=True)
-class StreamState:
-    active_kind: str | None = None
-    saw_bot: bool = False
-    saw_thinking: bool = False
-    tool_keys: set[str] = field(default_factory=set)
-
-
 @dataclass(slots=True)
 class ChatRuntime:
     config: Config
     name: str | None = None
-    console: Console = field(default_factory=Console)
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
     pending_prompts: deque[str] = field(default_factory=deque)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[dict[str, Any]] | None = None
+    entries: list[Entry] = field(default_factory=list)
+    live_entry: Entry | None = None
+    notify: Callable[[], None] = field(default=lambda: None, repr=False)
 
     def require_session(self) -> Session:
         if self.session is None:
@@ -251,11 +236,20 @@ class ChatRuntime:
             raise RuntimeError("chat session is not ready")
         return self.client
 
+    def set_notifier(self, notify: Callable[[], None]) -> None:
+        self.notify = notify
+
+    def display_entries(self) -> list[Entry]:
+        return [*self.entries, self.live_entry] if self.live_entry else list(self.entries)
+
+    def append_entry(self, kind: str, content: str, *, notify: bool = True) -> None:
+        self.entries.append(Entry(kind, content))
+        if notify:
+            self.notify()
+
     def cli_session(self, workspace: Path, name: str | None = None) -> Session:
-        if name is None:
-            existing = existing_cli_session(self.config.sessions_dir, workspace)
-            if existing is not None:
-                return existing
+        if name is None and (existing := existing_cli_session(self.config.sessions_dir, workspace)):
+            return existing
         return cli_session(self.config.sessions_dir, session_name(name), workspace=workspace)
 
     def start_client(self) -> None:
@@ -263,124 +257,51 @@ class ChatRuntime:
             self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
             self.own_client = True
 
-    def write_entries(self, entries: list[tuple[str, str]]) -> None:
-        for kind, content in entries:
-            self.write(kind, content)
-
     async def start(self) -> None:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
-        workspace = Path.cwd()
-        self.session = self.cli_session(workspace, self.name)
+        self.session = self.cli_session(Path.cwd(), self.name)
         self.start_client()
         session = self.require_session()
-        self.write_entries(
-            [
-                ("banner", " faltoochat "),
-                ("meta", f"session: {session.name} ({session.id})"),
-                ("meta", f"workspace: {session.workspace}"),
-                ("meta", help_text()),
-                *history_entries(session),
-            ]
-        )
+        self.entries = [
+            Entry("banner", " faltoochat "),
+            Entry("meta", f"session: {session.name} ({session.id})"),
+            Entry("meta", f"workspace: {session.workspace}"),
+            Entry("meta", help_text()),
+            *history_entries(session),
+        ]
 
     async def close(self) -> None:
         await self.wait_until_idle()
         if self.client and self.own_client:
             await self.client.close()
 
-    def write(self, kind: str, content: str) -> None:
-        self.console.print(rich_renderable(kind, content))
-
-    def write_status(self) -> None:
-        self.console.print(Text(input_hint(self.config), style=STATUS_STYLE))
-
-    def start_stream(self, kind: str) -> None:
-        self.console.print(Text(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold")), end="")
-
-    def append_stream(self, kind: str, text: str) -> None:
-        if text:
-            self.console.print(Text(text, style=BODY_STYLES.get(kind, "#eef3f9")), end="")
-
-    def end_stream(self) -> None:
-        self.console.print()
-
-    def stream_delta(self, state: StreamState, kind: str, delta: str) -> None:
-        if not delta:
-            return
-        if state.active_kind != kind:
-            self.close_stream(state)
-            self.start_stream(kind)
-            state.active_kind = kind
-        if kind == "bot":
-            state.saw_bot = True
-        elif kind == "thinking":
-            state.saw_thinking = True
-        self.append_stream(kind, stream_text(kind, delta))
-
-    def close_stream(self, state: StreamState) -> None:
-        if state.active_kind is None:
-            return
-        self.end_stream()
-        state.active_kind = None
-
-    def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
-        answer = result["text"]
-        turn = Turn(
-            role="assistant",
-            content=answer,
-            created_at="",
-            items=tuple(result["output_items"]),
-        )
-        self.session = add_turn(
-            self.require_session(),
-            "assistant",
-            answer,
-            items=result["output_items"],
-            usage=result["usage"],
-            instructions=result["instructions"],
-        )
-        return turn
-
-    def render_assistant_turn(self, turn: Turn, state: StreamState) -> None:
-        self.write_entries(
-            [
-                entry
-                for item in turn.items
-                if item_key(item) not in state.tool_keys
-                for entry in item_entries(item)
-                if state.saw_thinking is False or entry[0] != "thinking"
-            ]
-        )
-        if not state.saw_bot:
-            self.write("bot", turn.content)
-
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
         if not text:
             return True
-        command_result = await self.handle_command(text)
-        if command_result is not None:
+        if (command_result := await self.handle_command(text)) is not None:
             return command_result
         self.pending_prompts.append(text)
+        self.notify()
         self.ensure_processing()
         return True
 
     async def handle_command(self, text: str) -> bool | None:
         match text:
             case "/help":
-                self.write("meta", help_text())
+                self.append_entry("meta", help_text())
                 return True
             case "/tree":
                 session = self.require_session()
                 open_in_default_editor(session.messages_file)
-                self.write("opened", str(session.messages_file))
+                self.append_entry("opened", str(session.messages_file))
                 return True
             case "/reset":
                 session = self.require_session()
                 self.session = self.cli_session(session.workspace, default_session_name())
                 new_session = self.require_session()
-                self.write("meta", f"new session: {new_session.name} ({new_session.id})")
+                self.append_entry("meta", f"new session: {new_session.name} ({new_session.id})")
                 return True
             case "/exit":
                 return False
@@ -394,21 +315,72 @@ class ChatRuntime:
     async def process_pending(self) -> None:
         while self.pending_prompts:
             await self.handle_prompt(self.pending_prompts.popleft())
+        self.notify()
 
     async def wait_until_idle(self) -> None:
-        if self.processing_task:
+        if self.processing_task is not None:
             await self.processing_task
             self.processing_task = None
 
     def interrupt(self) -> bool:
-        if not self.current_reply_task or self.current_reply_task.done():
+        if self.current_reply_task is None or self.current_reply_task.done():
             return False
         self.current_reply_task.cancel()
         return True
 
+    def close_stream(self, state: StreamState) -> None:
+        if state.active_kind is None or self.live_entry is None:
+            return
+        self.entries.append(self.live_entry)
+        self.live_entry = None
+        state.active_kind = None
+        self.notify()
+
+    def stream_delta(self, state: StreamState, kind: str, delta: str) -> None:
+        if not delta:
+            return
+        if state.active_kind != kind:
+            self.close_stream(state)
+            state.active_kind = kind
+            self.live_entry = Entry(kind, "")
+        if kind == "bot":
+            state.saw_bot = True
+        if kind == "thinking":
+            state.saw_thinking = True
+        text = stream_text(kind, delta)
+        if self.live_entry is not None and text:
+            self.live_entry = Entry(kind, self.live_entry.content + text)
+            self.notify()
+
+    def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
+        answer = result["text"]
+        turn = Turn(role="assistant", content=answer, created_at="", items=tuple(result["output_items"]))
+        self.session = add_turn(
+            self.require_session(),
+            "assistant",
+            answer,
+            items=result["output_items"],
+            usage=result["usage"],
+            instructions=result["instructions"],
+        )
+        return turn
+
+    def render_assistant_turn(self, turn: Turn, state: StreamState) -> None:
+        self.entries.extend(
+            entry
+            for item in turn.items
+            if item_key(item) not in state.tool_keys
+            for entry in item_entries(item)
+            if not (state.saw_thinking and entry.kind == "thinking")
+        )
+        if not state.saw_bot:
+            self.entries.append(Entry("bot", turn.content))
+        self.notify()
+
     async def handle_prompt(self, prompt: str) -> None:
         session = add_turn(self.require_session(), "user", prompt)
         self.session = session
+        self.append_entry("you", prompt)
         state = StreamState()
 
         async def on_text_delta(delta: str) -> None:
@@ -418,14 +390,13 @@ class ChatRuntime:
             self.stream_delta(state, "thinking", delta)
 
         async def on_reasoning_done() -> None:
-            if state.active_kind != "thinking":
-                return
-            self.close_stream(state)
+            if state.active_kind == "thinking":
+                self.close_stream(state)
 
         async def on_output_item(item: dict[str, Any]) -> None:
             if text := tool_entry(item):
                 self.close_stream(state)
-                self.write("tool", text)
+                self.append_entry("tool", text)
                 if key := item_key(item):
                     state.tool_keys.add(key)
 
@@ -445,11 +416,11 @@ class ChatRuntime:
             result = await self.current_reply_task
         except asyncio.CancelledError:
             self.close_stream(state)
-            self.write("meta", "reply interrupted")
+            self.append_entry("meta", "reply interrupted")
             return
         except Exception as exc:
             self.close_stream(state)
-            self.write("error", str(exc))
+            self.append_entry("error", str(exc))
             return
         finally:
             self.current_reply_task = None
@@ -458,48 +429,178 @@ class ChatRuntime:
         self.render_assistant_turn(self.store_assistant_turn(result), state)
 
 
+class Composer(TextArea):
+    class Submitted(Message):
+        def __init__(self, value: str) -> None:
+            self.value = value
+            super().__init__()
+
+    def on_key(self, event: Any) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.Submitted(self.text))
+            return
+        if event.key in {"shift+enter", "ctrl+j"}:
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+
+
+class FaltooChatApp(App[None]):
+    CSS = """
+    Screen {
+        layout: vertical;
+        background: #171411;
+        color: #f8e9c7;
+    }
+
+    #shell {
+        height: 1fr;
+    }
+
+    #transcript {
+        height: 1fr;
+        background: #14100d;
+        padding: 1 2;
+        border: none;
+    }
+
+    #composer {
+        height: 6;
+        min-height: 3;
+        background: #1f1713;
+        color: #fff4df;
+        padding: 0 1;
+        border: none;
+    }
+
+    #status {
+        height: 1;
+        padding: 0 2;
+        background: #0b1520;
+        color: #8ea4bc;
+        text-style: bold;
+    }
+    """
+
+    BINDINGS = [Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False)]
+
+    class SyncRequested(Message):
+        pass
+
+    def __init__(
+        self,
+        config: Config | None = None,
+        name: str | None = None,
+        client: AsyncOpenAI | None = None,
+    ) -> None:
+        super().__init__()
+        self.runtime = build_chat_runtime(config=config, name=name, client=client)
+        self._snapshot: tuple[tuple[str, str], ...] = ()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="shell"):
+            yield RichLog(id="transcript", wrap=True, auto_scroll=False, markup=False, highlight=False)
+            yield Composer(
+                id="composer",
+                text="",
+                soft_wrap=True,
+                show_line_numbers=False,
+                highlight_cursor_line=False,
+                placeholder="Type a message or /help",
+            )
+            yield Static("", id="status")
+
+    def transcript(self) -> RichLog:
+        return self.query_one("#transcript", RichLog)
+
+    def composer(self) -> Composer:
+        return self.query_one("#composer", Composer)
+
+    def status(self) -> Static:
+        return self.query_one("#status", Static)
+
+    async def on_mount(self) -> None:
+        self.runtime.set_notifier(lambda: self.post_message(self.SyncRequested()))
+        await self.runtime.start()
+        self.refresh_status()
+        self.refresh_transcript(force=True)
+        self.call_after_refresh(self.composer().focus)
+
+    async def on_unmount(self) -> None:
+        await self.runtime.close()
+
+    async def on_composer_submitted(self, message: Composer.Submitted) -> None:
+        composer = self.composer()
+        composer.load_text("")
+        if not await self.runtime.submit(message.value):
+            self.runtime.pending_prompts.clear()
+            self.runtime.interrupt()
+            self.exit()
+            return
+        self.refresh_status()
+        self.refresh_transcript(force=True)
+
+    async def on_sync_requested(self, message: SyncRequested) -> None:
+        _ = message
+        self.refresh_status()
+        self.refresh_transcript()
+
+    def refresh_status(self) -> None:
+        self.status().update(
+            Text(
+                input_hint(
+                    self.runtime.config,
+                    replying=self.runtime.current_reply_task is not None,
+                    queued=len(self.runtime.pending_prompts),
+                ),
+                style=STATUS_STYLE,
+            )
+        )
+
+    def refresh_transcript(self, *, force: bool = False) -> None:
+        entries = self.runtime.display_entries()
+        snapshot = tuple((entry.kind, entry.content) for entry in entries)
+        if not force and snapshot == self._snapshot:
+            return
+        transcript = self.transcript()
+        at_end = transcript.is_vertical_scroll_end
+        previous_scroll = transcript.scroll_y
+        transcript.clear()
+        for entry in entries:
+            transcript.write(rich_renderable(entry.kind, entry.content), scroll_end=False)
+        if at_end:
+            transcript.scroll_end(animate=False, immediate=True)
+        else:
+            transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
+        self._snapshot = snapshot
+
+    def action_interrupt_or_quit(self) -> None:
+        if not self.runtime.interrupt():
+            self.exit()
+
+
 def build_chat_runtime(
     config: Config | None = None,
     name: str | None = None,
     console: Console | None = None,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
-    return ChatRuntime(
-        config=config or build_config(),
-        name=name,
-        console=console or Console(),
-        client=client,
-    )
+    _ = console
+    return ChatRuntime(config=config or build_config(), name=name, client=client)
+
+
+def build_chat_app(
+    config: Config | None = None,
+    name: str | None = None,
+    client: AsyncOpenAI | None = None,
+) -> FaltooChatApp:
+    return FaltooChatApp(config=config, name=name, client=client)
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    runtime = build_chat_runtime(config, name=name)
-    await runtime.start()
-    runtime.write_status()
-    try:
-        while True:
-            try:
-                prompt = await read_input("you> ")
-            except EOFError:
-                runtime.console.print()
-                break
-            except KeyboardInterrupt:
-                runtime.console.print()
-                if runtime.interrupt():
-                    continue
-                break
-            if not await runtime.submit(prompt):
-                break
-            while runtime.processing_task:
-                try:
-                    await runtime.wait_until_idle()
-                except KeyboardInterrupt:
-                    if not runtime.interrupt():
-                        raise
-    except KeyboardInterrupt:
-        runtime.console.print()
-    finally:
-        await runtime.close()
+    await build_chat_app(config=config, name=name).run_async()
 
 
 def parse_args() -> argparse.Namespace:
@@ -511,7 +612,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        asyncio.run(run_chat(name=args.name))
+        build_chat_app(name=args.name).run()
     except KeyboardInterrupt:
         return 130
     return 0
