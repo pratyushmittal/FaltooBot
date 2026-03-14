@@ -3,7 +3,7 @@ from datetime import datetime
 
 from openai import AsyncOpenAI
 from textual.app import App, ComposeResult
-from textual.widgets import Input, RichLog
+from textual.widgets import Input, TextArea
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
@@ -44,9 +44,10 @@ class FaltoochatApp(App[None]):
         self.chat_name = session_name(name)
         self.session: Session | None = None
         self.client: AsyncOpenAI | None = None
+        self.lines: list[str] = []
 
     def compose(self) -> ComposeResult:
-        yield RichLog(id="messages", wrap=True, markup=False)
+        yield TextArea("", id="messages", read_only=True, soft_wrap=True, show_cursor=False)
         yield Input(placeholder="Type a message or /help", id="prompt")
 
     async def on_mount(self) -> None:
@@ -62,14 +63,17 @@ class FaltoochatApp(App[None]):
         if self.client:
             await self.client.close()
 
-    def message_log(self) -> RichLog:
-        return self.query_one("#messages", RichLog)
+    def message_log(self) -> TextArea:
+        return self.query_one("#messages", TextArea)
 
     def prompt(self) -> Input:
         return self.query_one("#prompt", Input)
 
     def write_line(self, text: str) -> None:
-        self.message_log().write(text)
+        self.lines.append(text)
+        log = self.message_log()
+        log.load_text("\n".join(self.lines))
+        log.move_cursor((len(self.lines), 0))
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         prompt = event.value.strip()

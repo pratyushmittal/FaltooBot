@@ -119,13 +119,7 @@ def skill_tool() -> dict[str, Any]:
 
 
 def shell_tool(config: Config) -> dict[str, Any]:
-    return {
-        "type": "shell",
-        "environment": {
-            "type": "local",
-            "skills": list_skills(config),
-        },
-    }
+    return {"type": "shell", "environment": {"type": "local"}}
 
 
 def web_search_tool() -> dict[str, Any]:
@@ -158,9 +152,15 @@ def clipped_text(value: str | bytes | None) -> str:
     return (value or "")[:MAX_SHELL_OUTPUT]
 
 
+def shell_output_limit(action: dict[str, Any]) -> int:
+    value = action.get("max_output_length")
+    return value if isinstance(value, int) and value > 0 else MAX_SHELL_OUTPUT
+
+
 def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
     commands = action["commands"]
+    max_output_length = shell_output_limit(action)
     timeout_ms = action.get("timeout_ms")
     timeout = (timeout_ms / 1000) if isinstance(timeout_ms, int) else DEFAULT_TIMEOUT_MS / 1000
     try:
@@ -186,7 +186,7 @@ def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
         "type": "shell_call_output",
         "call_id": item["call_id"],
         "status": "completed",
-        "max_output_length": MAX_SHELL_OUTPUT,
+        "max_output_length": max_output_length,
         "output": [output],
     }
 
