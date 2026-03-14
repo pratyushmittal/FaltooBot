@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from io import StringIO
 from pathlib import Path
 
@@ -289,6 +290,40 @@ async def test_chat_streams_bot_reply_live(
     text = output.getvalue()
     assert "bot> hello" in text
     assert text.count("bot> hello") == 1
+
+
+@pytest.mark.anyio
+async def test_chat_restores_rich_formatting_after_stream_in_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    output = StringIO()
+    console = Console(file=output, force_terminal=True, color_system="truecolor", width=120)
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_text_delta"]("**bold** ")
+        await kwargs["on_text_delta"]("answer")
+        return {
+            "text": "**bold** answer",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("hi")
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    assert "\x1b[1A" in text
+    assert "**bold** answer" in text
+    assert "bold answer" in plain
 
 
 @pytest.mark.anyio

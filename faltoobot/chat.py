@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import io
+import math
 import shutil
 import subprocess
 import sys
@@ -132,6 +133,14 @@ def stream_text(kind: str, delta: str) -> str:
     return delta.replace("**", "").replace("`", "").replace("\n", " ")
 
 
+def wrapped_line_count(text: str, width: int) -> int:
+    return sum(max(1, math.ceil(max(0, len(line)) / max(1, width))) for line in text.splitlines() or [""])
+
+
+def streamed_line_count(kind: str, content: str, width: int) -> int:
+    return wrapped_line_count(f"{kind}> {content}", width)
+
+
 async def read_input(prompt: str) -> str:
     return await asyncio.to_thread(input, prompt)
 
@@ -200,6 +209,14 @@ class ChatRuntime:
         self.console.file.write("\n")
         self.console.file.flush()
 
+    def replace_streamed_output(self, blocks: list[tuple[str, str]]) -> None:
+        if not blocks or not self.console.is_terminal:
+            return
+        width = max(1, self.console.width)
+        lines = sum(streamed_line_count(kind, content, width) for kind, content in blocks)
+        self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
+        self.console.file.flush()
+
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
         if not text:
@@ -259,40 +276,50 @@ class ChatRuntime:
         session = add_turn(self.require_session(), "user", prompt)
         self.session = session
         active_stream: str | None = None
+        active_text = ""
+        streamed_blocks: list[tuple[str, str]] = []
         streamed_bot = False
         streamed_thinking = False
 
         def start_stream(kind: str) -> None:
-            nonlocal active_stream
+            nonlocal active_stream, active_text
             if active_stream == kind:
                 return
             if active_stream:
+                streamed_blocks.append((active_stream, active_text))
                 self.end_stream()
             self.start_stream(kind)
             active_stream = kind
+            active_text = ""
 
         async def on_text_delta(delta: str) -> None:
-            nonlocal streamed_bot
+            nonlocal streamed_bot, active_text
             if not delta:
                 return
             start_stream("bot")
             streamed_bot = True
-            self.append_stream(stream_text("bot", delta))
+            chunk = stream_text("bot", delta)
+            active_text += chunk
+            self.append_stream(chunk)
 
         async def on_reasoning_delta(delta: str) -> None:
-            nonlocal streamed_thinking
+            nonlocal streamed_thinking, active_text
             if not delta:
                 return
             start_stream("thinking")
             streamed_thinking = True
-            self.append_stream(stream_text("thinking", delta))
+            chunk = stream_text("thinking", delta)
+            active_text += chunk
+            self.append_stream(chunk)
 
         async def on_reasoning_done() -> None:
-            nonlocal active_stream
+            nonlocal active_stream, active_text
             if active_stream != "thinking":
                 return
+            streamed_blocks.append(("thinking", active_text))
             self.end_stream()
             active_stream = None
+            active_text = ""
 
         self.current_reply_task = asyncio.create_task(
             stream_reply(
@@ -309,11 +336,13 @@ class ChatRuntime:
             result = await self.current_reply_task
         except asyncio.CancelledError:
             if active_stream:
+                streamed_blocks.append((active_stream, active_text))
                 self.end_stream()
             self.write("meta", "reply interrupted")
             return
         except Exception as exc:
             if active_stream:
+                streamed_blocks.append((active_stream, active_text))
                 self.end_stream()
             self.write("error", str(exc))
             return
@@ -336,11 +365,19 @@ class ChatRuntime:
             instructions=result["instructions"],
         )
         if active_stream:
+            streamed_blocks.append((active_stream, active_text))
             self.end_stream()
+        if streamed_blocks:
+            self.replace_streamed_output(streamed_blocks)
         if not streamed_thinking:
             for text in summary_lines(assistant_turn):
                 self.write("thinking", text)
+        elif streamed_blocks and self.console.is_terminal:
+            for text in summary_lines(assistant_turn):
+                self.write("thinking", text)
         if not streamed_bot:
+            self.write("bot", answer)
+        elif streamed_blocks and self.console.is_terminal:
             self.write("bot", answer)
 
 
