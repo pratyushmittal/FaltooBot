@@ -179,7 +179,27 @@ def stream_text(kind: str, delta: str) -> str:
 
 
 async def read_input(prompt: str) -> str:
-    return await asyncio.to_thread(input, prompt)
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[str] = loop.create_future()
+    fileno = sys.stdin.fileno()
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+
+    def on_readable() -> None:
+        if future.done():
+            return
+        line = sys.stdin.readline()
+        if line == "":
+            future.set_exception(EOFError())
+            return
+        future.set_result(line.rstrip("\n"))
+
+    loop.add_reader(fileno, on_readable)
+    try:
+        return await future
+    finally:
+        loop.remove_reader(fileno)
 
 
 @dataclass(slots=True)
@@ -467,6 +487,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
-    asyncio.run(run_chat(name=args.name))
+    try:
+        asyncio.run(run_chat(name=args.name))
+    except KeyboardInterrupt:
+        return 130
+    return 0

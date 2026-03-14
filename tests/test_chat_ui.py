@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import json
 from io import StringIO
@@ -6,7 +7,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from faltoobot.chat import build_chat_runtime, input_hint, run_chat
+from faltoobot.chat import build_chat_runtime, input_hint, main, run_chat
 from faltoobot.config import build_config
 from faltoobot.store import add_turn, cli_session, existing_cli_session
 
@@ -109,6 +110,68 @@ async def test_run_chat_uses_plain_input_loop(
     assert runtime.closed
     assert runtime.status_calls == 1
     assert prompts == ["you> "]
+
+
+@pytest.mark.anyio
+async def test_run_chat_exits_cleanly_on_keyboard_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.config = config
+            self.console = Console(file=StringIO(), force_terminal=False, width=80)
+            self.processing_task: asyncio.Task[None] | None = None
+            self.started = False
+            self.closed = False
+
+        async def start(self) -> None:
+            self.started = True
+
+        async def close(self) -> None:
+            self.closed = True
+
+        def write_status(self) -> None:
+            return None
+
+        async def submit(self, prompt: str) -> bool:
+            return True
+
+        async def wait_until_idle(self) -> None:
+            self.processing_task = None
+
+        def interrupt(self) -> bool:
+            return False
+
+    runtime = FakeRuntime()
+    monkeypatch.setattr("faltoobot.chat.build_chat_runtime", lambda *args, **kwargs: runtime)
+
+    async def fake_read_input(prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("faltoobot.chat.read_input", fake_read_input)
+
+    await run_chat(config=config)
+
+    assert runtime.started
+    assert runtime.closed
+
+
+def test_main_returns_130_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("faltoobot.chat.parse_args", lambda: argparse.Namespace(name=None))
+
+    def fake_run(coro: object) -> None:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("faltoobot.chat.asyncio.run", fake_run)
+
+    assert main() == 130
 
 
 @pytest.mark.anyio
