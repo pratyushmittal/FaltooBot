@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import nullcontext
 from io import StringIO
 from pathlib import Path
 
@@ -404,12 +405,11 @@ async def test_chat_streams_thinking_live(
 async def test_run_chat_streams_while_prompt_is_active(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
     streamed = asyncio.Event()
-    printed: list[tuple[str, str]] = []
-    run_in_terminal_calls: list[int] = []
 
     class FakePromptSession:
         prompts = 0
@@ -436,36 +436,26 @@ async def test_run_chat_streams_while_prompt_is_active(
             "instructions": "test instructions",
         }
 
-    async def fake_run_in_terminal(func: object, **kwargs: object) -> None:
-        del kwargs
-        run_in_terminal_calls.append(1)
-        func()  # type: ignore[operator]
-
-    def fake_print_formatted_text(*values: object, **kwargs: object) -> None:
-        printed.append(("".join(str(value) for value in values), kwargs.get("end", "\n")))
-
     monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
+    monkeypatch.setattr("faltoobot.chat.patch_stdout", lambda raw=False: nullcontext())
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-    monkeypatch.setattr("faltoobot.chat.run_in_terminal", fake_run_in_terminal)
-    monkeypatch.setattr("faltoobot.chat.print_formatted_text", fake_print_formatted_text)
 
     await run_chat(config=config)
 
-    assert len(run_in_terminal_calls) >= 3
-    assert any("hel" in text and end == "" for text, end in printed)
-    assert any("lo" in text and end == "" for text, end in printed)
+    stdout = capsys.readouterr().out
+    assert "bot>" in stdout
+    assert "hello" in stdout
 
 
 @pytest.mark.anyio
 async def test_run_chat_streams_thinking_while_prompt_is_active(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
     streamed = asyncio.Event()
-    printed: list[tuple[str, str]] = []
-    run_in_terminal_calls: list[int] = []
 
     class FakePromptSession:
         prompts = 0
@@ -496,23 +486,15 @@ async def test_run_chat_streams_thinking_while_prompt_is_active(
             "instructions": "test instructions",
         }
 
-    async def fake_run_in_terminal(func: object, **kwargs: object) -> None:
-        del kwargs
-        run_in_terminal_calls.append(1)
-        func()  # type: ignore[operator]
-
-    def fake_print_formatted_text(*values: object, **kwargs: object) -> None:
-        printed.append(("".join(str(value) for value in values), kwargs.get("end", "\n")))
-
     monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
+    monkeypatch.setattr("faltoobot.chat.patch_stdout", lambda raw=False: nullcontext())
     monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
-    monkeypatch.setattr("faltoobot.chat.run_in_terminal", fake_run_in_terminal)
-    monkeypatch.setattr("faltoobot.chat.print_formatted_text", fake_print_formatted_text)
 
     await run_chat(config=config)
 
-    assert len(run_in_terminal_calls) >= 2
-    assert any("plan" in text and end == "" for text, end in printed)
+    stdout = capsys.readouterr().out
+    assert "thinking>" in stdout
+    assert "plan" in stdout
 
 
 @pytest.mark.anyio

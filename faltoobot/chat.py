@@ -218,7 +218,7 @@ class ChatRuntime:
     pending_prompts: deque[str] = field(default_factory=deque)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[dict[str, Any]] | None = None
-    stream_start: Callable[[StyleAndTextTuples], Any] | None = None
+    stream_start: Callable[[str], Any] | None = None
     stream_delta: Callable[[str], Any] | None = None
     stream_end: Callable[[], Any] | None = None
 
@@ -263,9 +263,8 @@ class ChatRuntime:
         self.write(kind, content)
 
     async def write_stream_start(self, kind: str) -> None:
-        fragments = render_fragments(kind, "")
         if self.stream_start:
-            await emit_callback(self.stream_start, fragments)
+            await emit_callback(self.stream_start, kind)
             return
         self.console.file.write(f"{kind}> ")
 
@@ -424,7 +423,7 @@ def build_chat_runtime(
     rich_writer: Callable[[str], None] | None = None,
     async_writer: Callable[[StyleAndTextTuples], Any] | None = None,
     async_rich_writer: Callable[[str], Any] | None = None,
-    stream_start: Callable[[StyleAndTextTuples], Any] | None = None,
+    stream_start: Callable[[str], Any] | None = None,
     stream_delta: Callable[[str], Any] | None = None,
     stream_end: Callable[[], Any] | None = None,
     client: AsyncOpenAI | None = None,
@@ -451,16 +450,17 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
     async def write_rich(text: str) -> None:
         await run_in_terminal(lambda: print_formatted_text(ANSI(text)))
 
-    async def stream_start(fragments: StyleAndTextTuples) -> None:
-        await run_in_terminal(
-            lambda: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE, end=""),
-        )
+    async def stream_start(kind: str) -> None:
+        sys.stdout.write(render_ansi(kind, ""))
+        sys.stdout.flush()
 
     async def stream_delta(text: str) -> None:
-        await run_in_terminal(lambda: print_formatted_text(text, style=PROMPT_STYLE, end=""))
+        sys.stdout.write(text)
+        sys.stdout.flush()
 
     async def stream_end() -> None:
-        await run_in_terminal(lambda: print_formatted_text("", style=PROMPT_STYLE))
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
     runtime = build_chat_runtime(
         config,
@@ -477,7 +477,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
     bindings = prompt_bindings(runtime.interrupt)
     await runtime.start()
     try:
-        with patch_stdout():
+        with patch_stdout(raw=True):
             while True:
                 prompt = await prompt_session.prompt_async(
                     [("class:prompt", "you> ")],
