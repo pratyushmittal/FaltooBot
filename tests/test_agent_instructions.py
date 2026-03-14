@@ -32,6 +32,35 @@ class FakeClient:
         self.responses = FakeResponses()
 
 
+class FakeLoopResponses:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.count = 0
+
+    async def create(self, **kwargs: Any) -> FakeResponse:
+        self.calls.append(kwargs)
+        self.count += 1
+        response = FakeResponse()
+        if self.count == 1:
+            response.output_text = ""
+            response.output = [
+                {
+                    "type": "shell_call",
+                    "call_id": "call_1",
+                    "action": {"commands": ["pwd"], "max_output_length": 4000},
+                }
+            ]
+        else:
+            response.output_text = "done"
+            response.output = []
+        return response
+
+
+class FakeLoopClient:
+    def __init__(self) -> None:
+        self.responses = FakeLoopResponses()
+
+
 class FakeStreamEvent:
     def __init__(self, event_type: str, delta: str = "") -> None:
         self.type = event_type
@@ -142,3 +171,25 @@ async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytes
     assert reasoning_done == ["done"]
     assert result["text"] == "hello"
     assert result["instructions"] == system_instructions(config, session)
+
+
+@pytest.mark.anyio
+async def test_reply_keeps_intermediate_tool_call_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    client = FakeLoopClient()
+
+    result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
+
+    assert result["text"] == "done"
+    assert any(item.get("type") == "shell_call" for item in result["output_items"])

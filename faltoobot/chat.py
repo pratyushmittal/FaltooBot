@@ -25,11 +25,12 @@ from faltoobot.store import (
     session_items,
 )
 
-RICH_KINDS = frozenset({"you", "bot", "thinking"})
+RICH_KINDS = frozenset({"you", "bot", "thinking", "tool"})
 PREFIX_STYLES = {
     "you": "bold #ffb347",
     "bot": "bold #76c7ff",
     "thinking": "bold #93a8bd",
+    "tool": "bold #7fd4b6",
     "error": "bold #ff7b72",
     "opened": "bold #8ea4bc",
 }
@@ -37,6 +38,7 @@ BODY_STYLES = {
     "you": "#fff4df",
     "bot": "#e8f0f8",
     "thinking": "#aab9c9",
+    "tool": "#cdeee3",
     "error": "#ffd5cf",
     "opened": "#d7e3ef",
 }
@@ -81,9 +83,64 @@ def summary_lines(turn: Turn) -> list[str]:
     ]
 
 
+def tool_entry(item: dict[str, Any]) -> str | None:
+    item_type = item.get("type")
+    if not isinstance(item_type, str):
+        return None
+    if item_type == "shell_call":
+        action = item.get("action")
+        commands = action.get("commands") if isinstance(action, dict) else None
+        if isinstance(commands, list):
+            return f"shell: {' && '.join(str(command) for command in commands)}"
+    if item_type in {"local_shell_call", "function_shell_call"}:
+        action = item.get("action")
+        command = action.get("command") if isinstance(action, dict) else None
+        if isinstance(command, list):
+            return f"shell: {' '.join(str(part) for part in command)}"
+    if item_type == "function_call":
+        name = item.get("name")
+        arguments = item.get("arguments")
+        if isinstance(name, str):
+            suffix = arguments if isinstance(arguments, str) and arguments.strip() else ""
+            return f"{name}: {suffix}".rstrip(": ")
+    if item_type in {"web_search_call", "function_web_search", "tool_search_call", "file_search_call"}:
+        action = item.get("action")
+        query = action.get("query") if isinstance(action, dict) else item.get("query")
+        if isinstance(query, str) and query.strip():
+            return f"web search: {query}"
+        return "web search"
+    if item_type.endswith("_call") and not item_type.endswith("_output"):
+        details = item.get("name") or item.get("call_id") or item.get("id")
+        return f"{item_type.replace('_', ' ')}: {details}" if details else item_type.replace("_", " ")
+    return None
+
+
+def item_entries(item: dict[str, Any]) -> list[tuple[str, str]]:
+    if item.get("type") == "reasoning":
+        return [
+            ("thinking", text)
+            for summary in item.get("summary", [])
+            if isinstance(summary, dict)
+            for text in [summary.get("text")]
+            if isinstance(text, str) and text.strip()
+        ]
+    if text := tool_entry(item):
+        return [("tool", text)]
+    return []
+
+
+def item_id(item: dict[str, Any]) -> str | None:
+    value = item.get("id") or item.get("call_id")
+    return value if isinstance(value, str) else None
+
+
+def item_key(item: dict[str, Any]) -> str | None:
+    return item_id(item) or tool_entry(item)
+
+
 def turn_entries(turn: Turn) -> list[tuple[str, str]]:
     return [
-        *(("thinking", text) for text in summary_lines(turn)),
+        *(entry for item in turn.items for entry in item_entries(item)),
         (TURN_KIND.get(turn.role, "bot"), turn.content),
     ]
 
@@ -130,6 +187,7 @@ class StreamState:
     active_kind: str | None = None
     saw_bot: bool = False
     saw_thinking: bool = False
+    tool_keys: set[str] = field(default_factory=set)
 
 
 @dataclass(slots=True)
@@ -246,8 +304,15 @@ class ChatRuntime:
         return turn
 
     def render_assistant_turn(self, turn: Turn, state: StreamState) -> None:
-        if not state.saw_thinking:
-            self.write_entries([("thinking", text) for text in summary_lines(turn)])
+        self.write_entries(
+            [
+                entry
+                for item in turn.items
+                if item_key(item) not in state.tool_keys
+                for entry in item_entries(item)
+                if state.saw_thinking is False or entry[0] != "thinking"
+            ]
+        )
         if not state.saw_bot:
             self.write("bot", turn.content)
 
@@ -318,6 +383,13 @@ class ChatRuntime:
                 return
             self.close_stream(state)
 
+        async def on_output_item(item: dict[str, Any]) -> None:
+            if text := tool_entry(item):
+                self.close_stream(state)
+                self.write("tool", text)
+                if key := item_key(item):
+                    state.tool_keys.add(key)
+
         self.current_reply_task = asyncio.create_task(
             stream_reply(
                 self.require_client(),
@@ -327,6 +399,7 @@ class ChatRuntime:
                 on_text_delta=on_text_delta,
                 on_reasoning_delta=on_reasoning_delta,
                 on_reasoning_done=on_reasoning_done,
+                on_output_item=on_output_item,
             )
         )
         try:

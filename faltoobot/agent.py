@@ -151,6 +151,10 @@ def normalized_items(items: list[Any]) -> list[Any]:
     return [item.to_dict() if hasattr(item, "to_dict") else item for item in items]
 
 
+def dict_item(value: Any) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
+
+
 def usage_dict(response: Any) -> dict[str, Any] | None:
     usage = getattr(response, "usage", None)
     if usage is None:
@@ -308,12 +312,15 @@ def request_args(
     }
 
 
-def build_reply_result(response: Any, instructions: str) -> ReplyResult:
-    outputs = normalized_items(response.output)
+def build_reply_result(
+    response: Any,
+    instructions: str,
+    outputs: list[dict[str, Any]],
+) -> ReplyResult:
     text = (response.output_text or "").strip()
     return {
         "text": text or "I couldn't generate a reply just now.",
-        "output_items": [item for item in outputs if isinstance(item, dict)],
+        "output_items": outputs,
         "usage": usage_dict(response),
         "instructions": instructions,
     }
@@ -323,6 +330,14 @@ async def emit_text_delta(callback: Callable[[str], Any] | None, delta: str) -> 
     if not callback or not delta:
         return
     result = callback(delta)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def emit_item(callback: Callable[[dict[str, Any]], Any] | None, item: dict[str, Any]) -> None:
+    if not callback:
+        return
+    result = callback(item)
     if inspect.isawaitable(result):
         await result
 
@@ -343,13 +358,15 @@ async def resolve_reply(
     request: Callable[[list[Any]], Any],
 ) -> ReplyResult:
     items = list(messages)
+    outputs: list[dict[str, Any]] = []
     while True:
         response = await request(items)
-        outputs = normalized_items(response.output)
-        items = compacted_items([*items, *outputs])
-        next_items = collect_tool_outputs(config, session, outputs)
+        response_outputs = [item for item in normalized_items(response.output) if isinstance(item, dict)]
+        outputs.extend(response_outputs)
+        items = compacted_items([*items, *response_outputs])
+        next_items = collect_tool_outputs(config, session, response_outputs)
         if not next_items:
-            return build_reply_result(response, instructions)
+            return build_reply_result(response, instructions, outputs)
         items.extend(next_items)
 
 
@@ -377,6 +394,7 @@ async def stream_reply(
     on_text_delta: Callable[[str], Any] | None = None,
     on_reasoning_delta: Callable[[str], Any] | None = None,
     on_reasoning_done: Callable[[], Any] | None = None,
+    on_output_item: Callable[[dict[str, Any]], Any] | None = None,
 ) -> ReplyResult:
     instructions = system_instructions(config, session)
 
@@ -386,7 +404,11 @@ async def stream_reply(
         ) as stream:
             async for event in stream:
                 event_type = getattr(event, "type", None)
-                if event_type == "response.output_text.delta":
+                if event_type == "response.output_item.added":
+                    item = dict_item(getattr(event, "item", None).to_dict() if hasattr(getattr(event, "item", None), "to_dict") else getattr(event, "item", None))
+                    if item is not None:
+                        await emit_item(on_output_item, item)
+                elif event_type == "response.output_text.delta":
                     await emit_text_delta(on_text_delta, getattr(event, "delta", ""))
                 elif event_type == "response.reasoning_summary_text.delta":
                     await emit_text_delta(on_reasoning_delta, getattr(event, "delta", ""))
