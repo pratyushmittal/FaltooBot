@@ -24,7 +24,6 @@ class Config:
     openai_api_key: str
     openai_model: str
     system_prompt: str
-    trigger_prefix: str
     allow_groups: bool
     allowed_chats: set[str]
     max_history_messages: int
@@ -41,7 +40,6 @@ def default_config() -> dict[str, dict[str, Any]]:
             "model": "gpt-5.4",
         },
         "bot": {
-            "trigger_prefix": "!ai",
             "allow_groups": False,
             "allowed_chats": [],
             "max_history_messages": 12,
@@ -60,7 +58,6 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "model": as_str(openai.get("model"), defaults["openai"]["model"]),
         },
         "bot": {
-            "trigger_prefix": as_str(bot.get("trigger_prefix"), defaults["bot"]["trigger_prefix"]),
             "allow_groups": as_bool(bot.get("allow_groups"), defaults["bot"]["allow_groups"]),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
             "max_history_messages": as_int(
@@ -111,7 +108,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"model = {quote(str(openai['model']))}",
             "",
             "[bot]",
-            f"trigger_prefix = {quote(str(bot['trigger_prefix']))}",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
             f"allowed_chats = [{allowed}]",
             f"max_history_messages = {int(bot['max_history_messages'])}",
@@ -186,7 +182,6 @@ def build_config() -> Config:
         openai_api_key=as_str(openai.get("api_key"), ""),
         openai_model=as_str(openai.get("model"), "gpt-5.4"),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
-        trigger_prefix=as_str(bot.get("trigger_prefix"), "!ai"),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),
         max_history_messages=as_int(bot.get("max_history_messages"), 12, 1),

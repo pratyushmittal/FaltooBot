@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 from datetime import datetime
 
@@ -73,3 +74,14 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
             print(f"bot> {answer}")
     finally:
         await openai_client.close()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="faltoochat")
+    parser.add_argument("--name", help="optional session name")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    asyncio.run(run_chat(name=args.name))

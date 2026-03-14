@@ -17,9 +17,6 @@ Edit `~/.faltoobot/config.toml`:
 [openai]
 api_key = "your_key_here"
 model = "gpt-5.4"
-
-[bot]
-trigger_prefix = "!ai"
 ```
 
 ## Run
@@ -41,6 +38,7 @@ Start a new CLI session:
 ```bash
 uv run faltoobot chat
 uv run faltoobot chat --name "Scratchpad"
+uv run faltoochat
 ```
 
 ## Use
@@ -48,9 +46,9 @@ uv run faltoobot chat --name "Scratchpad"
 Send messages like:
 
 ```text
-!ai Say hello
-!help
-!reset
+Say hello
+/help
+/reset
 ```
 
 In CLI chat:

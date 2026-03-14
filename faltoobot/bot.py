@@ -61,12 +61,11 @@ def should_skip(event: MessageEv, config: Config) -> bool:
 
 
 def help_text(config: Config) -> str:
-    prefix = config.trigger_prefix or "<empty>"
     return (
         "Faltoobot is online.\n\n"
-        f"• {prefix} <prompt> — ask the model\n"
-        "• !reset — clear this chat's memory\n"
-        "• !help — show this help"
+        "• Send any message to ask the model\n"
+        "• /reset — clear this chat's memory\n"
+        "• /help — show this help"
     )
 
 
@@ -115,8 +114,7 @@ async def handle_prompt(
     session: Session,
     openai_client: AsyncOpenAI,
 ) -> Session:
-    text = message_text(event)
-    prompt = text[len(config.trigger_prefix) :].strip() if config.trigger_prefix else text
+    prompt = message_text(event)
     if not prompt:
         await client.reply_message(help_text(config), event)
         return session
@@ -162,13 +160,11 @@ async def process_message(
             logger.info("Skipping duplicate message %s from %s", event.Info.ID, chat_jid)
             return
         logger.info("Received message from %s in %s: %s", sender_jid, chat_jid, text)
-        if text == "!help":
+        if text == "/help":
             await client.reply_message(help_text(config), event)
             return
-        if text == "!reset":
+        if text == "/reset":
             await handle_reset(client, event, session)
-            return
-        if config.trigger_prefix and not text.startswith(config.trigger_prefix):
             return
         try:
             await handle_prompt(client, event, config, session, openai_client)

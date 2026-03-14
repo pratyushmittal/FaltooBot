@@ -20,6 +20,7 @@ For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton
 - `faltoobot auth` — authenticate the WhatsApp session by scanning a QR code
 - `faltoobot run` — run the bot in the foreground
 - `faltoobot chat` — start a new interactive CLI session
+- `faltoochat` — shortcut for `faltoobot chat`
 - `faltoobot update` — pull the latest git changes, sync dependencies, and run migrations
 - `faltoobot install` — install and start the macOS `launchd` service
 - `faltoobot uninstall` — remove the macOS service
@@ -27,31 +28,28 @@ For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton
 - `faltoobot logs` — view logs
 - `faltoobot paths` — print important paths
 
-## Trigger format
+## Message handling
 
-By default the bot only responds to messages that start with:
-
-```text
-!ai
-```
+All regular messages are forwarded to the model with the full session history.
 
 Examples:
 
 ```text
-!ai Explain MCP in 5 bullets
-!ai Draft a polite follow-up for this client
-!ai Summarize this idea: ...
+Explain MCP in 5 bullets
+Draft a polite follow-up for this client
+Summarize this idea: ...
 ```
 
 Built-in local commands:
 
 ```text
-!help
-!reset
+/help
+/reset
 ```
 
-- `!help` shows usage
-- `!reset` clears chat memory for the current chat
+- `/help` shows usage
+- `/reset` clears chat memory for the current chat
+- every other message is sent to the model
 
 CLI chat commands:
 
@@ -73,7 +71,6 @@ api_key = "your_key_here"
 model = "gpt-5.4"
 
 [bot]
-trigger_prefix = "!ai"
 allow_groups = false
 allowed_chats = []
 max_history_messages = 12
@@ -142,6 +139,7 @@ uv run faltoobot paths
 uv run faltoobot auth
 uv run faltoobot run
 uv run faltoobot chat
+uv run faltoochat
 uv run faltoobot update
 ```
 
