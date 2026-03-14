@@ -71,6 +71,10 @@ def system_instructions(config: Config, session: Session) -> str:
     return "\n\n".join(part for part in instruction_parts(config, session) if part)
 
 
+def reasoning_config(config: Config) -> dict[str, str]:
+    return {"effort": config.openai_thinking, "summary": "auto"}
+
+
 def message(role: Literal["user", "assistant", "system", "developer"], content: str) -> Message:
     return {"type": "message", "role": role, "content": content}
 
@@ -318,7 +322,7 @@ async def reply(
             model=config.openai_model,
             input=items,  # type: ignore[arg-type]
             instructions=instructions,
-            reasoning={"effort": config.openai_thinking},
+            reasoning=reasoning_config(config),
             store=False,
             parallel_tool_calls=True,
             include=["reasoning.encrypted_content", "web_search_call.action.sources"],

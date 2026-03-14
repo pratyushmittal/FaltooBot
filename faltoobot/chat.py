@@ -9,12 +9,14 @@ from openai import AsyncOpenAI
 from textual import events
 from textual.app import App, ComposeResult
 from textual.document._document import Selection
-from textual.widgets import Input, Static, TextArea
+from textual.message import Message
+from textual.widgets import Static, TextArea
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
 from faltoobot.store import (
     Session,
+    Turn,
     add_turn,
     cli_session,
     existing_cli_session,
@@ -50,10 +52,26 @@ def open_in_default_editor(path: Path) -> None:
     subprocess.Popen(command)  # noqa: S603
 
 
+def summary_lines(turn: Turn) -> list[str]:
+    return [
+        f"thinking> {text}"
+        for item in turn.items
+        if item.get("type") == "reasoning"
+        for summary in item.get("summary", [])
+        if isinstance(summary, dict)
+        for text in [summary.get("text")]
+        if isinstance(text, str) and text.strip()
+    ]
+
+
 def turn_lines(session: Session) -> list[str]:
     return [
-        f"{'you' if turn.role == 'user' else 'bot'}> {turn.content}"
+        line
         for turn in session.messages
+        for line in [
+            *summary_lines(turn),
+            f"{'you' if turn.role == 'user' else 'bot'}> {turn.content}",
+        ]
     ]
 
 
@@ -76,6 +94,21 @@ class TranscriptArea(TextArea):
         self.focus()
 
 
+class PromptArea(TextArea):
+    class Submitted(Message):
+        def __init__(self, prompt: str, input: "PromptArea") -> None:
+            super().__init__()
+            self.prompt = prompt
+            self.input = input
+
+    async def on_key(self, event: events.Key) -> None:
+        if event.key != "enter":
+            return
+        event.prevent_default()
+        event.stop()
+        self.post_message(self.Submitted(self.text, self))
+
+
 class FaltoochatApp(App[None]):
     CSS = """
     Screen {
@@ -87,8 +120,9 @@ class FaltoochatApp(App[None]):
         border: round $accent;
     }
 
-    Input {
+    #prompt {
         margin-top: 1;
+        height: 3;
     }
 
     #status {
@@ -109,7 +143,7 @@ class FaltoochatApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield TranscriptArea("", id="messages", read_only=True, soft_wrap=True, show_cursor=False)
-        yield Input(placeholder="Type a message or /help", id="prompt")
+        yield PromptArea("", id="prompt", soft_wrap=True, show_line_numbers=False)
         yield Static(status_text(self.config), id="status")
 
     async def on_mount(self) -> None:
@@ -134,8 +168,8 @@ class FaltoochatApp(App[None]):
     def message_log(self) -> TranscriptArea:
         return self.query_one("#messages", TranscriptArea)
 
-    def prompt(self) -> Input:
-        return self.query_one("#prompt", Input)
+    def prompt(self) -> PromptArea:
+        return self.query_one("#prompt", PromptArea)
 
     def write_line(self, text: str) -> None:
         self.lines.append(text)
@@ -143,9 +177,9 @@ class FaltoochatApp(App[None]):
         log.load_text("\n".join(self.lines))
         log.move_cursor((len(self.lines), 0))
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        prompt = event.value.strip()
-        event.input.value = ""
+    async def on_prompt_area_submitted(self, event: PromptArea.Submitted) -> None:
+        prompt = event.prompt.strip()
+        event.input.clear()
         if not prompt:
             return
         if prompt == "/help":
@@ -184,6 +218,12 @@ class FaltoochatApp(App[None]):
             self.write_line(f"error> {exc}")
         else:
             answer = result["text"]
+            assistant_turn = Turn(
+                role="assistant",
+                content=answer,
+                created_at="",
+                items=tuple(result["output_items"]),
+            )
             self.session = add_turn(
                 self.session,
                 "assistant",
@@ -191,6 +231,8 @@ class FaltoochatApp(App[None]):
                 items=result["output_items"],
                 usage=result["usage"],
             )
+            for line in summary_lines(assistant_turn):
+                self.write_line(line)
             self.write_line(f"bot> {answer}")
         finally:
             input_box.disabled = False

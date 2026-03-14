@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Static
+from textual.widgets import Static
 
-from faltoobot.chat import TranscriptArea, build_chat_app
+from faltoobot.chat import PromptArea, TranscriptArea, build_chat_app
 from faltoobot.config import build_config
 from faltoobot.store import add_turn, cli_session
 
@@ -38,7 +38,7 @@ async def test_chat_focuses_input_on_mount() -> None:
     app = build_chat_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app.query_one(Input).has_focus
+        assert app.query_one(PromptArea).has_focus
 
 
 @pytest.mark.anyio
@@ -78,8 +78,8 @@ async def test_tree_opens_current_session_messages_file(
 
     app = build_chat_app()
     async with app.run_test() as pilot:
-        input_widget = app.query_one(Input)
-        input_widget.value = "/tree"
+        input_widget = app.query_one(PromptArea)
+        input_widget.load_text("/tree")
         input_widget.focus()
         await pilot.press("enter")
         await pilot.pause()
@@ -122,11 +122,90 @@ async def test_chat_replays_existing_session_messages_on_mount(
     config = build_config()
     session = cli_session(config.sessions_dir, "CLI test", workspace)
     session = add_turn(session, "user", "hello")
-    add_turn(session, "assistant", "world")
+    add_turn(
+        session,
+        "assistant",
+        "world",
+        items=[
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Checking previous context."}],
+            }
+        ],
+    )
 
     app = build_chat_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         transcript = app.query_one(TranscriptArea)
+        assert "thinking> Checking previous context." in transcript.text
         assert "you> hello" in transcript.text
         assert "bot> world" in transcript.text
+
+
+@pytest.mark.anyio
+async def test_chat_shows_thinking_summary_for_live_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_dir = home / ".faltoobot"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.toml").write_text(
+        "\n".join(
+            [
+                "# Faltoobot config",
+                "",
+                "[openai]",
+                'api_key = "test-key"',
+                'model = "gpt-5.2"',
+                'thinking = "medium"',
+                "",
+                "[bot]",
+                "allow_groups = false",
+                "allowed_chats = []",
+                f'system_prompt = {json.dumps("Test prompt.")}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
+
+    async def fake_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "text": "done",
+            "output_items": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Planning the answer."}],
+                }
+            ],
+            "usage": None,
+        }
+
+    monkeypatch.setattr("faltoobot.chat.reply", fake_reply)
+
+    app = build_chat_app()
+    async with app.run_test() as pilot:
+        input_widget = app.query_one(PromptArea)
+        input_widget.load_text("hi")
+        input_widget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        transcript = app.query_one(TranscriptArea)
+        assert "thinking> Planning the answer." in transcript.text
+        assert "bot> done" in transcript.text
+
+
+@pytest.mark.anyio
+async def test_chat_input_wraps_long_text() -> None:
+    app = build_chat_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        input_widget = app.query_one(PromptArea)
+        input_widget.load_text("wrap " * 40)
+        assert input_widget.soft_wrap

@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from faltoobot.agent import reply, system_instructions
+from faltoobot.agent import reasoning_config, reply, system_instructions
 from faltoobot.config import build_config
 from faltoobot.store import create_cli_session
 
@@ -54,3 +54,17 @@ async def test_reply_includes_global_and_session_agents_in_instructions(
     assert "Global AGENTS.md:\nGlobal guardrails." in instructions
     assert "Session AGENTS.md:\nSession rules." in instructions
     assert config.system_prompt in instructions
+
+
+def test_reasoning_config_enables_auto_summaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+
+    assert reasoning_config(config) == {
+        "effort": config.openai_thinking,
+        "summary": "auto",
+    }
