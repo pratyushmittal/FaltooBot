@@ -16,10 +16,11 @@ Configure `~/.faltoobot/config.toml` interactively:
 ```toml
 [openai]
 api_key = "your_key_here"
-model = "gpt-5.4"
+model = "gpt-5.2"
 ```
 
 You can rerun `uv run faltoobot configure` anytime to update the file.
+If `api_key` is left blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
 ## Run
 

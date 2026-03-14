@@ -75,7 +75,7 @@ Example:
 ```toml
 [openai]
 api_key = "your_key_here"
-model = "gpt-5.4"
+model = "gpt-5.2"
 
 [bot]
 allow_groups = false
@@ -83,6 +83,8 @@ allowed_chats = []
 max_history_messages = 12
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
 ```
+
+If `openai.api_key` is blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
 ## Tools
 

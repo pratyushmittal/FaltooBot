@@ -1,11 +1,12 @@
 import json
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
-MODEL_OPTIONS = ("gpt-5.4", "gpt-5-mini", "gpt-5-nano")
+MODEL_OPTIONS = ("gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
 DEFAULT_SYSTEM_PROMPT = (
     "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "
     "Keep replies practical and readable on mobile."
@@ -180,7 +181,7 @@ def build_config() -> Config:
         session_db=root / "session.db",
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",
-        openai_api_key=as_str(openai.get("api_key"), ""),
+        openai_api_key=as_str(openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")),
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         allow_groups=as_bool(bot.get("allow_groups"), False),

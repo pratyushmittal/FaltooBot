@@ -106,7 +106,6 @@ def skill_tool() -> dict[str, Any]:
         "type": "function",
         "name": "skills",
         "description": "List local skills or read a specific skill from ~/.faltoobot/skills/.",
-        "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
