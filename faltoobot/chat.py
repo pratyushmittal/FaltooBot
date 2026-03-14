@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import subprocess
 import sys
 from collections import deque
@@ -44,6 +45,7 @@ BODY_STYLES = {
 }
 STATUS_STYLE = "bold #8ea4bc on #0b1520"
 TURN_KIND = {"user": "you", "assistant": "bot"}
+MAX_TOOL_LINES = 8
 
 
 def default_session_name() -> str:
@@ -83,36 +85,53 @@ def summary_lines(turn: Turn) -> list[str]:
     ]
 
 
-def tool_entry(item: dict[str, Any]) -> str | None:
+def tool_lines(item: dict[str, Any]) -> list[str]:
     item_type = item.get("type")
     if not isinstance(item_type, str):
-        return None
+        return []
     if item_type == "shell_call":
         action = item.get("action")
         commands = action.get("commands") if isinstance(action, dict) else None
         if isinstance(commands, list):
-            return f"shell: {' && '.join(str(command) for command in commands)}"
+            return ["shell", *(str(command) for command in commands)]
     if item_type in {"local_shell_call", "function_shell_call"}:
         action = item.get("action")
         command = action.get("command") if isinstance(action, dict) else None
         if isinstance(command, list):
-            return f"shell: {' '.join(str(part) for part in command)}"
+            return ["shell", " ".join(str(part) for part in command)]
     if item_type == "function_call":
         name = item.get("name")
         arguments = item.get("arguments")
         if isinstance(name, str):
-            suffix = arguments if isinstance(arguments, str) and arguments.strip() else ""
-            return f"{name}: {suffix}".rstrip(": ")
+            lines = [name]
+            if isinstance(arguments, str) and arguments.strip():
+                try:
+                    payload = json.dumps(json.loads(arguments), ensure_ascii=False, indent=2)
+                except json.JSONDecodeError:
+                    payload = arguments
+                lines.extend(payload.splitlines())
+            return lines
     if item_type in {"web_search_call", "function_web_search", "tool_search_call", "file_search_call"}:
         action = item.get("action")
         query = action.get("query") if isinstance(action, dict) else item.get("query")
         if isinstance(query, str) and query.strip():
-            return f"web search: {query}"
-        return "web search"
+            return ["web search", query]
+        return ["web search"]
     if item_type.endswith("_call") and not item_type.endswith("_output"):
         details = item.get("name") or item.get("call_id") or item.get("id")
-        return f"{item_type.replace('_', ' ')}: {details}" if details else item_type.replace("_", " ")
-    return None
+        label = item_type.replace("_", " ")
+        return [label, str(details)] if details else [label]
+    return []
+
+
+def tool_entry(item: dict[str, Any]) -> str | None:
+    lines = tool_lines(item)
+    if not lines:
+        return None
+    clipped = lines[:MAX_TOOL_LINES]
+    if len(lines) > MAX_TOOL_LINES:
+        clipped[-1] = "..."
+    return "\n".join(clipped)
 
 
 def item_entries(item: dict[str, Any]) -> list[tuple[str, str]]:

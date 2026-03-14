@@ -226,7 +226,8 @@ async def test_chat_replays_existing_session_messages_on_start(
     await runtime.close()
 
     text = output.getvalue()
-    assert "tool> shell: pwd" in text
+    assert "tool> shell" in text
+    assert "\npwd" in text
     assert "thinking> Checking previous context." in text
     assert "you> hello" in text
     assert "bot> world" in text
@@ -468,8 +469,45 @@ async def test_chat_shows_tool_calls_live_once(
     await runtime.close()
 
     text = output.getvalue()
-    assert "tool> shell: pwd" in text
-    assert text.count("tool> shell: pwd") == 1
+    assert "tool> shell" in text
+    assert "\npwd" in text
+    assert text.count("tool> shell") == 1
+
+
+@pytest.mark.anyio
+async def test_chat_caps_tool_context_to_8_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        tool_item = {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "skills",
+            "arguments": json.dumps({f"k{i}": i for i in range(12)}),
+        }
+        return {
+            "text": "done",
+            "output_items": [tool_item],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    await runtime.submit("hi")
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    block = text.split("tool> ", 1)[1].split("\nbot> ", 1)[0]
+    assert len(block.splitlines()) == 8
+    assert block.splitlines()[-1] == "..."
 
 
 @pytest.mark.anyio
