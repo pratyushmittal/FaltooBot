@@ -61,6 +61,20 @@ class FakeLoopClient:
         self.responses = FakeLoopResponses()
 
 
+class FakeSanitizeResponses:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> FakeResponse:
+        self.calls.append(kwargs)
+        return FakeResponse()
+
+
+class FakeSanitizeClient:
+    def __init__(self) -> None:
+        self.responses = FakeSanitizeResponses()
+
+
 class FakeStreamEvent:
     def __init__(self, event_type: str, delta: str = "") -> None:
         self.type = event_type
@@ -194,3 +208,40 @@ async def test_reply_keeps_intermediate_tool_call_items(
     assert result["text"] == "done"
     assert any(item.get("type") == "shell_call" for item in result["output_items"])
     assert any(item.get("type") == "shell_call_output" for item in result["output_items"])
+
+
+@pytest.mark.anyio
+async def test_reply_strips_parsed_arguments_from_replayed_tool_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    client = FakeSanitizeClient()
+
+    result = await reply(
+        client,
+        config,
+        session,
+        [
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "skills",
+                "arguments": '{"action":"list"}',
+                "parsed_arguments": {"action": "list"},
+            }
+        ],
+    )  # type: ignore[arg-type]
+
+    assert result["text"] == "ok"
+    sent_item = client.responses.calls[0]["input"][0]
+    assert sent_item["arguments"] == '{"action":"list"}'
+    assert "parsed_arguments" not in sent_item

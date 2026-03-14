@@ -147,8 +147,20 @@ def tools() -> list[dict[str, Any]]:
     ]
 
 
+def sanitize_input(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: sanitize_input(item)
+            for key, item in value.items()
+            if not str(key).startswith("parsed_")
+        }
+    if isinstance(value, list):
+        return [sanitize_input(item) for item in value]
+    return value
+
+
 def normalized_items(items: list[Any]) -> list[Any]:
-    return [item.to_dict() if hasattr(item, "to_dict") else item for item in items]
+    return [sanitize_input(item.to_dict() if hasattr(item, "to_dict") else item) for item in items]
 
 
 def dict_item(value: Any) -> dict[str, Any] | None:
@@ -301,7 +313,7 @@ def request_args(
 ) -> dict[str, Any]:
     return {
         "model": config.openai_model,
-        "input": items,  # type: ignore[arg-type]
+        "input": sanitize_input(items),  # type: ignore[arg-type]
         "instructions": instructions,
         "reasoning": reasoning_config(config),
         "store": False,
