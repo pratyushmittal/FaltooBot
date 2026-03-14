@@ -210,6 +210,8 @@ class ChatRuntime:
     console: Console = field(default_factory=Console)
     writer: Callable[[StyleAndTextTuples], None] | None = None
     rich_writer: Callable[[str], None] | None = None
+    async_writer: Callable[[StyleAndTextTuples], Any] | None = None
+    async_rich_writer: Callable[[str], Any] | None = None
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
@@ -250,6 +252,15 @@ class ChatRuntime:
             self.writer(render_fragments(kind, content))
             return
         self.console.print(rich_renderable(kind, content))
+
+    async def write_async(self, kind: str, content: str) -> None:
+        if self.async_rich_writer and kind in {"you", "bot", "thinking"}:
+            await emit_callback(self.async_rich_writer, render_ansi(kind, content))
+            return
+        if self.async_writer:
+            await emit_callback(self.async_writer, render_fragments(kind, content))
+            return
+        self.write(kind, content)
 
     async def write_stream_start(self, kind: str) -> None:
         fragments = render_fragments(kind, "")
@@ -347,10 +358,10 @@ class ChatRuntime:
         except asyncio.CancelledError:
             if streamed:
                 await self.write_stream_end()
-            self.write("meta", "reply interrupted")
+            await self.write_async("meta", "reply interrupted")
             return
         except Exception as exc:
-            self.write("error", str(exc))
+            await self.write_async("error", str(exc))
             return
         finally:
             self.current_reply_task = None
@@ -373,8 +384,8 @@ class ChatRuntime:
             await self.write_stream_end()
         else:
             for text in summary_lines(assistant_turn):
-                self.write("thinking", text)
-            self.write("bot", answer)
+                await self.write_async("thinking", text)
+            await self.write_async("bot", answer)
 
 
 def build_chat_runtime(
@@ -383,6 +394,8 @@ def build_chat_runtime(
     console: Console | None = None,
     writer: Callable[[StyleAndTextTuples], None] | None = None,
     rich_writer: Callable[[str], None] | None = None,
+    async_writer: Callable[[StyleAndTextTuples], Any] | None = None,
+    async_rich_writer: Callable[[str], Any] | None = None,
     stream_start: Callable[[StyleAndTextTuples], Any] | None = None,
     stream_delta: Callable[[str], Any] | None = None,
     stream_end: Callable[[], Any] | None = None,
@@ -394,6 +407,8 @@ def build_chat_runtime(
         console=console or Console(),
         writer=writer,
         rich_writer=rich_writer,
+        async_writer=async_writer,
+        async_rich_writer=async_rich_writer,
         stream_start=stream_start,
         stream_delta=stream_delta,
         stream_end=stream_end,
@@ -402,6 +417,12 @@ def build_chat_runtime(
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
+    async def write_fragments(fragments: StyleAndTextTuples) -> None:
+        await run_in_terminal(lambda: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE))
+
+    async def write_rich(text: str) -> None:
+        await run_in_terminal(lambda: print_formatted_text(ANSI(text)))
+
     async def stream_start(fragments: StyleAndTextTuples) -> None:
         await run_in_terminal(
             lambda: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE, end=""),
@@ -418,6 +439,8 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         name=name,
         writer=lambda fragments: print_formatted_text(FormattedText(fragments), style=PROMPT_STYLE),
         rich_writer=lambda text: print_formatted_text(ANSI(text)),
+        async_writer=write_fragments,
+        async_rich_writer=write_rich,
         stream_start=stream_start,
         stream_delta=stream_delta,
         stream_end=stream_end,
