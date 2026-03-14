@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 from rich.text import Text
+from textual.widgets import RichLog
 
 from faltoobot.chat import (
     Composer,
@@ -321,6 +322,38 @@ async def test_textual_app_submits_prompt_and_updates_runtime(
         assert ("you", "ping") in entry_tuples(app.runtime)
         assert ("bot", "pong") in entry_tuples(app.runtime)
         assert app.query_one("#composer", Composer).text == ""
+
+
+@pytest.mark.anyio
+async def test_textual_app_shows_completed_reply_without_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await release.wait()
+        return {
+            "text": "visible now",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "enter")
+        release.set()
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        assert ("bot", "visible now") in entry_tuples(app.runtime)
+        transcript = app.query_one("#transcript", RichLog)
+        lines = [line.text for line in transcript.lines]
+        assert any("visible now" in line for line in lines)
 
 
 @pytest.mark.anyio

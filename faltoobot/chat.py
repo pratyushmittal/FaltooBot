@@ -486,9 +486,6 @@ class FaltooChatApp(App[None]):
 
     BINDINGS = [Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False)]
 
-    class SyncRequested(Message):
-        pass
-
     def __init__(
         self,
         config: Config | None = None,
@@ -522,10 +519,11 @@ class FaltooChatApp(App[None]):
         return self.query_one("#status", Static)
 
     async def on_mount(self) -> None:
-        self.runtime.set_notifier(lambda: self.post_message(self.SyncRequested()))
+        self.runtime.set_notifier(lambda: None)
         await self.runtime.start()
         self.refresh_status()
         self.refresh_transcript(force=True)
+        self.set_interval(0.05, self.refresh_ui)
         self.call_after_refresh(self.composer().focus)
 
     async def on_unmount(self) -> None:
@@ -542,8 +540,7 @@ class FaltooChatApp(App[None]):
         self.refresh_status()
         self.refresh_transcript(force=True)
 
-    async def on_sync_requested(self, message: SyncRequested) -> None:
-        _ = message
+    def refresh_ui(self) -> None:
         self.refresh_status()
         self.refresh_transcript()
 
