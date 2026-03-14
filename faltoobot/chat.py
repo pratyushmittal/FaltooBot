@@ -13,6 +13,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 from rich.console import Console, Group
+from rich.constrain import Constrain
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
@@ -44,6 +45,7 @@ BODY_STYLES = {
     "opened": "#d7e3ef",
 }
 STATUS_STYLE = "bold #8ea4bc on #0b1520"
+MESSAGE_WIDTH = 80
 STREAM_INLINE_STYLES = (
     ("`", "bold #ffe7c2 on #243244"),
     ("**", "bold"),
@@ -149,19 +151,25 @@ def looks_like_markdown(content: str) -> bool:
 
 
 def render_markdown_block(kind: str, content: str) -> Group:
-    return Group(render_line(kind, ""), Padding(Markdown(content), (0, 0, 0, 2)))
+    return Group(
+        render_line(kind, ""),
+        Padding(Constrain(Markdown(content), width=MESSAGE_WIDTH - 2), (0, 0, 0, 2)),
+    )
 
 
-def rich_renderable(kind: str, content: str) -> Text | Group:
+def rich_renderable(kind: str, content: str) -> Text | Group | Constrain:
     if kind in RICH_KINDS and looks_like_markdown(content):
         return render_markdown_block(kind, content)
-    return render_line(kind, content)
+    renderable = render_line(kind, content)
+    return Constrain(renderable, width=MESSAGE_WIDTH) if kind in RICH_KINDS else renderable
 
 
 def render_ansi(kind: str, content: str, *, streaming: bool = False) -> str:
     capture = io.StringIO()
     width = shutil.get_terminal_size((100, 20)).columns
     renderable = stream_renderable(kind, content) if streaming else rich_renderable(kind, content)
+    if streaming and kind in RICH_KINDS:
+        renderable = Constrain(renderable, width=MESSAGE_WIDTH)
     Console(file=capture, force_terminal=True, color_system="truecolor", width=width).print(renderable)
     return capture.getvalue()
 
@@ -251,7 +259,7 @@ class ChatRuntime:
     def replace_streamed_output(self, blocks: list[tuple[str, str]]) -> None:
         if not blocks or not self.console.is_terminal:
             return
-        width = max(1, self.console.width)
+        width = max(1, min(self.console.width, MESSAGE_WIDTH))
         lines = sum(streamed_line_count(kind, content, width) for kind, content in blocks)
         self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
         self.console.file.flush()
@@ -263,7 +271,7 @@ class ChatRuntime:
             self.console.file.write("".join("\x1b[1A\x1b[2K\r" for _ in range(lines)))
         self.console.file.write(render_ansi(kind, content, streaming=True))
         self.console.file.flush()
-        return streamed_line_count(kind, content, max(1, self.console.width))
+        return streamed_line_count(kind, content, max(1, min(self.console.width, MESSAGE_WIDTH)))
 
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
