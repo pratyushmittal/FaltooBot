@@ -195,6 +195,12 @@ def render_fragments(kind: str, content: str) -> StyleAndTextTuples:
     return [(prefix_style, prefix), (body_style, content)]
 
 
+def stream_text(kind: str, delta: str) -> str:
+    if kind != "thinking":
+        return delta
+    return delta.replace("**", "").replace("`", "").replace("\n", " ")
+
+
 async def emit_callback(callback: Callable[..., Any] | None, *args: Any) -> None:
     if not callback:
         return
@@ -351,7 +357,7 @@ class ChatRuntime:
                 return
             await start_stream("bot")
             streamed_bot = True
-            await self.write_stream_delta(delta)
+            await self.write_stream_delta(stream_text("bot", delta))
 
         async def on_reasoning_delta(delta: str) -> None:
             nonlocal streamed_thinking
@@ -359,7 +365,7 @@ class ChatRuntime:
                 return
             await start_stream("thinking")
             streamed_thinking = True
-            await self.write_stream_delta(delta)
+            await self.write_stream_delta(stream_text("thinking", delta))
 
         async def on_reasoning_done() -> None:
             nonlocal active_stream
@@ -451,7 +457,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         await run_in_terminal(lambda: print_formatted_text(ANSI(text)))
 
     async def stream_start(kind: str) -> None:
-        sys.stdout.write(render_ansi(kind, ""))
+        sys.stdout.write(f"{kind}> ")
         sys.stdout.flush()
 
     async def stream_delta(text: str) -> None:
