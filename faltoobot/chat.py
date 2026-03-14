@@ -50,6 +50,13 @@ def open_in_default_editor(path: Path) -> None:
     subprocess.Popen(command)  # noqa: S603
 
 
+def turn_lines(session: Session) -> list[str]:
+    return [
+        f"{'you' if turn.role == 'user' else 'bot'}> {turn.content}"
+        for turn in session.messages
+    ]
+
+
 class TranscriptArea(TextArea):
     async def on_click(self, event: events.Click) -> None:
         if event.chain != 2:
@@ -116,6 +123,8 @@ class FaltoochatApp(App[None]):
         self.write_line(f"session: {self.session.name} ({self.session.id})")
         self.write_line(f"workspace: {self.session.workspace}")
         self.write_line(help_text())
+        for line in turn_lines(self.session):
+            self.write_line(line)
         self.call_after_refresh(self.prompt().focus)
 
     async def on_unmount(self) -> None:

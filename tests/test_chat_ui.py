@@ -6,6 +6,8 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input, Static
 
 from faltoobot.chat import TranscriptArea, build_chat_app
+from faltoobot.config import build_config
+from faltoobot.store import add_turn, cli_session
 
 
 class TranscriptTestApp(App[None]):
@@ -83,3 +85,48 @@ async def test_tree_opens_current_session_messages_file(
         await pilot.pause()
         assert app.session is not None
         assert opened == [app.session.messages_file]
+
+
+@pytest.mark.anyio
+async def test_chat_replays_existing_session_messages_on_mount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_dir = home / ".faltoobot"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.toml").write_text(
+        "\n".join(
+            [
+                "# Faltoobot config",
+                "",
+                "[openai]",
+                'api_key = "test-key"',
+                'model = "gpt-5.2"',
+                'thinking = "none"',
+                "",
+                "[bot]",
+                "allow_groups = false",
+                "allowed_chats = []",
+                f'system_prompt = {json.dumps("Test prompt.")}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
+
+    config = build_config()
+    session = cli_session(config.sessions_dir, "CLI test", workspace)
+    session = add_turn(session, "user", "hello")
+    add_turn(session, "assistant", "world")
+
+    app = build_chat_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        transcript = app.query_one(TranscriptArea)
+        assert "you> hello" in transcript.text
+        assert "bot> world" in transcript.text
