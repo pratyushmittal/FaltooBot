@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
+MODEL_OPTIONS = ("gpt-5.4", "gpt-5-mini", "gpt-5-nano")
 DEFAULT_SYSTEM_PROMPT = (
     "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "
     "Keep replies practical and readable on mobile."
@@ -37,7 +38,7 @@ def default_config() -> dict[str, dict[str, Any]]:
     return {
         "openai": {
             "api_key": "",
-            "model": "gpt-5.4",
+            "model": MODEL_OPTIONS[0],
         },
         "bot": {
             "allow_groups": False,
@@ -180,7 +181,7 @@ def build_config() -> Config:
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",
         openai_api_key=as_str(openai.get("api_key"), ""),
-        openai_model=as_str(openai.get("model"), "gpt-5.4"),
+        openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),

@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import getpass
 import os
 import plistlib
 import shutil
@@ -12,10 +13,15 @@ from faltoobot.bot import run_auth, run_bot
 from faltoobot.chat import run_chat
 from faltoobot.config import (
     APP_LABEL,
+    MODEL_OPTIONS,
     Config,
     build_config,
     ensure_config_file,
+    load_toml,
+    merge_config,
     migrate_config_file,
+    normalize_chat,
+    render_config,
 )
 from faltoobot.store import ensure_sessions_dir
 
@@ -175,11 +181,131 @@ def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
             time.sleep(0.5)
 
 
+def prompt_text(label: str, current: str, *, secret: bool = False) -> str:
+    current_text = "[set]" if secret and current else f"[{current}]" if current else "[empty]"
+    raw = (
+        getpass.getpass(f"{label} {current_text} (blank keeps current): ")
+        if secret
+        else input(f"{label} {current_text} (blank keeps current): ")
+    ).strip()
+    if not raw:
+        return current
+    return "" if raw == "-" else raw
+
+
+def prompt_bool(label: str, current: bool) -> bool:
+    current_text = "y" if current else "n"
+    while True:
+        raw = input(f"{label} [y/n] (blank keeps {current_text}): ").strip().lower()
+        if not raw:
+            return current
+        if raw in {"y", "yes"}:
+            return True
+        if raw in {"n", "no"}:
+            return False
+        print("Enter y or n.")
+
+
+def prompt_int(label: str, current: int, minimum: int) -> int:
+    while True:
+        raw = input(f"{label} [{current}] (blank keeps current): ").strip()
+        if not raw:
+            return current
+        if raw.isdigit() and int(raw) >= minimum:
+            return int(raw)
+        print(f"Enter an integer >= {minimum}.")
+
+
+def prompt_model(current: str) -> str:
+    print("OpenAI model:")
+    for index, model in enumerate(MODEL_OPTIONS, start=1):
+        current_marker = " (current)" if model == current else ""
+        print(f"  {index}. {model}{current_marker}")
+    custom_index = len(MODEL_OPTIONS) + 1
+    custom_marker = " (current)" if current and current not in MODEL_OPTIONS else ""
+    print(f"  {custom_index}. custom{custom_marker}")
+    while True:
+        default_choice = (
+            str(MODEL_OPTIONS.index(current) + 1) if current in MODEL_OPTIONS else str(custom_index)
+        )
+        raw = input(f"Select model [{default_choice}]: ").strip()
+        if not raw:
+            choice = default_choice
+        else:
+            choice = raw
+        if choice.isdigit():
+            index = int(choice)
+            if 1 <= index <= len(MODEL_OPTIONS):
+                return MODEL_OPTIONS[index - 1]
+            if index == custom_index:
+                return prompt_text("Custom model", current if current not in MODEL_OPTIONS else "")
+        print(f"Enter a number between 1 and {custom_index}.")
+
+
+def prompt_allowed_chats(current: list[str]) -> list[str]:
+    current_text = ", ".join(current) if current else "<none>"
+    raw = input(
+        f"Allowed chats [{current_text}] (comma-separated, blank keeps current, '-' clears): "
+    ).strip()
+    if not raw:
+        return current
+    if raw == "-":
+        return []
+    return sorted(
+        {
+            normalize_chat(item)
+            for item in [part.strip() for part in raw.split(",")]
+            if item
+        }
+    )
+
+
+def configure_app(config: Config) -> None:
+    data = merge_config(load_toml(config.config_file))
+    openai = data["openai"]
+    bot = data["bot"]
+    print(f"Config file: {config.config_file}")
+    print("Press Enter to keep the current value. Enter '-' to clear text fields.")
+    updated = merge_config(
+        {
+            "openai": {
+                "api_key": prompt_text(
+                    "OpenAI API key",
+                    str(openai.get("api_key") or ""),
+                    secret=True,
+                ),
+                "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
+            },
+            "bot": {
+                "allow_groups": prompt_bool(
+                    "Allow WhatsApp groups",
+                    bool(bot.get("allow_groups")),
+                ),
+                "allowed_chats": prompt_allowed_chats(
+                    list(bot.get("allowed_chats") or []),
+                ),
+                "max_history_messages": prompt_int(
+                    "Max history messages",
+                    int(bot.get("max_history_messages") or 12),
+                    1,
+                ),
+                "system_prompt": prompt_text(
+                    "System prompt",
+                    str(bot.get("system_prompt") or ""),
+                ),
+            },
+        }
+    )
+    config.config_file.write_text(render_config(updated), encoding="utf-8")
+    print(f"Saved {config.config_file}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="faltoobot")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("auth", help="authenticate the WhatsApp session")
+    sub.add_parser("configure", help="create or update the config file interactively")
     sub.add_parser("run", help="run the WhatsApp bot in the foreground")
     chat = sub.add_parser("chat", help="start a new CLI chat session")
     chat.add_argument("--name", help="optional session name")
@@ -194,15 +320,11 @@ def parse_args() -> argparse.Namespace:
     update = sub.add_parser("update", help="pull the latest code and run migrations")
     update.add_argument("--migrate-only", action="store_true", help=argparse.SUPPRESS)
 
-    paths = sub.add_parser("paths", help="show important file paths")
-    paths.add_argument("--config", action="store_true", help="only print the config file")
+    sub.add_parser("paths", help="show important file paths")
     return parser.parse_args()
 
 
-def show_paths(config: Config, config_only: bool) -> None:
-    if config_only:
-        print(config.config_file)
-        return
+def show_paths(config: Config) -> None:
     print(f"home: {config.root}")
     print(f"config: {config.config_file}")
     print(f"session_db: {config.session_db}")
@@ -216,6 +338,10 @@ def main() -> None:
     config = build_config()
     if args.command == "auth":
         asyncio.run(run_auth(config))
+        return
+    if args.command == "configure":
+        ensure_config_file()
+        configure_app(config)
         return
     if args.command == "run":
         asyncio.run(run_bot(config))
@@ -240,5 +366,5 @@ def main() -> None:
         return
     if args.command == "paths":
         ensure_config_file()
-        show_paths(config, config_only=args.config)
+        show_paths(config)
         return

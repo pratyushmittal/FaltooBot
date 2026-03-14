@@ -18,6 +18,7 @@ For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton
 ## Commands
 
 - `faltoobot auth` — authenticate the WhatsApp session by scanning a QR code
+- `faltoobot configure` — create or update `config.toml` interactively
 - `faltoobot run` — run the bot in the foreground
 - `faltoobot chat` — start a new interactive CLI session
 - `faltoochat` — shortcut for `faltoobot chat`
@@ -62,6 +63,12 @@ CLI chat commands:
 ## Config
 
 The config file lives at `~/.faltoobot/config.toml`.
+
+Generate or update it with:
+
+```bash
+uv run faltoobot configure
+```
 
 Example:
 
@@ -137,6 +144,7 @@ uv sync --dev
 uv lock
 uv run faltoobot paths
 uv run faltoobot auth
+uv run faltoobot configure
 uv run faltoobot run
 uv run faltoobot chat
 uv run faltoochat

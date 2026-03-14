@@ -8,16 +8,18 @@ WhatsApp bot for LLMs.
 git clone https://github.com/pratyushmittal/FaltooBot.git
 cd FaltooBot
 uv sync
-uv run faltoobot paths --config
+uv run faltoobot configure
 ```
 
-Edit `~/.faltoobot/config.toml`:
+Configure `~/.faltoobot/config.toml` interactively:
 
 ```toml
 [openai]
 api_key = "your_key_here"
 model = "gpt-5.4"
 ```
+
+You can rerun `uv run faltoobot configure` anytime to update the file.
 
 ## Run
 
