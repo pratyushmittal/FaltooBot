@@ -490,6 +490,12 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
                 break
             if not await runtime.submit(prompt):
                 break
+            while runtime.processing_task:
+                try:
+                    await runtime.wait_until_idle()
+                except KeyboardInterrupt:
+                    if not runtime.interrupt():
+                        raise
     except KeyboardInterrupt:
         runtime.console.print()
     finally:
