@@ -367,6 +367,7 @@ async def resolve_reply(
         next_items = collect_tool_outputs(config, session, response_outputs)
         if not next_items:
             return build_reply_result(response, instructions, outputs)
+        outputs.extend(next_items)
         items.extend(next_items)
 
 

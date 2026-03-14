@@ -193,3 +193,4 @@ async def test_reply_keeps_intermediate_tool_call_items(
 
     assert result["text"] == "done"
     assert any(item.get("type") == "shell_call" for item in result["output_items"])
+    assert any(item.get("type") == "shell_call_output" for item in result["output_items"])
