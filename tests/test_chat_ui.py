@@ -1,3 +1,4 @@
+import asyncio
 import json
 from io import StringIO
 from pathlib import Path
@@ -135,6 +136,7 @@ async def test_chat_shows_thinking_summary_for_live_reply(
     runtime = build_chat_runtime(console=console)
     await runtime.start()
     await runtime.submit("hi")
+    await runtime.wait_until_idle()
     await runtime.close()
 
     text = output.getvalue()
@@ -160,3 +162,42 @@ async def test_command_is_printed_once(
 
     text = output.getvalue()
     assert text.count("you> /tree") == 1
+
+
+@pytest.mark.anyio
+async def test_chat_queues_messages_while_reply_is_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    prompts: list[str] = []
+
+    async def fake_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        session = args[2]
+        prompts.append(session.messages[-1].content)
+        if len(prompts) == 1:
+            started.set()
+            await release.wait()
+        return {"text": f"reply:{prompts[-1]}", "output_items": [], "usage": None}
+
+    monkeypatch.setattr("faltoobot.chat.reply", fake_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    assert await runtime.submit("first")
+    await started.wait()
+    assert await runtime.submit("second")
+    assert prompts == ["first"]
+    release.set()
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    assert prompts == ["first", "second"]
+    assert text.count("you> first") == 1
+    assert text.count("you> second") == 1
+    assert "bot> reply:first" in text
+    assert "bot> reply:second" in text

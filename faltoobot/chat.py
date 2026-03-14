@@ -1,6 +1,8 @@
 import argparse
+import asyncio
 import subprocess
 import sys
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +12,7 @@ from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.text import Text
@@ -129,6 +132,8 @@ class ChatRuntime:
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
+    pending_prompts: deque[str] = field(default_factory=deque)
+    processing_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         if not self.config.openai_api_key:
@@ -148,6 +153,7 @@ class ChatRuntime:
             self.write(kind, content)
 
     async def close(self) -> None:
+        await self.wait_until_idle()
         if self.client and self.own_client:
             await self.client.close()
 
@@ -174,8 +180,22 @@ class ChatRuntime:
             return True
         if text == "/exit":
             return False
-        await self.handle_prompt(text)
+        self.pending_prompts.append(text)
+        self.ensure_processing()
         return True
+
+    def ensure_processing(self) -> None:
+        if self.processing_task is None or self.processing_task.done():
+            self.processing_task = asyncio.create_task(self.process_pending())
+
+    async def process_pending(self) -> None:
+        while self.pending_prompts:
+            await self.handle_prompt(self.pending_prompts.popleft())
+
+    async def wait_until_idle(self) -> None:
+        if self.processing_task:
+            await self.processing_task
+            self.processing_task = None
 
     async def handle_prompt(self, prompt: str) -> None:
         if not self.session or not self.client:
@@ -225,19 +245,20 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
     bindings = prompt_bindings()
     await runtime.start()
     try:
-        while True:
-            prompt = await prompt_session.prompt_async(
-                [("class:prompt", "you> ")],
-                style=PROMPT_STYLE,
-                multiline=True,
-                wrap_lines=True,
-                erase_when_done=True,
-                bottom_toolbar=lambda: prompt_toolbar(runtime.config),
-                prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
-                key_bindings=bindings,
-            )
-            if not await runtime.submit(prompt):
-                break
+        with patch_stdout():
+            while True:
+                prompt = await prompt_session.prompt_async(
+                    [("class:prompt", "you> ")],
+                    style=PROMPT_STYLE,
+                    multiline=True,
+                    wrap_lines=True,
+                    erase_when_done=True,
+                    bottom_toolbar=lambda: prompt_toolbar(runtime.config),
+                    prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
+                    key_bindings=bindings,
+                )
+                if not await runtime.submit(prompt):
+                    break
     except (EOFError, KeyboardInterrupt):
         runtime.console.print()
     finally:
