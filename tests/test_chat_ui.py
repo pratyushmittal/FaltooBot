@@ -1,6 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from faltoobot.chat import TranscriptArea, build_chat_app
 
@@ -26,3 +26,11 @@ async def test_chat_shows_model_and_thinking_status() -> None:
         status = app.query_one("#status", Static)
         assert f"model: {app.config.openai_model}" in status.content
         assert f"thinking: {app.config.openai_thinking}" in status.content
+
+
+@pytest.mark.anyio
+async def test_chat_focuses_input_on_mount() -> None:
+    app = build_chat_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one(Input).has_focus

@@ -172,6 +172,19 @@ def save_index(sessions_dir: Path, index: dict[str, str]) -> None:
     write_json(index_path(sessions_dir), index)
 
 
+def indexed_session(sessions_dir: Path, key: str) -> Session | None:
+    session_id = load_index(sessions_dir).get(key)
+    if not session_id:
+        return None
+    root = session_root(sessions_dir, session_id)
+    return load_session(root) if messages_path(root).exists() else None
+
+
+def save_indexed_session(sessions_dir: Path, key: str, session: Session) -> Session:
+    save_index(sessions_dir, {**load_index(sessions_dir), key: session.id})
+    return session
+
+
 def create_session(
     sessions_dir: Path,
     name: str,
@@ -198,21 +211,32 @@ def create_cli_session(sessions_dir: Path, name: str, workspace: Path) -> Sessio
     return create_session(sessions_dir, name=name, kind="cli", workspace=workspace)
 
 
+def cli_session_key(workspace: Path) -> str:
+    return f"cli:{workspace.resolve()}"
+
+
+def cli_session(sessions_dir: Path, name: str, workspace: Path) -> Session:
+    return save_indexed_session(
+        sessions_dir,
+        cli_session_key(workspace),
+        create_cli_session(sessions_dir, name, workspace),
+    )
+
+
+def existing_cli_session(sessions_dir: Path, workspace: Path) -> Session | None:
+    return indexed_session(sessions_dir, cli_session_key(workspace))
+
+
 def whatsapp_session(sessions_dir: Path, chat_key: str) -> Session:
-    index = load_index(sessions_dir)
-    session_id = index.get(chat_key)
-    if session_id:
-        root = session_root(sessions_dir, session_id)
-        if messages_path(root).exists():
-            return load_session(root)
+    if session := indexed_session(sessions_dir, chat_key):
+        return session
     session = create_session(
         sessions_dir,
         name=session_name("whatsapp", chat_key),
         kind="whatsapp",
         chat_key=chat_key,
     )
-    save_index(sessions_dir, {**index, chat_key: session.id})
-    return session
+    return save_indexed_session(sessions_dir, chat_key, session)
 
 
 def session_items(session: Session) -> list[dict[str, Any]]:

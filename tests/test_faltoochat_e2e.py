@@ -33,8 +33,13 @@ def session_payload(home: Path) -> dict[str, object]:
     return json.loads(messages_files[0].read_text(encoding="utf-8"))
 
 
-async def run_chat_turn(home: Path, prompt: str) -> dict[str, object]:
-    app = build_chat_app(name="E2E Chat")
+async def run_chat_turn(
+    home: Path,
+    prompt: str,
+    name: str | None = "E2E Chat",
+    expected_messages: int = 2,
+) -> dict[str, object]:
+    app = build_chat_app(name=name)
     async with app.run_test() as pilot:
         input_widget = app.query_one(Input)
         input_widget.value = prompt
@@ -44,7 +49,7 @@ async def run_chat_turn(home: Path, prompt: str) -> dict[str, object]:
         for _ in range(60):
             payload = session_payload(home)
             messages = payload["messages"]
-            if isinstance(messages, list) and len(messages) == 2:
+            if isinstance(messages, list) and len(messages) == expected_messages:
                 break
             await pilot.pause(0.2)
         else:
@@ -121,3 +126,54 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     assert messages[1]["content"] == str(workspace)
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
+
+
+@pytest.mark.anyio
+async def test_faltoochat_reuses_existing_session_for_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY must be set to run this E2E test.")
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config_path = home / ".faltoobot" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        config_text("Reply with exactly the requested text when asked to do so."),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
+
+    first = await run_chat_turn(
+        home,
+        "Reply with exactly FIRST_RUN_OK and nothing else.",
+        name=None,
+        expected_messages=2,
+    )
+    second = await run_chat_turn(
+        home,
+        "Reply with exactly SECOND_RUN_OK and nothing else.",
+        name=None,
+        expected_messages=4,
+    )
+
+    first_messages = first["messages"]
+    second_messages = second["messages"]
+    assert first["id"] == second["id"]
+    assert first["workspace"] == str(workspace)
+    assert second["workspace"] == str(workspace)
+    assert isinstance(first_messages, list)
+    assert isinstance(second_messages, list)
+    assert len(first_messages) == 2
+    assert len(second_messages) == 4
+    assert [message["content"] for message in second_messages] == [
+        "Reply with exactly FIRST_RUN_OK and nothing else.",
+        "FIRST_RUN_OK",
+        "Reply with exactly SECOND_RUN_OK and nothing else.",
+        "SECOND_RUN_OK",
+    ]

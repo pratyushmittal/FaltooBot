@@ -11,7 +11,14 @@ from textual.widgets import Input, Static, TextArea
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
-from faltoobot.store import Session, add_turn, create_cli_session, reset_session, session_items
+from faltoobot.store import (
+    Session,
+    add_turn,
+    cli_session,
+    existing_cli_session,
+    reset_session,
+    session_items,
+)
 
 TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]+")
 
@@ -80,6 +87,7 @@ class FaltoochatApp(App[None]):
     def __init__(self, config: Config, name: str | None = None) -> None:
         super().__init__()
         self.config = config
+        self.resume_session = name is None
         self.chat_name = session_name(name)
         self.session: Session | None = None
         self.client: AsyncOpenAI | None = None
@@ -93,15 +101,15 @@ class FaltoochatApp(App[None]):
     async def on_mount(self) -> None:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
-        self.session = create_cli_session(
-            self.config.sessions_dir,
-            self.chat_name,
-            workspace=Path.cwd(),
-        )
+        workspace = Path.cwd()
+        self.session = (
+            existing_cli_session(self.config.sessions_dir, workspace) if self.resume_session else None
+        ) or cli_session(self.config.sessions_dir, self.chat_name, workspace=workspace)
         self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
         self.write_line(f"session: {self.session.name} ({self.session.id})")
         self.write_line(f"workspace: {self.session.workspace}")
         self.write_line(help_text())
+        self.call_after_refresh(self.prompt().focus)
 
     async def on_unmount(self) -> None:
         if self.client:
