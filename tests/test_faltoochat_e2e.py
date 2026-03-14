@@ -1,11 +1,12 @@
 import json
 import os
+from io import StringIO
 from pathlib import Path
 
 import pytest
-from textual.widgets import Input
+from rich.console import Console
 
-from faltoobot.chat import build_chat_app
+from faltoobot.chat import build_chat_runtime
 
 
 def config_text(system_prompt: str) -> str:
@@ -21,7 +22,7 @@ def config_text(system_prompt: str) -> str:
             "[bot]",
             "allow_groups = false",
             "allowed_chats = []",
-            f'system_prompt = {json.dumps(system_prompt)}',
+            f"system_prompt = {json.dumps(system_prompt)}",
             "",
         ]
     )
@@ -37,27 +38,12 @@ async def run_chat_turn(
     home: Path,
     prompt: str,
     name: str | None = "E2E Chat",
-    expected_messages: int = 2,
 ) -> dict[str, object]:
-    app = build_chat_app(name=name)
-    async with app.run_test() as pilot:
-        input_widget = app.query_one(Input)
-        input_widget.value = prompt
-        input_widget.focus()
-        await pilot.press("enter")
-
-        for _ in range(60):
-            payload = session_payload(home)
-            messages = payload["messages"]
-            if isinstance(messages, list) and len(messages) == expected_messages:
-                break
-            await pilot.pause(0.2)
-        else:
-            raise AssertionError("assistant response was not persisted")
-
-        input_widget.value = "/exit"
-        input_widget.focus()
-        await pilot.press("enter")
+    console = Console(file=StringIO(), force_terminal=False, width=100)
+    runtime = build_chat_runtime(name=name, console=console)
+    await runtime.start()
+    assert await runtime.submit(prompt)
+    await runtime.close()
     return session_payload(home)
 
 
@@ -149,18 +135,8 @@ async def test_faltoochat_reuses_existing_session_for_workspace(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(workspace)
 
-    first = await run_chat_turn(
-        home,
-        "Reply with exactly FIRST_RUN_OK and nothing else.",
-        name=None,
-        expected_messages=2,
-    )
-    second = await run_chat_turn(
-        home,
-        "Reply with exactly SECOND_RUN_OK and nothing else.",
-        name=None,
-        expected_messages=4,
-    )
+    first = await run_chat_turn(home, "Reply with exactly FIRST_RUN_OK and nothing else.", name=None)
+    second = await run_chat_turn(home, "Reply with exactly SECOND_RUN_OK and nothing else.", name=None)
 
     first_messages = first["messages"]
     second_messages = second["messages"]

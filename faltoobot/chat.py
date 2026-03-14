@@ -1,16 +1,18 @@
 import argparse
-import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from openai import AsyncOpenAI
-from textual import events
-from textual.app import App, ComposeResult
-from textual.document._document import Selection
-from textual.message import Message
-from textual.widgets import Static, TextArea
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style
+from rich.console import Console
+from rich.text import Text
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
@@ -24,7 +26,13 @@ from faltoobot.store import (
     session_items,
 )
 
-TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]+")
+PROMPT_STYLE = Style.from_dict(
+    {
+        "prompt": "bold #ffb347",
+        "continuation": "#516a86",
+        "toolbar": "fg:#8ea4bc bg:#0b1520",
+    }
+)
 
 
 def default_session_name() -> str:
@@ -39,12 +47,8 @@ def session_name(name: str | None) -> str:
     return f"CLI {name or default_session_name()}"
 
 
-def thinking_mode(config: Config) -> str:
-    return config.openai_thinking
-
-
 def status_text(config: Config) -> str:
-    return f"model: {config.openai_model}  thinking: {thinking_mode(config)}"
+    return f"model: {config.openai_model}  thinking: {config.openai_thinking}"
 
 
 def open_in_default_editor(path: Path) -> None:
@@ -54,7 +58,7 @@ def open_in_default_editor(path: Path) -> None:
 
 def summary_lines(turn: Turn) -> list[str]:
     return [
-        f"thinking> {text}"
+        text
         for item in turn.items
         if item.get("type") == "reasoning"
         for summary in item.get("summary", [])
@@ -64,172 +68,118 @@ def summary_lines(turn: Turn) -> list[str]:
     ]
 
 
-def turn_lines(session: Session) -> list[str]:
+def history_entries(session: Session) -> list[tuple[str, str]]:
     return [
-        line
+        entry
         for turn in session.messages
-        for line in [
-            *summary_lines(turn),
-            f"{'you' if turn.role == 'user' else 'bot'}> {turn.content}",
+        for entry in [
+            *(("thinking", text) for text in summary_lines(turn)),
+            ("you" if turn.role == "user" else "bot", turn.content),
         ]
     ]
 
 
-class TranscriptArea(TextArea):
-    async def on_click(self, event: events.Click) -> None:
-        if event.chain != 2:
-            return
-        row, column = self.get_target_document_location(event)
-        line = self.document[row]
-        if not line:
-            return
-        index = min(column, len(line) - 1)
-        token = next(
-            (match for match in TOKEN_PATTERN.finditer(line) if match.start() <= index < match.end()),
-            None,
-        )
-        if token is None:
-            return
-        self.selection = Selection((row, token.start()), (row, token.end()))
-        self.focus()
+def prompt_toolbar(config: Config) -> StyleAndTextTuples:
+    return [("class:toolbar", f" {status_text(config)}  Enter send  Esc+Enter newline ")]
 
 
-class PromptArea(TextArea):
-    class Submitted(Message):
-        def __init__(self, prompt: str, input: "PromptArea") -> None:
-            super().__init__()
-            self.prompt = prompt
-            self.input = input
+def prompt_bindings() -> KeyBindings:
+    bindings = KeyBindings()
 
-    async def on_key(self, event: events.Key) -> None:
-        if event.key != "enter":
-            return
-        event.prevent_default()
-        event.stop()
-        self.post_message(self.Submitted(self.text, self))
+    @bindings.add("enter")
+    def submit(event: Any) -> None:
+        event.current_buffer.validate_and_handle()
+
+    @bindings.add("escape", "enter")
+    @bindings.add("c-j")
+    def newline(event: Any) -> None:
+        event.current_buffer.insert_text("\n")
+
+    return bindings
 
 
-class FaltoochatApp(App[None]):
-    CSS = """
-    Screen {
-        layout: vertical;
-        background: #08111b;
-        color: #eef3f9;
-    }
+def render_line(kind: str, content: str) -> Text:
+    if kind == "meta":
+        return Text(content, style="dim #8ea4bc")
+    prefix_style = {
+        "you": "bold #ffb347",
+        "bot": "bold #76c7ff",
+        "thinking": "bold #93a8bd",
+        "error": "bold #ff7b72",
+        "opened": "bold #8ea4bc",
+    }.get(kind, "bold")
+    body_style = {
+        "you": "#fff4df",
+        "bot": "#e8f0f8",
+        "thinking": "#aab9c9",
+        "error": "#ffd5cf",
+        "opened": "#d7e3ef",
+    }.get(kind, "#eef3f9")
+    text = Text()
+    text.append(f"{kind}> ", style=prefix_style)
+    text.append(content, style=body_style)
+    return text
 
-    #messages {
-        height: 1fr;
-        margin: 1 1 0 1;
-        padding: 1 2;
-        background: #0f1b28;
-        color: #e8f0f8;
-        scrollbar-background: #0f1b28;
-        scrollbar-background-hover: #16263a;
-        scrollbar-color: #30465f;
-        scrollbar-color-active: #e39b31;
-    }
 
-    #prompt {
-        margin-top: 1;
-        margin: 1 1 0 1;
-        padding: 0 1;
-        min-height: 3;
-        height: 4;
-        background: #1a2432;
-        color: #fff4df;
-        scrollbar-background: #1a2432;
-        scrollbar-background-hover: #243244;
-        scrollbar-color: #516a86;
-        scrollbar-color-active: #ffb347;
-    }
+@dataclass(slots=True)
+class ChatRuntime:
+    config: Config
+    name: str | None = None
+    console: Console = field(default_factory=Console)
+    client: AsyncOpenAI | None = None
+    session: Session | None = None
+    own_client: bool = False
 
-    #prompt:focus {
-        background: #223247;
-    }
-
-    #status {
-        color: #8ea4bc;
-        background: #0b1520;
-        margin: 0 1 1 1;
-        padding: 0 2;
-        height: auto;
-    }
-    """
-
-    def __init__(self, config: Config, name: str | None = None) -> None:
-        super().__init__()
-        self.config = config
-        self.resume_session = name is None
-        self.chat_name = session_name(name)
-        self.session: Session | None = None
-        self.client: AsyncOpenAI | None = None
-        self.lines: list[str] = []
-
-    def compose(self) -> ComposeResult:
-        yield TranscriptArea("", id="messages", read_only=True, soft_wrap=True, show_cursor=False)
-        yield PromptArea("", id="prompt", soft_wrap=True, show_line_numbers=False)
-        yield Static(status_text(self.config), id="status")
-
-    async def on_mount(self) -> None:
+    async def start(self) -> None:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
         workspace = Path.cwd()
         self.session = (
-            existing_cli_session(self.config.sessions_dir, workspace) if self.resume_session else None
-        ) or cli_session(self.config.sessions_dir, self.chat_name, workspace=workspace)
-        self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
-        self.write_line(f"session: {self.session.name} ({self.session.id})")
-        self.write_line(f"workspace: {self.session.workspace}")
-        self.write_line(help_text())
-        for line in turn_lines(self.session):
-            self.write_line(line)
-        self.call_after_refresh(self.prompt().focus)
+            existing_cli_session(self.config.sessions_dir, workspace) if self.name is None else None
+        ) or cli_session(self.config.sessions_dir, session_name(self.name), workspace=workspace)
+        if self.client is None:
+            self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
+            self.own_client = True
+        self.console.print(Text(" faltoochat ", style="bold #08111b on #ffb347"))
+        self.write("meta", f"session: {self.session.name} ({self.session.id})")
+        self.write("meta", f"workspace: {self.session.workspace}")
+        self.write("meta", help_text())
+        for kind, content in history_entries(self.session):
+            self.write(kind, content)
 
-    async def on_unmount(self) -> None:
-        if self.client:
+    async def close(self) -> None:
+        if self.client and self.own_client:
             await self.client.close()
 
-    def message_log(self) -> TranscriptArea:
-        return self.query_one("#messages", TranscriptArea)
+    def write(self, kind: str, content: str) -> None:
+        self.console.print(render_line(kind, content))
 
-    def prompt(self) -> PromptArea:
-        return self.query_one("#prompt", PromptArea)
-
-    def write_line(self, text: str) -> None:
-        self.lines.append(text)
-        log = self.message_log()
-        log.load_text("\n".join(self.lines))
-        log.move_cursor((len(self.lines), 0))
-
-    async def on_prompt_area_submitted(self, event: PromptArea.Submitted) -> None:
-        prompt = event.prompt.strip()
-        event.input.clear()
-        if not prompt:
-            return
-        if prompt == "/help":
-            self.write_line(help_text())
-            return
-        if prompt == "/tree":
+    async def submit(self, prompt: str) -> bool:
+        text = prompt.strip()
+        if not text:
+            return True
+        if text == "/help":
+            self.write("meta", help_text())
+            return True
+        if text == "/tree":
             if self.session:
                 open_in_default_editor(self.session.messages_file)
-                self.write_line(f"opened> {self.session.messages_file}")
-            return
-        if prompt == "/reset":
+                self.write("opened", str(self.session.messages_file))
+            return True
+        if text == "/reset":
             if self.session:
                 self.session = reset_session(self.session)
-            self.write_line("memory cleared")
-            return
-        if prompt == "/exit":
-            self.exit()
-            return
-        await self.handle_prompt(prompt)
+            self.write("meta", "memory cleared")
+            return True
+        if text == "/exit":
+            return False
+        await self.handle_prompt(text)
+        return True
 
     async def handle_prompt(self, prompt: str) -> None:
         if not self.session or not self.client:
             raise RuntimeError("chat session is not ready")
-        input_box = self.prompt()
-        input_box.disabled = True
-        self.write_line(f"you> {prompt}")
+        self.write("you", prompt)
         self.session = add_turn(self.session, "user", prompt)
         try:
             result = await reply(
@@ -239,36 +189,58 @@ class FaltoochatApp(App[None]):
                 session_items(self.session),
             )
         except Exception as exc:
-            self.write_line(f"error> {exc}")
-        else:
-            answer = result["text"]
-            assistant_turn = Turn(
-                role="assistant",
-                content=answer,
-                created_at="",
-                items=tuple(result["output_items"]),
-            )
-            self.session = add_turn(
-                self.session,
-                "assistant",
-                answer,
-                items=result["output_items"],
-                usage=result["usage"],
-            )
-            for line in summary_lines(assistant_turn):
-                self.write_line(line)
-            self.write_line(f"bot> {answer}")
-        finally:
-            input_box.disabled = False
-            input_box.focus()
+            self.write("error", str(exc))
+            return
+        answer = result["text"]
+        assistant_turn = Turn(
+            role="assistant",
+            content=answer,
+            created_at="",
+            items=tuple(result["output_items"]),
+        )
+        self.session = add_turn(
+            self.session,
+            "assistant",
+            answer,
+            items=result["output_items"],
+            usage=result["usage"],
+        )
+        for text in summary_lines(assistant_turn):
+            self.write("thinking", text)
+        self.write("bot", answer)
 
 
-def build_chat_app(config: Config | None = None, name: str | None = None) -> FaltoochatApp:
-    return FaltoochatApp(config or build_config(), name=name)
+def build_chat_runtime(
+    config: Config | None = None,
+    name: str | None = None,
+    console: Console | None = None,
+    client: AsyncOpenAI | None = None,
+) -> ChatRuntime:
+    return ChatRuntime(config or build_config(), name=name, console=console or Console(), client=client)
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    await build_chat_app(config, name=name).run_async()
+    runtime = build_chat_runtime(config, name=name)
+    prompt_session = PromptSession()
+    bindings = prompt_bindings()
+    await runtime.start()
+    try:
+        while True:
+            prompt = await prompt_session.prompt_async(
+                [("class:prompt", "you> ")],
+                style=PROMPT_STYLE,
+                multiline=True,
+                wrap_lines=True,
+                bottom_toolbar=lambda: prompt_toolbar(runtime.config),
+                prompt_continuation=lambda width, _line, _wrap: [("class:continuation", "... ")],
+                key_bindings=bindings,
+            )
+            if not await runtime.submit(prompt):
+                break
+    except (EOFError, KeyboardInterrupt):
+        runtime.console.print()
+    finally:
+        await runtime.close()
 
 
 def parse_args() -> argparse.Namespace:
@@ -279,4 +251,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    build_chat_app(name=args.name).run()
+    import asyncio
+
+    asyncio.run(run_chat(name=args.name))
