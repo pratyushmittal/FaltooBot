@@ -494,7 +494,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
     bindings = prompt_bindings(runtime.interrupt)
     await runtime.start()
     try:
-        with patch_stdout(raw=True):
+        with patch_stdout():
             while True:
                 prompt = await prompt_session.prompt_async(
                     prompt_message(runtime.config),

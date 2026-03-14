@@ -84,6 +84,7 @@ async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
     calls: list[dict[str, object]] = []
+    patch_stdout_calls: list[bool] = []
 
     class FakePromptSession:
         def __init__(self, *args: object, **kwargs: object) -> None:
@@ -112,6 +113,10 @@ async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
     runtime = FakeRuntime()
     monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
     monkeypatch.setattr("faltoobot.chat.build_chat_runtime", lambda *args, **kwargs: runtime)
+    monkeypatch.setattr(
+        "faltoobot.chat.patch_stdout",
+        lambda raw=False: patch_stdout_calls.append(raw) or nullcontext(),
+    )
 
     await run_chat(config=config)
 
@@ -119,6 +124,7 @@ async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
     assert runtime.closed
     assert calls[0]["init"] == {"erase_when_done": True}
     assert "erase_when_done" not in calls[1]["prompt_async"]
+    assert patch_stdout_calls == [False]
 
 
 @pytest.mark.anyio
