@@ -98,10 +98,10 @@ def history_entries(session: Session) -> list[tuple[str, str]]:
 
 
 def prompt_toolbar(config: Config) -> StyleAndTextTuples:
-    return [("class:toolbar", f" {status_text(config)}  Enter send  Ctrl+J newline ")]
+    return [("class:toolbar", f" {status_text(config)}  Enter send  Ctrl+J newline  Ctrl+Q interrupt ")]
 
 
-def prompt_bindings() -> KeyBindings:
+def prompt_bindings(on_interrupt: Callable[[], None] | None = None) -> KeyBindings:
     bindings = KeyBindings()
 
     @bindings.add("enter")
@@ -112,6 +112,12 @@ def prompt_bindings() -> KeyBindings:
     @bindings.add("escape", "enter")
     def newline(event: Any) -> None:
         event.current_buffer.insert_text("\n")
+
+    @bindings.add("c-q")
+    def interrupt(event: Any) -> None:
+        del event
+        if on_interrupt:
+            on_interrupt()
 
     return bindings
 
@@ -200,6 +206,7 @@ class ChatRuntime:
     own_client: bool = False
     pending_prompts: deque[str] = field(default_factory=deque)
     processing_task: asyncio.Task[None] | None = None
+    current_reply_task: asyncio.Task[dict[str, Any]] | None = None
     stream_start: Callable[[StyleAndTextTuples], None] | None = None
     stream_delta: Callable[[str], None] | None = None
     stream_end: Callable[[], None] | None = None
@@ -296,6 +303,12 @@ class ChatRuntime:
             await self.processing_task
             self.processing_task = None
 
+    def interrupt(self) -> bool:
+        if not self.current_reply_task or self.current_reply_task.done():
+            return False
+        self.current_reply_task.cancel()
+        return True
+
     async def handle_prompt(self, prompt: str) -> None:
         if not self.session or not self.client:
             raise RuntimeError("chat session is not ready")
@@ -311,17 +324,27 @@ class ChatRuntime:
                 streamed = True
             self.write_stream_delta(delta)
 
-        try:
-            result = await stream_reply(
+        self.current_reply_task = asyncio.create_task(
+            stream_reply(
                 self.client,
                 self.config,
                 self.session,
                 session_items(self.session),
                 on_text_delta=on_text_delta,
             )
+        )
+        try:
+            result = await self.current_reply_task
+        except asyncio.CancelledError:
+            if streamed:
+                self.write_stream_end()
+            self.write("meta", "reply interrupted")
+            return
         except Exception as exc:
             self.write("error", str(exc))
             return
+        finally:
+            self.current_reply_task = None
         answer = result["text"]
         assistant_turn = Turn(
             role="assistant",
@@ -384,7 +407,7 @@ async def run_chat(config: Config | None = None, name: str | None = None) -> Non
         stream_end=lambda: print_formatted_text("", style=PROMPT_STYLE),
     )
     prompt_session = PromptSession(erase_when_done=True)
-    bindings = prompt_bindings()
+    bindings = prompt_bindings(runtime.interrupt)
     await runtime.start()
     try:
         with patch_stdout():

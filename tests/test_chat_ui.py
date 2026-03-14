@@ -57,6 +57,7 @@ def test_chat_shows_model_and_thinking_status(tmp_path: Path, monkeypatch: pytes
     assert f"model: {config.openai_model}" in text
     assert f"thinking: {config.openai_thinking}" in text
     assert "Ctrl+J newline" in text
+    assert "Ctrl+Q interrupt" in text
 
 
 def test_prompt_bindings_build_successfully() -> None:
@@ -71,6 +72,7 @@ def test_prompt_bindings_build_successfully() -> None:
         and str(key[1]) in {"Keys.ControlM", "Keys.Enter"}
         for key in keys
     )
+    assert any(len(key) == 1 and str(key[0]) == "Keys.ControlQ" for key in keys)
 
 
 @pytest.mark.anyio
@@ -102,6 +104,9 @@ async def test_run_chat_passes_erase_when_done_to_prompt_session_constructor(
 
         async def close(self) -> None:
             self.closed = True
+
+        def interrupt(self) -> bool:
+            return False
 
     runtime = FakeRuntime()
     monkeypatch.setattr("faltoobot.chat.PromptSession", FakePromptSession)
@@ -448,3 +453,44 @@ async def test_chat_queues_messages_while_reply_is_running(
     assert text.count("you> second") == 1
     assert "bot> reply:first" in text
     assert "bot> reply:second" in text
+
+
+@pytest.mark.anyio
+async def test_chat_can_interrupt_inflight_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    console, output = runtime_console()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        callback = kwargs["on_text_delta"]
+        await callback("partial")
+        started.set()
+        await release.wait()
+        return {
+            "text": "partial done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
+
+    runtime = build_chat_runtime(console=console)
+    await runtime.start()
+    assert await runtime.submit("first")
+    await started.wait()
+
+    assert runtime.interrupt()
+    await runtime.wait_until_idle()
+    await runtime.close()
+
+    text = output.getvalue()
+    assert "bot> partial" in text
+    assert "reply interrupted" in text
+    assert "partial done" not in text
+    assert runtime.session is not None
+    assert [turn.role for turn in runtime.session.messages] == ["user"]
