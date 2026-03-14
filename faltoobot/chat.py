@@ -1,12 +1,13 @@
 import argparse
-import asyncio
 from datetime import datetime
 
 from openai import AsyncOpenAI
+from textual.app import App, ComposeResult
+from textual.widgets import Input, RichLog
 
 from faltoobot.agent import reply
 from faltoobot.config import Config, build_config
-from faltoobot.store import add_turn, create_cli_session, recent_items, reset_session
+from faltoobot.store import Session, add_turn, create_cli_session, recent_items, reset_session
 
 
 def default_session_name() -> str:
@@ -17,63 +18,108 @@ def help_text() -> str:
     return "Commands: /help, /reset, /exit"
 
 
-async def read_prompt() -> str:
-    return await asyncio.to_thread(input, "you> ")
+def session_name(name: str | None) -> str:
+    return f"CLI {name or default_session_name()}"
+
+
+class FaltoochatApp(App[None]):
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+
+    #messages {
+        height: 1fr;
+        border: round $accent;
+    }
+
+    Input {
+        dock: bottom;
+    }
+    """
+
+    def __init__(self, config: Config, name: str | None = None) -> None:
+        super().__init__()
+        self.config = config
+        self.chat_name = session_name(name)
+        self.session: Session | None = None
+        self.client: AsyncOpenAI | None = None
+
+    def compose(self) -> ComposeResult:
+        yield RichLog(id="messages", wrap=True, markup=False)
+        yield Input(placeholder="Type a message or /help", id="prompt")
+
+    async def on_mount(self) -> None:
+        if not self.config.openai_api_key:
+            raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
+        self.session = create_cli_session(self.config.sessions_dir, self.chat_name)
+        self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
+        self.write_line(f"session: {self.session.name} ({self.session.id})")
+        self.write_line(f"workspace: {self.session.workspace}")
+        self.write_line(help_text())
+
+    async def on_unmount(self) -> None:
+        if self.client:
+            await self.client.close()
+
+    def message_log(self) -> RichLog:
+        return self.query_one("#messages", RichLog)
+
+    def prompt(self) -> Input:
+        return self.query_one("#prompt", Input)
+
+    def write_line(self, text: str) -> None:
+        self.message_log().write(text)
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        prompt = event.value.strip()
+        event.input.value = ""
+        if not prompt:
+            return
+        if prompt == "/help":
+            self.write_line(help_text())
+            return
+        if prompt == "/reset":
+            if self.session:
+                self.session = reset_session(self.session)
+            self.write_line("memory cleared")
+            return
+        if prompt == "/exit":
+            self.exit()
+            return
+        await self.handle_prompt(prompt)
+
+    async def handle_prompt(self, prompt: str) -> None:
+        if not self.session or not self.client:
+            raise RuntimeError("chat session is not ready")
+        input_box = self.prompt()
+        input_box.disabled = True
+        self.write_line(f"you> {prompt}")
+        self.session = add_turn(self.session, "user", prompt)
+        try:
+            result = await reply(
+                self.client,
+                self.config,
+                self.session,
+                recent_items(self.session, self.config.max_history_messages),
+            )
+        except Exception as exc:
+            self.write_line(f"error> {exc}")
+        else:
+            answer = result["text"]
+            self.session = add_turn(self.session, "assistant", answer, items=result["output_items"])
+            self.write_line(f"bot> {answer}")
+        finally:
+            input_box.disabled = False
+            input_box.focus()
+
+
+def build_chat_app(config: Config | None = None, name: str | None = None) -> FaltoochatApp:
+    return FaltoochatApp(config or build_config(), name=name)
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    config = config or build_config()
-    if not config.openai_api_key:
-        raise RuntimeError(f"openai.api_key is missing. Add it to {config.config_file}")
-
-    session = create_cli_session(
-        config.sessions_dir,
-        name=f"CLI {name or default_session_name()}",
-    )
-    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
-    print(f"session: {session.name} ({session.id})")
-    print(f"workspace: {session.workspace}")
-    print(help_text())
-
-    try:
-        while True:
-            try:
-                prompt = (await read_prompt()).strip()
-            except EOFError:
-                print()
-                break
-            except KeyboardInterrupt:
-                print()
-                break
-
-            if not prompt:
-                continue
-            if prompt == "/help":
-                print(help_text())
-                continue
-            if prompt == "/reset":
-                session = reset_session(session)
-                print("memory cleared")
-                continue
-            if prompt == "/exit":
-                break
-
-            session = add_turn(session, "user", prompt)
-            try:
-                result = await reply(
-                    openai_client,
-                    config,
-                    session,
-                    recent_items(session, config.max_history_messages),
-                )
-            except Exception as exc:
-                print(f"error> {exc}")
-                continue
-            answer = result["text"]
-            session = add_turn(session, "assistant", answer, items=result["output_items"])
-            print(f"bot> {answer}")
-    finally:
-        await openai_client.close()
+    await build_chat_app(config, name=name).run_async()
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,4 +130,4 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    asyncio.run(run_chat(name=args.name))
+    build_chat_app(name=args.name).run()
