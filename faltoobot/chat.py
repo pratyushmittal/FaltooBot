@@ -603,7 +603,7 @@ class EntryBlock(Vertical):
             yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body")
 
     def uses_markdown(self) -> bool:
-        return self.entry.kind in RICH_KINDS and (
+        return self.entry.kind in {"bot", "thinking"} and (
             looks_like_markdown(self.entry.content) or "\n" in self.entry.content
         )
 
@@ -878,10 +878,13 @@ class FaltooChatApp(App[None]):
             self._live_block = EntryBlock(live)
             transcript.mount(self._live_block)
 
-        if at_end:
-            transcript.scroll_end(animate=False, immediate=True)
+        should_scroll_end = force or at_end or self.runtime.current_reply_task is not None
+        if should_scroll_end:
+            self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
         else:
-            transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
+            self.call_after_refresh(
+                lambda: transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
+            )
         self._snapshot = snapshot
 
     def action_interrupt_or_quit(self) -> None:
