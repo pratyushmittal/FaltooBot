@@ -833,6 +833,15 @@ class FaltooChatApp(App[None]):
         link-style-hover: bold underline;
     }
 
+    MarkdownBlock {
+        link-background: transparent;
+        link-background-hover: transparent;
+        link-color: #0b57d0;
+        link-color-hover: #0842a0;
+        link-style: bold underline;
+        link-style-hover: bold underline;
+    }
+
     Markdown MarkdownFence {
         background: ansi_default;
         background-tint: 0%;
