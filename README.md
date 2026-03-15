@@ -63,6 +63,8 @@ In CLI chat:
 /exit
 ```
 
+`faltoochat` also supports image input. Paste an image file path, paste markdown like `![alt](path)`, or use `Ctrl+V` to attach the current macOS clipboard image.
+
 ## Update
 
 ```bash

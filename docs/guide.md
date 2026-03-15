@@ -184,7 +184,7 @@ The repo currently uses:
 
 ## Notes
 
-- Phase 1 is text-only.
+- Phase 1 supports text everywhere and image input in `faltoochat`.
 - Groups are off by default.
 - The bot ignores messages sent by itself.
 - This repo is meant to be used with `uv` for Python dependency management.

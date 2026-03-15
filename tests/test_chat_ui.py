@@ -16,8 +16,11 @@ from faltoobot.chat import (
     QueueItem,
     build_chat_app,
     build_chat_runtime,
+    image_markdown,
     input_hint,
     main,
+    paste_image_text,
+    queue_preview,
     rich_renderable,
 )
 from faltoobot.config import build_config
@@ -43,7 +46,9 @@ def config_text(system_prompt: str, thinking: str = "none") -> str:
     )
 
 
-def prepare_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, thinking: str = "none") -> Path:
+def prepare_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, thinking: str = "none"
+) -> Path:
     home = tmp_path / "home"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -73,11 +78,17 @@ def entry_tuples(runtime: object) -> list[tuple[str, str]]:
 
 
 def transcript_blocks(app: object) -> list[EntryBlock]:
-    return [block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)]  # type: ignore[attr-defined]
+    return [
+        block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)
+    ]  # type: ignore[attr-defined]
 
 
 def live_markdown_blocks(app: object) -> list[LiveMarkdownBlock]:
-    return [block for block in app.query_one("#transcript").children if isinstance(block, LiveMarkdownBlock)]  # type: ignore[attr-defined]
+    return [
+        block
+        for block in app.query_one("#transcript").children
+        if isinstance(block, LiveMarkdownBlock)
+    ]  # type: ignore[attr-defined]
 
 
 def block_plain(block: EntryBlock) -> str:
@@ -97,15 +108,92 @@ def queue_paused(app: object) -> list[bool]:
     return [item.paused for item in app.query("#queue QueueItem")]  # type: ignore[attr-defined]
 
 
-def test_input_hint_shows_model_and_thinking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_input_hint_shows_model_and_thinking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     prepare_home(tmp_path, monkeypatch, thinking="medium")
     config = build_config()
     text = input_hint(config)
 
     assert f"model: {config.openai_model}" in text
     assert f"thinking: {config.openai_thinking}" in text
-    assert "Shift+Enter newline" in text
+    assert "Enter send" not in text
+    assert "Shift+Enter newline" not in text
+    assert "Ctrl+V paste/image" in text
     assert "Ctrl+C interrupt" in text
+
+
+def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image = workspace / "cat.png"
+    image.write_bytes(b"png")
+
+    assert paste_image_text(str(image), workspace) == image_markdown(image.resolve())
+
+
+def test_input_hint_shows_queue_shortcuts_when_queue_not_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    text = input_hint(config, queued=2)
+
+    assert "queued 2" in text
+    assert "Ctrl+E edit" in text
+    assert "Ctrl+P pause" in text
+    assert "Del remove" in text
+    assert "Alt+Up/Down reorder" in text
+
+
+def test_queue_preview_flattens_multiline_content() -> None:
+    assert queue_preview("first line\nsecond line\n\nthird") == "first line second line third"
+
+
+@pytest.mark.anyio
+async def test_chat_submits_markdown_images_as_user_message_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    image = workspace / "cat.png"
+    image.write_bytes(b"png")
+    seen: list[dict[str, object]] = []
+
+    async def fake_input_image_part(*args: object, **kwargs: object) -> dict[str, object]:
+        return {"type": "input_image", "file_id": "file_123", "detail": "auto"}
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        seen.extend(args[3])
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.input_image_part", fake_input_image_part)
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime()
+    await runtime.start()
+    await runtime.submit(f"What is this?\n{image_markdown(image)}")
+    await runtime.wait_until_idle()
+    text = transcript_text(runtime)
+    await runtime.close()
+
+    assert seen == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "What is this?\n"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+            ],
+        }
+    ]
+    assert "[image: cat.png]" in text
 
 
 def test_main_returns_130_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,7 +241,10 @@ async def test_chat_replays_existing_session_messages_on_start(
         "world",
         items=[
             {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
-            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Checking context."}]},
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Checking context."}],
+            },
         ],
     )
 
@@ -185,7 +276,10 @@ async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
         return {
             "text": "done",
             "output_items": [
-                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Planning reply"}]},
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Planning reply"}],
+                },
                 {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
             ],
             "usage": None,
@@ -408,7 +502,9 @@ async def test_textual_app_renders_plain_user_and_bot_text(
         await pilot.pause()
         blocks = transcript_blocks(app)
         you_block = next(block for block in blocks if block.entry.kind == "you")
-        bot_block = next(block for block in blocks if block.entry.kind == "bot" and block.entry.content == "pong")
+        bot_block = next(
+            block for block in blocks if block.entry.kind == "bot" and block.entry.content == "pong"
+        )
         assert "ping" in block_plain(you_block)
         assert "pong" in block_plain(bot_block)
 
@@ -468,7 +564,9 @@ async def test_textual_app_reconciles_partial_bot_stream_with_final_reply(
         await app.runtime.wait_until_idle()
         await pilot.pause()
         assert ("bot", "partial and complete") in entry_tuples(app.runtime)
-        assert any(block.entry.content == "partial and complete" for block in transcript_blocks(app))
+        assert any(
+            block.entry.content == "partial and complete" for block in transcript_blocks(app)
+        )
 
 
 @pytest.mark.anyio
@@ -499,7 +597,10 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
         assert app.runtime.live_entry is not None
         assert app.runtime.live_entry.kind == "thinking"
         assert app.runtime.live_entry.content == "**Calculating a date**\n\nDetails here"
-        assert any(block.entry.content == "**Calculating a date**\n\nDetails here" for block in live_markdown_blocks(app))
+        assert any(
+            block.entry.content == "**Calculating a date**\n\nDetails here"
+            for block in live_markdown_blocks(app)
+        )
         release.set()
         await app.runtime.wait_until_idle()
 

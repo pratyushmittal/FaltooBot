@@ -1,6 +1,8 @@
 import argparse
 import asyncio
+import base64
 import json
+import mimetypes
 import os
 import re
 import select
@@ -14,13 +16,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from openai import AsyncOpenAI
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
@@ -47,9 +50,163 @@ from faltoobot.store import (
 MARKDOWN_KINDS = frozenset({"bot", "thinking"})
 TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+MARKDOWN_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
 
 
 MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))  # type: ignore[assignment]
+
+
+def as_session_path(source: str, workspace: Path) -> Path | None:
+    value = source.strip().strip('"').strip("'")
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme == "file":
+        path = Path(unquote(parsed.path))
+    elif parsed.scheme:
+        return None
+    else:
+        raw = Path(os.path.expanduser(value))
+        path = raw if raw.is_absolute() else workspace / raw
+    return path.resolve() if path.exists() else None
+
+
+def is_image_path(path: Path) -> bool:
+    mime_type, _ = mimetypes.guess_type(path.name)
+    return path.is_file() and (
+        (mime_type or "").startswith("image/") or path.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+def is_image_url(source: str) -> bool:
+    value = source.strip()
+    if value.startswith("data:image/"):
+        return True
+    parsed = urlparse(value)
+    return (
+        parsed.scheme in {"http", "https"} and Path(parsed.path).suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+def image_markdown(path: Path, alt: str | None = None) -> str:
+    return f"![{alt or path.name}]({path.as_uri()})"
+
+
+def paste_image_text(text: str, workspace: Path) -> str:
+    lines = text.splitlines()
+    if not lines:
+        return text
+    return "\n".join(
+        f"![image]({line.strip()})"
+        if is_image_url(line)
+        else image_markdown(path)
+        if (path := as_session_path(line, workspace)) and is_image_path(path)
+        else line
+        for line in lines
+    )
+
+
+def image_label(source: str, alt: str, workspace: Path) -> str:
+    if alt.strip():
+        return alt.strip()
+    if path := as_session_path(source, workspace):
+        return path.name
+    parsed = urlparse(source.strip())
+    name = Path(unquote(parsed.path)).name
+    return name or "image"
+
+
+def display_prompt(prompt: str, workspace: Path) -> str:
+    text = MARKDOWN_IMAGE_RE.sub(
+        lambda match: f"[image: {image_label(match.group('src'), match.group('alt'), workspace)}]",
+        prompt,
+    ).strip()
+    return text or "[image]"
+
+
+def clipboard_image_bytes() -> bytes | None:
+    if sys.platform != "darwin":
+        return None
+    script = """
+ObjC.import('AppKit');
+const pasteboard = $.NSPasteboard.generalPasteboard;
+const classes = $.NSArray.arrayWithObject($.NSImage);
+const images = pasteboard.readObjectsForClassesOptions(classes, $.NSDictionary.dictionary());
+if (!images || images.count === 0) {
+  $.exit(1);
+}
+const image = images.objectAtIndex(0);
+const tiff = image.TIFFRepresentation;
+const bitmap = $.NSBitmapImageRep.imageRepWithData(tiff);
+const png = bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary());
+ObjC.unwrap(png.base64EncodedStringWithOptions(0));
+""".strip()
+    result = subprocess.run(
+        ["osascript", "-l", "JavaScript"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    data = result.stdout.strip()
+    return base64.b64decode(data) if data else None
+
+
+def save_clipboard_image(session: Session) -> Path | None:
+    if not (data := clipboard_image_bytes()):
+        return None
+    path = (
+        session.root
+        / "attachments"
+        / f"clipboard-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')}.png"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+async def input_image_part(client: AsyncOpenAI, workspace: Path, source: str) -> dict[str, Any]:
+    value = source.strip()
+    if is_image_url(value):
+        return {"type": "input_image", "image_url": value, "detail": "auto"}
+    path = as_session_path(value, workspace)
+    if path is None or not is_image_path(path):
+        raise ValueError(f"Image not found: {source}")
+    with path.open("rb") as handle:
+        uploaded = await client.files.create(file=handle, purpose="vision")
+    return {"type": "input_image", "file_id": uploaded.id, "detail": "auto"}
+
+
+async def prompt_message_item(
+    client: AsyncOpenAI,
+    workspace: Path,
+    prompt: str,
+) -> tuple[str, dict[str, Any] | None]:
+    if not MARKDOWN_IMAGE_RE.search(prompt):
+        return prompt, None
+    content: list[dict[str, Any]] = []
+    cursor = 0
+    for match in MARKDOWN_IMAGE_RE.finditer(prompt):
+        prefix = prompt[cursor : match.start()]
+        if prefix:
+            content.append({"type": "input_text", "text": prefix})
+        content.append(await input_image_part(client, workspace, match.group("src")))
+        cursor = match.end()
+    suffix = prompt[cursor:]
+    if suffix:
+        content.append({"type": "input_text", "text": suffix})
+    return display_prompt(prompt, workspace), {
+        "type": "message",
+        "role": "user",
+        "content": [
+            part
+            for part in content
+            if part.get("type") == "input_image" or str(part.get("text") or "")
+        ],
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +228,7 @@ def default_session_name() -> str:
 
 
 def help_text() -> str:
-    return "Commands: /help, /tree, /reset, /exit"
+    return "Commands: /help, /tree, /reset, /exit, Ctrl+V image"
 
 
 def session_name(name: str | None) -> str:
@@ -130,16 +287,22 @@ def input_hint(
     queued: int = 0,
     queue_selected: bool = False,
 ) -> str:
-    parts = [status_text(config), "Enter send", "Shift+Enter newline", "Ctrl+C interrupt"]
+    parts = [status_text(config)]
     if replying:
         parts.append("replying")
     if queued:
         parts.append(f"queued {queued}")
-    if queue_selected:
         parts.append("Ctrl+E edit")
         parts.append("Ctrl+P pause")
         parts.append("Del remove")
         parts.append("Alt+Up/Down reorder")
+    elif queue_selected:
+        parts.append("Ctrl+E edit")
+        parts.append("Ctrl+P pause")
+        parts.append("Del remove")
+        parts.append("Alt+Up/Down reorder")
+    parts.append("Ctrl+V paste/image")
+    parts.append("Ctrl+C interrupt")
     return "  ".join(parts)
 
 
@@ -174,7 +337,12 @@ def tool_lines(item: dict[str, Any]) -> list[str]:
                     payload = arguments
                 lines.extend(payload.splitlines())
             return lines
-    if item_type in {"web_search_call", "function_web_search", "tool_search_call", "file_search_call"}:
+    if item_type in {
+        "web_search_call",
+        "function_web_search",
+        "tool_search_call",
+        "file_search_call",
+    }:
         action = item.get("action")
         query = action.get("query") if isinstance(action, dict) else item.get("query")
         if isinstance(query, str) and query.strip():
@@ -253,6 +421,11 @@ def rich_renderable(kind: str, content: str) -> Text | Group:
     return Text(content)
 
 
+def queue_preview(content: str) -> str:
+    preview = " ".join(part.strip() for part in content.splitlines() if part.strip())
+    return preview or content.strip()
+
+
 @dataclass(slots=True)
 class ChatRuntime:
     config: Config
@@ -301,7 +474,9 @@ class ChatRuntime:
     def restore_queue(self) -> None:
         if self.session is None or not self.session.queued_prompts:
             return
-        self.pending_prompts = [QueuedPrompt(prompt.content, True) for prompt in self.session.queued_prompts]
+        self.pending_prompts = [
+            QueuedPrompt(prompt.content, True) for prompt in self.session.queued_prompts
+        ]
         self.save_queue()
 
     def start_client(self) -> None:
@@ -474,7 +649,9 @@ class ChatRuntime:
 
     def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
         answer = result["text"]
-        turn = Turn(role="assistant", content=answer, created_at="", items=tuple(result["output_items"]))
+        turn = Turn(
+            role="assistant", content=answer, created_at="", items=tuple(result["output_items"])
+        )
         self.session = add_turn(
             self.require_session(),
             "assistant",
@@ -500,9 +677,20 @@ class ChatRuntime:
         self.notify()
 
     async def handle_prompt(self, prompt: str) -> None:
-        session = add_turn(self.require_session(), "user", prompt)
+        session = self.require_session()
+        display_text, message_item = await prompt_message_item(
+            self.require_client(),
+            session.workspace,
+            prompt,
+        )
+        session = add_turn(
+            session,
+            "user",
+            display_text,
+            items=[message_item] if message_item else None,
+        )
         self.session = session
-        self.append_entry("you", prompt)
+        self.append_entry("you", display_text)
         state = StreamState()
 
         async def on_text_delta(delta: str) -> None:
@@ -557,6 +745,31 @@ class Composer(TextArea):
             self.value = value
             super().__init__()
 
+    def workspace(self) -> Path:
+        runtime = getattr(self.app, "runtime", None)
+        session = getattr(runtime, "session", None)
+        return session.workspace if isinstance(session, Session) else Path.cwd()
+
+    def insert_text(self, value: str) -> None:
+        if result := self._replace_via_keyboard(value, *self.selection):
+            self.move_cursor(result.end_location)
+            self.focus()
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        if self.read_only:
+            return
+        self.insert_text(paste_image_text(event.text, self.workspace()))
+
+    def action_paste(self) -> None:
+        if self.read_only:
+            return
+        runtime = getattr(self.app, "runtime", None)
+        session = getattr(runtime, "session", None)
+        if isinstance(session, Session) and (path := save_clipboard_image(session)):
+            self.insert_text(image_markdown(path))
+            return
+        self.insert_text(paste_image_text(self.app.clipboard, self.workspace()))
+
     def on_key(self, event: Any) -> None:
         if event.key == "enter":
             event.prevent_default()
@@ -587,7 +800,7 @@ class QueueItem(Horizontal):
 
     def __init__(self, index: int, prompt: QueuedPrompt, *, selected: bool = False) -> None:
         self.index = index
-        self.content = prompt.content
+        self.content = queue_preview(prompt.content)
         self.paused = prompt.paused
         self.selected = selected
         super().__init__(classes="queue-item")
@@ -840,7 +1053,8 @@ class FaltooChatApp(App[None]):
     }
 
     #footer {
-        width: 80;
+        width: 1fr;
+        max-width: 120;
         height: auto;
         layout: vertical;
     }
@@ -860,8 +1074,8 @@ class FaltooChatApp(App[None]):
         height: 1;
         padding: 0 2;
         background: $surface;
-        color: $text-muted;
-        text-style: bold;
+        color: $text-disabled;
+        text-style: none;
     }
 
     Markdown {
@@ -1039,7 +1253,9 @@ class FaltooChatApp(App[None]):
     def refresh_transcript(self, *, force: bool = False) -> None:
         entries = list(self.runtime.entries)
         live = self.runtime.live_entry
-        snapshot = tuple((entry.kind, entry.content) for entry in [*entries, *([live] if live else [])])
+        snapshot = tuple(
+            (entry.kind, entry.content) for entry in [*entries, *([live] if live else [])]
+        )
         if not force and snapshot == self._snapshot:
             return
 
@@ -1047,7 +1263,9 @@ class FaltooChatApp(App[None]):
         at_end = transcript.is_vertical_scroll_end
         previous_scroll = transcript.scroll_y
         rendered = tuple((entry.kind, entry.content) for entry in entries)
-        append_only = rendered[: len(self._blocks)] == tuple((block.entry.kind, block.entry.content) for block in self._blocks)
+        append_only = rendered[: len(self._blocks)] == tuple(
+            (block.entry.kind, block.entry.content) for block in self._blocks
+        )
 
         if force or not append_only:
             transcript.remove_children()
@@ -1091,7 +1309,11 @@ class FaltooChatApp(App[None]):
     def edit_queue(self, index: int) -> None:
         if (prompt := self.runtime.remove_prompt(index)) is None:
             return
-        self._queue_selected = min(index, len(self.runtime.pending_prompts) - 1) if self.runtime.pending_prompts else None
+        self._queue_selected = (
+            min(index, len(self.runtime.pending_prompts) - 1)
+            if self.runtime.pending_prompts
+            else None
+        )
         composer = self.composer()
         composer.load_text(prompt)
         composer.focus()
@@ -1100,7 +1322,11 @@ class FaltooChatApp(App[None]):
     def delete_queue(self, index: int) -> None:
         if self.runtime.remove_prompt(index) is None:
             return
-        self._queue_selected = min(index, len(self.runtime.pending_prompts) - 1) if self.runtime.pending_prompts else None
+        self._queue_selected = (
+            min(index, len(self.runtime.pending_prompts) - 1)
+            if self.runtime.pending_prompts
+            else None
+        )
         self.sync_view(force=True)
 
     def move_queue(self, index: int, target: int) -> None:
@@ -1196,7 +1422,9 @@ def build_chat_app(
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    await build_chat_app(config=config, name=name, terminal_dark=terminal_background_dark()).run_async()
+    await build_chat_app(
+        config=config, name=name, terminal_dark=terminal_background_dark()
+    ).run_async()
 
 
 def parse_args() -> argparse.Namespace:

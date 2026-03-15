@@ -73,10 +73,7 @@ def session_payload(session: Session) -> dict[str, Any]:
         "workspace": str(session.workspace),
         "processed_message_ids": list(session.processed_message_ids),
         "queued_prompts": [queued_prompt_payload(prompt) for prompt in session.queued_prompts],
-        "messages": [
-            turn_payload(turn)
-            for turn in session.messages
-        ],
+        "messages": [turn_payload(turn) for turn in session.messages],
     }
 
 
@@ -129,9 +126,11 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
         and isinstance(item.get("created_at"), str)
     )
     raw_processed = payload.get("processed_message_ids")
-    processed = tuple(
-        message_id for message_id in raw_processed if isinstance(message_id, str)
-    ) if isinstance(raw_processed, list) else ()
+    processed = (
+        tuple(message_id for message_id in raw_processed if isinstance(message_id, str))
+        if isinstance(raw_processed, list)
+        else ()
+    )
     queued_prompts = tuple(
         QueuedPrompt(content=item["content"], paused=bool(item.get("paused")))
         for item in payload.get("queued_prompts", [])
@@ -268,15 +267,11 @@ def whatsapp_session(sessions_dir: Path, chat_key: str) -> Session:
 
 
 def session_items(session: Session) -> list[dict[str, Any]]:
-    return [
-        item
-        for turn in session.messages
-        for item in turn_items(turn)
-    ]
+    return [item for turn in session.messages for item in turn_items(turn)]
 
 
 def turn_items(turn: Turn) -> list[dict[str, Any]]:
-    if turn.role == "assistant" and turn.items:
+    if turn.items:
         return list(turn.items)
     return [{"type": "message", "role": turn.role, "content": turn.content}]
 
