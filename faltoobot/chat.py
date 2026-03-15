@@ -129,30 +129,27 @@ def clipboard_image_bytes() -> bytes | None:
     if sys.platform != "darwin":
         return None
     script = """
-ObjC.import('AppKit');
-const pasteboard = $.NSPasteboard.generalPasteboard;
-const classes = $.NSArray.arrayWithObject($.NSImage);
-const images = pasteboard.readObjectsForClassesOptions(classes, $.NSDictionary.dictionary());
-if (!images || images.count === 0) {
-  $.exit(1);
+import AppKit
+let pasteboard = NSPasteboard.general
+if let image = NSImage(pasteboard: pasteboard),
+   let tiff = image.tiffRepresentation,
+   let bitmap = NSBitmapImageRep(data: tiff),
+   let png = bitmap.representation(using: .png, properties: [:]) {
+    print(png.base64EncodedString())
 }
-const image = images.objectAtIndex(0);
-const tiff = image.TIFFRepresentation;
-const bitmap = $.NSBitmapImageRep.imageRepWithData(tiff);
-const png = bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary());
-ObjC.unwrap(png.base64EncodedStringWithOptions(0));
 """.strip()
-    result = subprocess.run(
-        ["osascript", "-l", "JavaScript"],
-        input=script,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(
+            ["swift", "-"],
+            input=script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
         return None
     data = result.stdout.strip()
-    return base64.b64decode(data) if data else None
+    return base64.b64decode(data) if result.returncode == 0 and data else None
 
 
 def save_clipboard_image(session: Session) -> Path | None:

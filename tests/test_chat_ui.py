@@ -132,6 +132,24 @@ def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
     assert paste_image_text(str(image), workspace) == image_markdown(image.resolve())
 
 
+@pytest.mark.anyio
+async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    image = workspace / "clipboard.png"
+    image.write_bytes(b"png")
+    monkeypatch.setattr("faltoobot.chat.save_clipboard_image", lambda session: image)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("ctrl+v")
+        await pilot.pause()
+        assert app.query_one("#composer", Composer).text == image_markdown(image)
+
+
 def test_input_hint_shows_queue_shortcuts_when_queue_not_empty(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
