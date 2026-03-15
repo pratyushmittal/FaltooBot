@@ -178,6 +178,31 @@ def usage_dict(response: Any) -> dict[str, Any] | None:
     return usage if isinstance(usage, dict) else None
 
 
+def output_text_from_items(items: list[Any]) -> str:
+    texts: list[str] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "output_text":
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+    return "".join(texts)
+
+
+def response_text(response: Any, response_outputs: list[dict[str, Any]] | None = None) -> str:
+    text = getattr(response, "output_text", "")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    items = response_outputs or normalized_items(getattr(response, "output", []))
+    return output_text_from_items(items).strip()
+
+
 def compacted_items(items: list[Any]) -> list[Any]:
     for index in range(len(items) - 1, -1, -1):
         item = items[index]
@@ -346,8 +371,9 @@ def build_reply_result(
     response: Any,
     instructions: str,
     outputs: list[dict[str, Any]],
+    response_outputs: list[dict[str, Any]] | None = None,
 ) -> ReplyResult:
-    text = (response.output_text or "").strip()
+    text = response_text(response, response_outputs)
     return {
         "text": text or "I couldn't generate a reply just now.",
         "output_items": outputs,
@@ -398,13 +424,13 @@ async def resolve_reply(
         next_items = await collect_tool_outputs(config, session, response_outputs)
         outputs.extend(next_items)
         items.extend(next_items)
-        text = (response.output_text or "").strip()
+        text = response_text(response, response_outputs)
         if on_stream_end and (outputs or text):
             result = on_stream_end(list(outputs), text)
             if inspect.isawaitable(result):
                 await result
         if not next_items:
-            return build_reply_result(response, instructions, outputs)
+            return build_reply_result(response, instructions, outputs, response_outputs)
 
 
 async def reply(

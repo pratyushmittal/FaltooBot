@@ -161,6 +161,96 @@ class FakeLoopStreamClient:
         self.responses = FakeLoopStreamResponses()
 
 
+class FakeWebSearchResponses:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> FakeResponse:
+        self.calls.append(kwargs)
+        response = FakeResponse()
+        response.output_text = ""
+        response.output = [
+            {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "status": "completed",
+                "action": {"query": "latest faltoobot news"},
+            },
+            {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "search-backed answer",
+                        "annotations": [],
+                    }
+                ],
+            },
+        ]
+        return response
+
+
+class FakeWebSearchClient:
+    def __init__(self) -> None:
+        self.responses = FakeWebSearchResponses()
+
+
+class FakeWebSearchStreamManager:
+    async def __aenter__(self) -> "FakeWebSearchStreamManager":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+        return None
+
+    def __aiter__(self) -> "FakeWebSearchStreamManager":
+        self._events = iter(())
+        return self
+
+    async def __anext__(self) -> FakeStreamEvent:
+        raise StopAsyncIteration
+
+    async def get_final_response(self) -> FakeResponse:
+        response = FakeResponse()
+        response.output_text = ""
+        response.output = [
+            {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "status": "completed",
+                "action": {"query": "latest faltoobot news"},
+            },
+            {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "search-backed answer",
+                        "annotations": [],
+                    }
+                ],
+            },
+        ]
+        return response
+
+
+class FakeWebSearchStreamResponses:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def stream(self, **kwargs: Any) -> FakeWebSearchStreamManager:
+        self.calls.append(kwargs)
+        return FakeWebSearchStreamManager()
+
+
+class FakeWebSearchStreamClient:
+    def __init__(self) -> None:
+        self.responses = FakeWebSearchStreamResponses()
+
+
 @pytest.mark.anyio
 async def test_reply_includes_global_home_and_session_agents_in_instructions(
     tmp_path: Path,
@@ -263,6 +353,29 @@ async def test_reply_keeps_intermediate_tool_call_items(
 
 
 @pytest.mark.anyio
+async def test_reply_uses_message_output_text_when_sdk_output_text_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    client = FakeWebSearchClient()
+
+    result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
+
+    assert result["text"] == "search-backed answer"
+    assert any(item.get("type") == "web_search_call" for item in result["output_items"])
+    assert any(item.get("type") == "message" for item in result["output_items"])
+
+
+@pytest.mark.anyio
 async def test_reply_strips_parsed_arguments_from_replayed_tool_items(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -328,6 +441,35 @@ async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
         ("done", ["shell_call", "shell_call_output"]),
     ]
     assert result["text"] == "done"
+
+
+@pytest.mark.anyio
+async def test_stream_reply_uses_message_output_text_when_sdk_output_text_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    client = FakeWebSearchStreamClient()
+    snapshots: list[tuple[str, list[str]]] = []
+
+    result = await stream_reply(
+        client,
+        config,
+        session,
+        [{"type": "message", "role": "user", "content": "hi"}],  # type: ignore[arg-type]
+        on_stream_end=lambda items, text: snapshots.append((text, [item["type"] for item in items])),
+    )
+
+    assert snapshots == [("search-backed answer", ["web_search_call", "message"])]
+    assert result["text"] == "search-backed answer"
 
 
 def test_instruction_parts_deduplicate_same_agents_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
