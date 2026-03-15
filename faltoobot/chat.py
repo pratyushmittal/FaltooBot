@@ -952,13 +952,13 @@ class LiveMarkdownBlock(Vertical):
         super().__init__(classes=entry_class(entry.kind))
 
     def compose(self) -> ComposeResult:
-        yield TextualMarkdown(self.entry.content, id="body", classes="body")
+        yield Static(self.entry.content, id="body", classes="body")
 
     def set_entry(self, entry: Entry) -> bool:
         if entry.kind != self.entry.kind or entry.kind not in {"bot", "thinking"}:
             return False
         self.entry = entry
-        self.query_one("#body", TextualMarkdown).update(entry.content)
+        self.query_one("#body", Static).update(entry.content)
         return True
 
 
@@ -1150,7 +1150,7 @@ class FaltooChatApp(App[None]):
             self.theme = "textual-dark" if terminal_dark else "textual-light"
         self.runtime = build_chat_runtime(config=config, name=name, client=client)
         self._snapshot: tuple[tuple[str, str], ...] = ()
-        self._blocks: list[EntryBlock] = []
+        self._blocks: list[EntryBlock | LiveMarkdownBlock] = []
         self._live_block: EntryBlock | LiveMarkdownBlock | None = None
         self._queue_snapshot: tuple[QueuedPrompt, ...] = ()
         self._queue_selected: int | None = None
@@ -1295,8 +1295,16 @@ class FaltooChatApp(App[None]):
 
         if live is None:
             if self._live_block is not None:
-                self._live_block.remove()
-                self._live_block = None
+                final_index = len(self._blocks)
+                if final_index < len(entries):
+                    final_entry = entries[final_index]
+                    if self._live_block.entry.kind == final_entry.kind:
+                        self._live_block.set_entry(final_entry)
+                        self._blocks.append(self._live_block)
+                        self._live_block = None
+                if self._live_block is not None:
+                    self._live_block.remove()
+                    self._live_block = None
         elif self._live_block is None:
             self._live_block = self.make_entry_block(live)
             transcript.mount(self._live_block)
