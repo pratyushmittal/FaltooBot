@@ -11,6 +11,7 @@ from rich.text import Text
 from faltoobot.chat import (
     Composer,
     EntryBlock,
+    QueuedPrompt,
     QueueItem,
     build_chat_app,
     build_chat_runtime,
@@ -80,6 +81,10 @@ def queue_texts(app: object) -> list[str]:
 
 def queue_items(app: object) -> list[object]:
     return list(app.query("#queue QueueItem"))  # type: ignore[attr-defined]
+
+
+def queue_paused(app: object) -> list[bool]:
+    return [item.paused for item in app.query("#queue QueueItem")]  # type: ignore[attr-defined]
 
 
 def test_input_hint_shows_model_and_thinking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -504,10 +509,69 @@ async def test_textual_app_reorders_queue_with_drag(
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     app = build_chat_app()
-    app.runtime.pending_prompts = ["one", "two"]  # type: ignore[attr-defined]
+    app.runtime.pending_prompts = [QueuedPrompt("one"), QueuedPrompt("two")]  # type: ignore[attr-defined]
     app.sync_view = lambda force=False: None  # type: ignore[method-assign]
 
     app.on_queue_item_drag_start(QueueItem.DragStart(0))  # type: ignore[attr-defined]
     app.on_queue_item_drag_finish(QueueItem.DragFinish(1))  # type: ignore[attr-defined]
 
     assert app.runtime.queued_prompts() == ("two", "one")
+
+
+@pytest.mark.anyio
+async def test_textual_app_paused_queue_does_not_auto_submit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+    prompts: list[str] = []
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        prompt = args[2].messages[-1].content
+        prompts.append(prompt)
+        if prompt == "first":
+            await release.wait()
+        return {
+            "text": f"reply:{prompt}",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f", "i", "r", "s", "t", "enter")
+        await pilot.pause()
+        await pilot.press("s", "e", "c", "o", "n", "d", "enter")
+        await pilot.press("t", "h", "i", "r", "d", "enter")
+        await pilot.pause()
+        pause_button = queue_items(app)[0].query_one(".queue-pause")  # type: ignore[attr-defined]
+        await pilot.click(pause_button)
+        await pilot.pause()
+        assert queue_paused(app) == [True, False]
+        release.set()
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        assert prompts == ["first", "third"]
+        assert app.runtime.queued_prompts() == ("second",)
+        assert app.runtime.queued_prompt_items()[0].paused is True
+
+
+@pytest.mark.anyio
+async def test_textual_app_can_toggle_selected_queue_pause_with_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+    app.runtime.pending_prompts = [QueuedPrompt("one")]  # type: ignore[attr-defined]
+    app._queue_selected = 0  # type: ignore[attr-defined]
+    app.sync_view = lambda force=False: None  # type: ignore[method-assign]
+
+    app.action_toggle_selected_queue_pause()
+
+    assert app.runtime.queued_prompt_items()[0].paused is True

@@ -18,6 +18,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
@@ -62,6 +63,12 @@ class Entry:
 
 
 @dataclass(slots=True)
+class QueuedPrompt:
+    content: str
+    paused: bool = False
+
+
+@dataclass(slots=True)
 class StreamState:
     active_kind: str | None = None
     saw_bot: bool = False
@@ -99,6 +106,7 @@ def input_hint(
         parts.append(f"queued {queued}")
     if queue_selected:
         parts.append("Ctrl+E edit")
+        parts.append("Ctrl+P pause")
         parts.append("Del remove")
         parts.append("Alt+Up/Down reorder")
     return "  ".join(parts)
@@ -230,7 +238,7 @@ class ChatRuntime:
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
-    pending_prompts: list[str] = field(default_factory=list)
+    pending_prompts: list[QueuedPrompt] = field(default_factory=list)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[dict[str, Any]] | None = None
     entries: list[Entry] = field(default_factory=list)
@@ -283,7 +291,14 @@ class ChatRuntime:
         ]
 
     async def close(self) -> None:
-        await self.wait_until_idle()
+        if self.processing_task is not None:
+            await self.processing_task
+            self.processing_task = None
+        if self.current_reply_task is not None:
+            try:
+                await self.current_reply_task
+            except asyncio.CancelledError:
+                pass
         if self.client and self.own_client:
             await self.client.close()
 
@@ -299,27 +314,41 @@ class ChatRuntime:
         return True
 
     def queued_prompts(self) -> tuple[str, ...]:
-        return tuple(self.pending_prompts)
+        return tuple(prompt.content for prompt in self.pending_prompts)
+
+    def queued_prompt_items(self) -> tuple[QueuedPrompt, ...]:
+        return tuple(QueuedPrompt(prompt.content, prompt.paused) for prompt in self.pending_prompts)
 
     def enqueue_prompt(self, prompt: str) -> None:
-        self.pending_prompts.append(prompt)
+        self.pending_prompts.append(QueuedPrompt(prompt))
 
     def pop_next_prompt(self) -> str | None:
-        return self.pending_prompts.pop(0) if self.pending_prompts else None
+        for index, prompt in enumerate(self.pending_prompts):
+            if not prompt.paused:
+                return self.pending_prompts.pop(index).content
+        return None
 
     def remove_prompt(self, index: int) -> str | None:
         if 0 <= index < len(self.pending_prompts):
             prompt = self.pending_prompts.pop(index)
             self.notify()
-            return prompt
+            return prompt.content
         return None
 
     def replace_prompt(self, index: int, prompt: str) -> bool:
         if 0 <= index < len(self.pending_prompts):
-            self.pending_prompts[index] = prompt
+            self.pending_prompts[index].content = prompt
             self.notify()
             return True
         return False
+
+    def toggle_prompt_paused(self, index: int) -> bool | None:
+        if 0 <= index < len(self.pending_prompts):
+            prompt = self.pending_prompts[index]
+            prompt.paused = not prompt.paused
+            self.notify()
+            return prompt.paused
+        return None
 
     def move_prompt(self, index: int, target: int) -> int | None:
         if not (0 <= index < len(self.pending_prompts) and 0 <= target < len(self.pending_prompts)):
@@ -506,14 +535,16 @@ class QueueItem(Horizontal):
             self.index = index
             super().__init__()
 
-    def __init__(self, index: int, content: str, *, selected: bool = False) -> None:
+    def __init__(self, index: int, prompt: QueuedPrompt, *, selected: bool = False) -> None:
         self.index = index
-        self.content = content
+        self.content = prompt.content
+        self.paused = prompt.paused
         self.selected = selected
         super().__init__(classes="queue-item")
 
     def compose(self) -> ComposeResult:
         yield Static(Text(self.content, overflow="ellipsis", no_wrap=True), classes="queue-text")
+        yield Button("▶" if self.paused else "⏸", classes="queue-pause")
         yield Button("×", classes="queue-delete")
 
     def on_mouse_down(self, event: Any) -> None:
@@ -657,6 +688,17 @@ class FaltooChatApp(App[None]):
         border: none;
     }
 
+    .queue-pause {
+        min-width: 3;
+        width: 3;
+        height: 1;
+        padding: 0;
+        margin: 0 0 0 1;
+        background: transparent;
+        color: #8ea4bc;
+        border: none;
+    }
+
     #composer {
         height: 6;
         min-height: 3;
@@ -678,6 +720,7 @@ class FaltooChatApp(App[None]):
     BINDINGS = [
         Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False),
         Binding("ctrl+e", "edit_selected_queue", "Edit Queue", show=False),
+        Binding("ctrl+p", "toggle_selected_queue_pause", "Pause Queue", show=False),
         Binding("delete", "delete_selected_queue", "Delete Queue", show=False),
         Binding("backspace", "delete_selected_queue", "Delete Queue", show=False),
         Binding("alt+up", "move_selected_queue_up", "Queue Up", show=False),
@@ -695,7 +738,7 @@ class FaltooChatApp(App[None]):
         self._snapshot: tuple[tuple[str, str], ...] = ()
         self._blocks: list[EntryBlock] = []
         self._live_block: EntryBlock | None = None
-        self._queue_snapshot: tuple[str, ...] = ()
+        self._queue_snapshot: tuple[QueuedPrompt, ...] = ()
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
 
@@ -746,7 +789,10 @@ class FaltooChatApp(App[None]):
         self.sync_view(force=True)
 
     def refresh_ui(self) -> None:
-        self.sync_view()
+        try:
+            self.sync_view()
+        except NoMatches:
+            return
 
     def sync_view(self, force: bool = False) -> None:
         self.refresh_queue(force=force)
@@ -774,7 +820,7 @@ class FaltooChatApp(App[None]):
             self._queue_selected = len(queued) - 1
 
     def refresh_queue(self, *, force: bool = False) -> None:
-        queued = self.runtime.queued_prompts()
+        queued = self.runtime.queued_prompt_items()
         if not force and queued == self._queue_snapshot:
             return
         self.normalize_queue_selection()
@@ -894,13 +940,32 @@ class FaltooChatApp(App[None]):
             return
         self.delete_queue(parent.index)
 
+    @on(Button.Pressed, ".queue-pause")
+    def on_queue_pause_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        parent = event.button.parent
+        if not isinstance(parent, QueueItem):
+            return
+        self.toggle_queue_pause(parent.index)
+
     def action_edit_selected_queue(self) -> None:
         if self._queue_selected is not None:
             self.edit_queue(self._queue_selected)
 
+    def toggle_queue_pause(self, index: int) -> None:
+        if (paused := self.runtime.toggle_prompt_paused(index)) is not None:
+            self._queue_selected = index
+            if not paused:
+                self.runtime.ensure_processing()
+            self.sync_view(force=True)
+
     def action_delete_selected_queue(self) -> None:
         if self._queue_selected is not None:
             self.delete_queue(self._queue_selected)
+
+    def action_toggle_selected_queue_pause(self) -> None:
+        if self._queue_selected is not None:
+            self.toggle_queue_pause(self._queue_selected)
 
     def action_move_selected_queue_up(self) -> None:
         if self._queue_selected not in {None, 0}:
