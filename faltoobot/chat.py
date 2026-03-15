@@ -1202,7 +1202,10 @@ class FaltooChatApp(App[None]):
         return self.query_one("#status", Static)
 
     def scroll_transcript_end(self) -> None:
-        transcript = self.transcript()
+        try:
+            transcript = self.transcript()
+        except NoMatches:
+            return
         transcript.scroll_end(animate=False, immediate=True)
         self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
         for delay in (0.01, 0.05, 0.2, 0.5):
@@ -1213,6 +1216,8 @@ class FaltooChatApp(App[None]):
         await self.runtime.start()
         self.sync_view(force=True)
         self.scroll_transcript_end()
+        startup_scroll = self.set_interval(0.1, self.scroll_transcript_end)
+        self.set_timer(2.0, startup_scroll.stop)
         self.set_interval(0.05, self.refresh_ui)
         self.call_after_refresh(self.composer().focus)
 
