@@ -1,8 +1,14 @@
 import argparse
 import asyncio
 import json
+import os
+import re
+import select
 import subprocess
 import sys
+import termios
+import time
+import tty
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -83,6 +89,47 @@ def session_name(name: str | None) -> str:
 
 def status_text(config: Config) -> str:
     return f"model: {config.openai_model}  thinking: {config.openai_thinking}"
+
+
+def _channel_value(value: str) -> int:
+    if len(value) == 2:
+        return int(value, 16)
+    if len(value) == 4:
+        return int(value[:2], 16)
+    return int(value[:2], 16)
+
+
+def terminal_background_dark(timeout: float = 0.1) -> bool | None:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return None
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        os.write(sys.stdout.fileno(), b"\x1b]11;?\x07")
+        end = time.monotonic() + timeout
+        data = bytearray()
+        while time.monotonic() < end:
+            ready, _, _ = select.select([fd], [], [], end - time.monotonic())
+            if not ready:
+                break
+            data.extend(os.read(fd, 256))
+            if b"\x07" in data or b"\x1b\\" in data:
+                break
+    except OSError:
+        return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    match = re.search(
+        rb"11;rgb:([0-9a-fA-F]{2,4})/([0-9a-fA-F]{2,4})/([0-9a-fA-F]{2,4})",
+        bytes(data),
+    )
+    if match is None:
+        return None
+    red, green, blue = (_channel_value(value.decode()) for value in match.groups())
+    brightness = (0.299 * red + 0.587 * green + 0.114 * blue) / 255
+    return brightness < 0.5
 
 
 def input_hint(
@@ -598,32 +645,32 @@ class EntryBlock(Vertical):
 
     EntryBlock.entry-you > .body {
         color: ansi_default;
-        background: rgba(59, 130, 246, 0.08);
+        background: #3b82f6 6%;
     }
 
     EntryBlock.entry-bot > .body {
         color: ansi_default;
-        background: rgba(100, 116, 139, 0.06);
+        background: #64748b 4%;
     }
 
     EntryBlock.entry-thinking > .body {
         color: ansi_bright_black;
-        background: rgba(100, 116, 139, 0.04);
+        background: #64748b 3%;
     }
 
     EntryBlock.entry-tool > .body {
         color: ansi_cyan;
-        background: rgba(8, 145, 178, 0.05);
+        background: #0891b2 4%;
     }
 
     EntryBlock.entry-error > .body {
         color: ansi_bright_red;
-        background: rgba(220, 38, 38, 0.06);
+        background: #dc2626 5%;
     }
 
     EntryBlock.entry-opened > .body {
         color: ansi_blue;
-        background: rgba(37, 99, 235, 0.05);
+        background: #2563eb 4%;
     }
 
     EntryBlock.entry-banner > .body,
@@ -908,8 +955,11 @@ class FaltooChatApp(App[None]):
         config: Config | None = None,
         name: str | None = None,
         client: AsyncOpenAI | None = None,
+        terminal_dark: bool | None = None,
     ) -> None:
         super().__init__(ansi_color=True)
+        if terminal_dark is not None:
+            self.theme = "textual-dark" if terminal_dark else "textual-light"
         self.runtime = build_chat_runtime(config=config, name=name, client=client)
         self._snapshot: tuple[tuple[str, str], ...] = ()
         self._blocks: list[EntryBlock] = []
@@ -1174,12 +1224,13 @@ def build_chat_app(
     config: Config | None = None,
     name: str | None = None,
     client: AsyncOpenAI | None = None,
+    terminal_dark: bool | None = None,
 ) -> FaltooChatApp:
-    return FaltooChatApp(config=config, name=name, client=client)
+    return FaltooChatApp(config=config, name=name, client=client, terminal_dark=terminal_dark)
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    await build_chat_app(config=config, name=name).run_async()
+    await build_chat_app(config=config, name=name, terminal_dark=terminal_background_dark()).run_async()
 
 
 def parse_args() -> argparse.Namespace:
@@ -1191,7 +1242,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        build_chat_app(name=args.name).run()
+        build_chat_app(name=args.name, terminal_dark=terminal_background_dark()).run()
     except KeyboardInterrupt:
         return 130
     return 0
