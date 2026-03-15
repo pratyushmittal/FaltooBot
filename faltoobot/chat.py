@@ -32,8 +32,8 @@ from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
+from textual.widgets import Static, TextArea
 from textual.widgets.markdown import MarkdownFence
 
 from faltoobot.agent import stream_reply
@@ -318,15 +318,17 @@ def input_hint(
         parts.append("replying")
     if queued:
         parts.append(f"queued {queued}")
-        parts.append("Ctrl+E edit")
-        parts.append("Ctrl+P pause")
+        parts.append("↑/↓ select")
+        parts.append("Enter edit")
+        parts.append("Space pause")
         parts.append("Del remove")
-        parts.append("Alt+Up/Down reorder")
+        parts.append("Shift+↑/↓ move")
     elif queue_selected:
-        parts.append("Ctrl+E edit")
-        parts.append("Ctrl+P pause")
+        parts.append("↑/↓ select")
+        parts.append("Enter edit")
+        parts.append("Space pause")
         parts.append("Del remove")
-        parts.append("Alt+Up/Down reorder")
+        parts.append("Shift+↑/↓ move")
     parts.append("Ctrl+V paste/image")
     parts.append("Ctrl+C interrupt")
     return "  ".join(parts)
@@ -449,7 +451,7 @@ def rich_renderable(kind: str, content: str) -> Text | Group:
 
 def queue_preview(content: str) -> str:
     preview = " ".join(part.strip() for part in content.splitlines() if part.strip())
-    return preview or content.strip()
+    return (preview or content.strip())[:75]
 
 
 @dataclass(slots=True)
@@ -857,11 +859,14 @@ class QueueItem(Horizontal):
         self.selected = selected
         super().__init__(classes="queue-item")
 
+    def marker(self) -> str:
+        return "□" if self.paused else "☑︎"
+
     def compose(self) -> ComposeResult:
-        yield Static(Text(self.content, overflow="ellipsis", no_wrap=True), classes="queue-text")
-        yield Button("✎", classes="queue-edit")
-        yield Button("▶" if self.paused else "⏸", classes="queue-pause")
-        yield Button("×", classes="queue-delete")
+        yield Static(
+            Text(f"{self.marker()} {self.content}", overflow="ellipsis", no_wrap=True),
+            classes="queue-text",
+        )
 
     def on_mouse_down(self, event: Any) -> None:
         event.stop()
@@ -1046,43 +1051,17 @@ class FaltooChatApp(App[None]):
     }
 
     .queue-item.-selected {
-        text-style: bold underline;
+        background: $primary 18%;
+    }
+
+    .queue-item.-selected .queue-text {
+        text-style: bold;
     }
 
     .queue-text {
         width: 1fr;
         height: auto;
         color: $text;
-    }
-
-    .queue-edit,
-    .queue-delete {
-        min-width: 3;
-        width: 3;
-        height: 1;
-        padding: 0;
-        margin: 0 0 0 1;
-        background: transparent;
-        border: none;
-    }
-
-    .queue-edit {
-        color: $accent;
-    }
-
-    .queue-delete {
-        color: $error;
-    }
-
-    .queue-pause {
-        min-width: 3;
-        width: 3;
-        height: 1;
-        padding: 0;
-        margin: 0 0 0 1;
-        background: transparent;
-        color: $text-muted;
-        border: none;
     }
 
     #footer {
@@ -1158,12 +1137,6 @@ class FaltooChatApp(App[None]):
 
     BINDINGS = [
         Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False),
-        Binding("ctrl+e", "edit_selected_queue", "Edit Queue", show=False),
-        Binding("ctrl+p", "toggle_selected_queue_pause", "Pause Queue", show=False),
-        Binding("delete", "delete_selected_queue", "Delete Queue", show=False),
-        Binding("backspace", "delete_selected_queue", "Delete Queue", show=False),
-        Binding("alt+up", "move_selected_queue_up", "Queue Up", show=False),
-        Binding("alt+down", "move_selected_queue_down", "Queue Down", show=False),
     ]
 
     def __init__(
@@ -1181,6 +1154,7 @@ class FaltooChatApp(App[None]):
         self._blocks: list[EntryBlock | LiveMarkdownBlock] = []
         self._live_block: EntryBlock | LiveMarkdownBlock | None = None
         self._queue_snapshot: tuple[QueuedPrompt, ...] = ()
+        self._queue_selected_snapshot: int | None = None
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
 
@@ -1242,9 +1216,9 @@ class FaltooChatApp(App[None]):
             return
 
     def sync_view(self, force: bool = False) -> None:
-        self.refresh_queue(force=force)
+        queue_layout_changed = self.refresh_queue(force=force)
         self.refresh_status()
-        self.refresh_transcript(force=force)
+        self.refresh_transcript(force=force or queue_layout_changed)
 
     def refresh_status(self) -> None:
         self.status().update(
@@ -1260,14 +1234,16 @@ class FaltooChatApp(App[None]):
         queued = self.runtime.queued_prompts()
         if not queued:
             self._queue_selected = None
-        elif self._queue_selected is None or self._queue_selected >= len(queued):
+        elif self._queue_selected is not None and self._queue_selected >= len(queued):
             self._queue_selected = len(queued) - 1
 
-    def refresh_queue(self, *, force: bool = False) -> None:
+    def refresh_queue(self, *, force: bool = False) -> bool:
         queued = self.runtime.queued_prompt_items()
-        if not force and queued == self._queue_snapshot:
-            return
         self.normalize_queue_selection()
+        selection_changed = self._queue_selected != self._queue_selected_snapshot
+        layout_changed = queued != self._queue_snapshot
+        if not force and not layout_changed and not selection_changed:
+            return False
         queue = self.queue()
         queue.remove_children()
         items = [
@@ -1282,6 +1258,8 @@ class FaltooChatApp(App[None]):
         else:
             queue.display = False
         self._queue_snapshot = queued
+        self._queue_selected_snapshot = self._queue_selected
+        return layout_changed or force
 
     def refresh_transcript(self, *, force: bool = False) -> None:
         entries = list(self.runtime.entries)
@@ -1352,6 +1330,7 @@ class FaltooChatApp(App[None]):
             transcript.scroll_end(animate=False, immediate=True)
             self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
             self.set_timer(0.01, lambda: transcript.scroll_end(animate=False, immediate=True))
+            self.set_timer(0.05, lambda: transcript.scroll_end(animate=False, immediate=True))
         else:
             transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
             self.call_after_refresh(
@@ -1392,6 +1371,46 @@ class FaltooChatApp(App[None]):
         self._queue_selected = new_index
         self.sync_view(force=True)
 
+    def move_queue_selection(self, delta: int) -> bool:
+        total = len(self.runtime.pending_prompts)
+        if not total:
+            return False
+        if delta < 0:
+            self._queue_selected = total - 1 if self._queue_selected is None else max(0, self._queue_selected - 1)
+        elif self._queue_selected is None:
+            return False
+        elif self._queue_selected >= total - 1:
+            self._queue_selected = None
+        else:
+            self._queue_selected += 1
+        self.composer().focus()
+        self.sync_view(force=True)
+        return True
+
+    def handle_composer_key(self, key: str) -> bool:
+        if key == "up":
+            return self.move_queue_selection(-1)
+        if key == "down":
+            return self.move_queue_selection(1)
+        if self._queue_selected is None:
+            return False
+        if key == "enter":
+            self.action_edit_selected_queue()
+            return True
+        if key in {"delete", "backspace"}:
+            self.action_delete_selected_queue()
+            return True
+        if key in {"space", "tab"}:
+            self.action_toggle_selected_queue_pause()
+            return True
+        if key == "shift+up":
+            self.action_move_selected_queue_up()
+            return True
+        if key == "shift+down":
+            self.action_move_selected_queue_down()
+            return True
+        return False
+
     @on(QueueItem.Picked)
     def on_queue_item_picked(self, message: QueueItem.Picked) -> None:
         if self._queue_drag_index is not None and self._queue_drag_index != message.index:
@@ -1414,31 +1433,6 @@ class FaltooChatApp(App[None]):
         if source == message.index:
             return
         self.move_queue(source, message.index)
-
-    @on(Button.Pressed, ".queue-edit")
-    def on_queue_edit_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        parent = event.button.parent
-        if not isinstance(parent, QueueItem):
-            return
-        self._queue_selected = parent.index
-        self.edit_queue(parent.index)
-
-    @on(Button.Pressed, ".queue-delete")
-    def on_queue_delete_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        parent = event.button.parent
-        if not isinstance(parent, QueueItem):
-            return
-        self.delete_queue(parent.index)
-
-    @on(Button.Pressed, ".queue-pause")
-    def on_queue_pause_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        parent = event.button.parent
-        if not isinstance(parent, QueueItem):
-            return
-        self.toggle_queue_pause(parent.index)
 
     def action_edit_selected_queue(self) -> None:
         if self._queue_selected is not None:

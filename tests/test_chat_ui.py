@@ -113,6 +113,21 @@ def queue_paused(app: object) -> list[bool]:
     return [item.paused for item in app.query("#queue QueueItem")]  # type: ignore[attr-defined]
 
 
+def queue_labels(app: object) -> list[str]:
+    labels: list[str] = []
+    for item in app.query("#queue QueueItem"):  # type: ignore[attr-defined]
+        rendered = item.query_one(".queue-text").render()
+        labels.append(rendered.plain if isinstance(rendered, Text) else str(rendered))
+    return labels
+
+
+def selected_queue_index(app: object) -> int | None:
+    for index, item in enumerate(queue_items(app)):
+        if item.has_class("-selected"):  # type: ignore[attr-defined]
+            return index
+    return None
+
+
 def test_input_hint_shows_model_and_thinking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -196,14 +211,16 @@ def test_input_hint_shows_queue_shortcuts_when_queue_not_empty(
     text = input_hint(config, queued=2)
 
     assert "queued 2" in text
-    assert "Ctrl+E edit" in text
-    assert "Ctrl+P pause" in text
+    assert "↑/↓ select" in text
+    assert "Enter edit" in text
+    assert "Space pause" in text
     assert "Del remove" in text
-    assert "Alt+Up/Down reorder" in text
+    assert "Shift+↑/↓ move" in text
 
 
 def test_queue_preview_flattens_multiline_content() -> None:
     assert queue_preview("first line\nsecond line\n\nthird") == "first line second line third"
+    assert queue_preview("x" * 80) == "x" * 75
 
 
 @pytest.mark.anyio
@@ -718,6 +735,38 @@ async def test_textual_app_renders_plain_user_and_bot_text(
 
 
 @pytest.mark.anyio
+async def test_textual_app_starts_with_saved_tool_text_containing_markup_chars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    session = cli_session(config.sessions_dir, "CLI history", workspace)
+    session = add_turn(session, "user", "hi")
+    add_turn(
+        session,
+        "assistant",
+        "done",
+        items=[
+            {
+                "type": "shell_call",
+                "call_id": "call_1",
+                "action": {"commands": ["echo [selected="]},
+            }
+        ],
+    )
+
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert any(
+            block.entry.kind == "tool" and "echo [selected=" in block_plain(block)
+            for block in transcript_blocks(app)
+        )
+
+
+@pytest.mark.anyio
 async def test_textual_app_keeps_final_reply_visible_with_long_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1007,7 +1056,7 @@ async def test_textual_app_shift_enter_keeps_multiline_text(
 
 
 @pytest.mark.anyio
-async def test_textual_app_uses_edit_button_for_queue_items(
+async def test_textual_app_uses_arrow_navigation_and_enter_for_queue_items(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1035,25 +1084,47 @@ async def test_textual_app_uses_edit_button_for_queue_items(
         await pilot.press("t", "h", "i", "r", "d", "enter")
         await pilot.pause()
         assert queue_texts(app) == ["second", "third"]
-        delete_button = queue_items(app)[1].query_one(".queue-delete")  # type: ignore[attr-defined]
-        await pilot.click(delete_button)
+        assert selected_queue_index(app) is None
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
         await pilot.pause()
-        assert queue_texts(app) == ["second"]
-        await pilot.click(queue_items(app)[0])
+        assert selected_queue_index(app) == 1
+        assert queue_labels(app) == ["☑︎ second", "☑︎ third"]
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
         await pilot.pause()
-        assert queue_texts(app) == ["second"]
-        assert app.query_one("#composer", Composer).text == ""
-        edit_button = queue_items(app)[0].query_one(".queue-edit")  # type: ignore[attr-defined]
-        await pilot.click(edit_button)
+        assert selected_queue_index(app) == 0
+        assert app.handle_composer_key("enter")  # type: ignore[attr-defined]
         await pilot.pause()
-        assert queue_texts(app) == []
+        assert queue_texts(app) == ["third"]
         assert app.query_one("#composer", Composer).text == "second"
         release.set()
-        await app.runtime.wait_until_idle()
+        await pilot.pause()
 
 
 @pytest.mark.anyio
-async def test_textual_app_reorders_queue_with_keys(
+async def test_textual_app_up_and_down_move_between_queue_and_composer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.runtime.pending_prompts = [QueuedPrompt("one")]  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert selected_queue_index(app) is None
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert selected_queue_index(app) == 0
+        assert app.handle_composer_key("down")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert selected_queue_index(app) is None
+        assert isinstance(app.focused, Composer)
+
+
+@pytest.mark.anyio
+async def test_textual_app_reorders_queue_with_shift_arrows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1080,12 +1151,13 @@ async def test_textual_app_reorders_queue_with_keys(
         await pilot.press("o", "n", "e", "enter")
         await pilot.press("t", "w", "o", "enter")
         await pilot.pause()
-        app._queue_selected = 1  # type: ignore[attr-defined]
-        app.sync_view(force=True)  # type: ignore[attr-defined]
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
         await pilot.pause()
-        await pilot.press("alt+up")
+        assert selected_queue_index(app) == 1
+        assert app.handle_composer_key("shift+up")  # type: ignore[attr-defined]
         await pilot.pause()
         assert queue_texts(app) == ["two", "one"]
+        assert selected_queue_index(app) == 0
         release.set()
         await app.runtime.wait_until_idle()
 
@@ -1104,6 +1176,54 @@ async def test_textual_app_reorders_queue_with_drag(
     app.on_queue_item_drag_finish(QueueItem.DragFinish(1))  # type: ignore[attr-defined]
 
     assert app.runtime.queued_prompts() == ("two", "one")
+
+
+@pytest.mark.anyio
+async def test_textual_app_space_and_tab_toggle_queue_pause_and_mark(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    monkeypatch.setattr("faltoobot.chat.ChatRuntime.ensure_processing", lambda self: None)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.runtime.pending_prompts = [QueuedPrompt("one")]  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert app.handle_composer_key("space")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert queue_paused(app) == [True]
+        assert queue_labels(app) == ["□ one"]
+        assert app.handle_composer_key("tab")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert queue_paused(app) == [False]
+        assert queue_labels(app) == ["☑︎ one"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_delete_removes_selected_queue_item(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.runtime.pending_prompts = [QueuedPrompt("one"), QueuedPrompt("two")]  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert selected_queue_index(app) == 1
+        assert app.handle_composer_key("delete")  # type: ignore[attr-defined]
+        await pilot.pause()
+        assert queue_texts(app) == ["one"]
+        assert selected_queue_index(app) == 0
 
 
 @pytest.mark.anyio
@@ -1137,32 +1257,18 @@ async def test_textual_app_paused_queue_does_not_auto_submit(
         await pilot.press("s", "e", "c", "o", "n", "d", "enter")
         await pilot.press("t", "h", "i", "r", "d", "enter")
         await pilot.pause()
-        pause_button = queue_items(app)[0].query_one(".queue-pause")  # type: ignore[attr-defined]
-        await pilot.click(pause_button)
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
+        assert app.handle_composer_key("space")  # type: ignore[attr-defined]
         await pilot.pause()
         assert queue_paused(app) == [True, False]
+        assert queue_labels(app) == ["□ second", "☑︎ third"]
         release.set()
         await app.runtime.wait_until_idle()
         await pilot.pause()
         assert prompts == ["first", "third"]
         assert app.runtime.queued_prompts() == ("second",)
         assert app.runtime.queued_prompt_items()[0].paused is True
-
-
-@pytest.mark.anyio
-async def test_textual_app_can_toggle_selected_queue_pause_with_key(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
-    app.runtime.pending_prompts = [QueuedPrompt("one")]  # type: ignore[attr-defined]
-    app._queue_selected = 0  # type: ignore[attr-defined]
-    app.sync_view = lambda force=False: None  # type: ignore[method-assign]
-
-    app.action_toggle_selected_queue_pause()
-
-    assert app.runtime.queued_prompt_items()[0].paused is True
 
 
 @pytest.mark.anyio
