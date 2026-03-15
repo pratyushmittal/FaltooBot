@@ -552,31 +552,31 @@ class EntryBlock(Vertical):
     EntryBlock > .body {
         height: auto;
         padding: 0 1;
+        background: transparent;
     }
 
     EntryBlock.entry-you > .body {
-        background: #241a13;
+        color: #fff4df;
     }
 
     EntryBlock.entry-bot > .body {
-        background: #181310;
+        color: #e8f0f8;
     }
 
     EntryBlock.entry-thinking > .body {
-        background: #171513;
         color: #aab9c9;
     }
 
     EntryBlock.entry-tool > .body {
-        background: #141916;
+        color: #cdeee3;
     }
 
     EntryBlock.entry-error > .body {
-        background: #2a1616;
+        color: #ffd5cf;
     }
 
     EntryBlock.entry-opened > .body {
-        background: #141820;
+        color: #d7e3ef;
     }
     """
 
