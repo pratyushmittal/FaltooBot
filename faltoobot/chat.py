@@ -590,6 +590,7 @@ class EntryBlock(Vertical):
     }
 
     EntryBlock > .body {
+        width: 1fr;
         height: auto;
         padding: 0 1;
         background: ansi_default;
