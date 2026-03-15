@@ -810,6 +810,26 @@ class FaltooChatApp(App[None]):
         color: ansi_bright_black;
         text-style: bold;
     }
+
+    TextualMarkdown {
+        background: ansi_default;
+        background-tint: 0%;
+    }
+
+    TextualMarkdown MarkdownFence {
+        background: ansi_default;
+        background-tint: 0%;
+        color: ansi_default;
+    }
+
+    TextualMarkdown MarkdownFence > Label {
+        background: transparent;
+    }
+
+    TextualMarkdown MarkdownBlock > .code_inline {
+        background: transparent;
+        color: ansi_yellow;
+    }
     """
 
     BINDINGS = [
