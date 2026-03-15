@@ -38,14 +38,14 @@ from faltoobot.store import (
 
 MARKDOWN_KINDS = frozenset({"bot", "thinking"})
 BODY_STYLES = {
-    "you": "#fff4df",
-    "bot": "#e8f0f8",
-    "thinking": "#aab9c9",
-    "tool": "#cdeee3",
-    "error": "#ffd5cf",
-    "opened": "#d7e3ef",
+    "you": "ansi_default",
+    "bot": "ansi_default",
+    "thinking": "ansi_bright_black",
+    "tool": "ansi_cyan",
+    "error": "ansi_bright_red",
+    "opened": "ansi_blue",
 }
-STATUS_STYLE = "bold #8ea4bc"
+STATUS_STYLE = "bold ansi_bright_black"
 TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
 
@@ -194,9 +194,9 @@ def history_entries(session: Session) -> list[Entry]:
 
 def render_line(kind: str, content: str) -> Text:
     if kind == "meta":
-        return Text(content, style="dim #8ea4bc")
+        return Text(content, style="dim ansi_bright_black")
     if kind == "banner":
-        return Text(content, style="bold #ffb347")
+        return Text(content, style="bold ansi_yellow")
     return Text(content, style=BODY_STYLES.get(kind, "#eef3f9"))
 
 
@@ -589,27 +589,27 @@ class EntryBlock(Vertical):
     }
 
     EntryBlock.entry-you > .body {
-        color: #fff4df;
+        color: ansi_default;
     }
 
     EntryBlock.entry-bot > .body {
-        color: #e8f0f8;
+        color: ansi_default;
     }
 
     EntryBlock.entry-thinking > .body {
-        color: #aab9c9;
+        color: ansi_bright_black;
     }
 
     EntryBlock.entry-tool > .body {
-        color: #cdeee3;
+        color: ansi_cyan;
     }
 
     EntryBlock.entry-error > .body {
-        color: #ffd5cf;
+        color: ansi_bright_red;
     }
 
     EntryBlock.entry-opened > .body {
-        color: #d7e3ef;
+        color: ansi_blue;
     }
     """
 
@@ -756,7 +756,7 @@ class FaltooChatApp(App[None]):
         padding: 0 1;
         background: ansi_default;
         background-tint: 0%;
-        color: #f8e9c7;
+        color: ansi_default;
         margin: 0 0 1 0;
     }
 
@@ -767,7 +767,7 @@ class FaltooChatApp(App[None]):
     .queue-text {
         width: 1fr;
         height: auto;
-        color: #f8e9c7;
+        color: ansi_default;
     }
 
     .queue-delete {
@@ -777,7 +777,7 @@ class FaltooChatApp(App[None]):
         padding: 0;
         margin: 0 0 0 1;
         background: transparent;
-        color: #ff7b72;
+        color: ansi_bright_red;
         border: none;
     }
 
@@ -788,7 +788,7 @@ class FaltooChatApp(App[None]):
         padding: 0;
         margin: 0 0 0 1;
         background: transparent;
-        color: #8ea4bc;
+        color: ansi_bright_black;
         border: none;
     }
 
@@ -797,7 +797,7 @@ class FaltooChatApp(App[None]):
         min-height: 3;
         background: ansi_default;
         background-tint: 0%;
-        color: #fff4df;
+        color: ansi_default;
         padding: 0 1;
         border: none;
     }
@@ -807,7 +807,7 @@ class FaltooChatApp(App[None]):
         padding: 0 2;
         background: ansi_default;
         background-tint: 0%;
-        color: #8ea4bc;
+        color: ansi_bright_black;
         text-style: bold;
     }
     """
@@ -828,7 +828,7 @@ class FaltooChatApp(App[None]):
         name: str | None = None,
         client: AsyncOpenAI | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(ansi_color=True)
         self.runtime = build_chat_runtime(config=config, name=name, client=client)
         self._snapshot: tuple[tuple[str, str], ...] = ()
         self._blocks: list[EntryBlock] = []
