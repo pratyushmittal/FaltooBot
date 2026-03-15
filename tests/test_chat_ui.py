@@ -3,10 +3,11 @@ import asyncio
 import json
 import threading
 import time
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from rich.console import Console
 from rich.text import Text
 
@@ -18,8 +19,10 @@ from faltoobot.chat import (
     QueueItem,
     build_chat_app,
     build_chat_runtime,
+    fitted_image_size,
     image_markdown,
     input_hint,
+    input_image_part,
     main,
     paste_image_text,
     queue_preview,
@@ -132,6 +135,38 @@ def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
     image.write_bytes(b"png")
 
     assert paste_image_text(str(image), workspace) == image_markdown(image.resolve())
+
+
+def test_fitted_image_size_keeps_aspect_ratio() -> None:
+    assert fitted_image_size(2000, 1000) == (1600, 800)
+    assert fitted_image_size(1000, 2000) == (600, 1200)
+    assert fitted_image_size(1200, 800) == (1200, 800)
+
+
+@pytest.mark.anyio
+async def test_input_image_part_resizes_large_local_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    image = workspace / "large.png"
+    Image.new("RGB", (2400, 1800), color="red").save(image)
+    seen: list[tuple[str, tuple[int, int], str]] = []
+
+    class FakeFiles:
+        async def create(self, *, file: object, purpose: str) -> object:
+            payload = file.read()  # type: ignore[attr-defined]
+            with Image.open(BytesIO(payload)) as uploaded:
+                seen.append((purpose, uploaded.size, Path(file.name).name))  # type: ignore[attr-defined]
+            return type("Uploaded", (), {"id": "file_123"})()
+
+    class FakeClient:
+        files = FakeFiles()
+
+    part = await input_image_part(FakeClient(), workspace, image.as_uri())
+
+    assert part == {"type": "input_image", "file_id": "file_123", "detail": "auto"}
+    assert seen == [("vision", (1600, 1200), "large-1600x1200.png")]
 
 
 @pytest.mark.anyio

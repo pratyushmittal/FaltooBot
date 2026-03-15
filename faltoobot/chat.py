@@ -14,11 +14,13 @@ import tty
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 from openai import AsyncOpenAI
+from PIL import Image
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.padding import Padding
@@ -53,6 +55,8 @@ TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 MARKDOWN_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
+MAX_IMAGE_WIDTH = 1600
+MAX_IMAGE_HEIGHT = 1200
 
 
 MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))  # type: ignore[assignment]
@@ -166,6 +170,27 @@ def save_clipboard_image(session: Session) -> Path | None:
     return path
 
 
+def fitted_image_size(width: int, height: int) -> tuple[int, int]:
+    scale = min(MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height, 1)
+    return max(1, int(width * scale)), max(1, int(height * scale))
+
+
+def resized_image_upload(path: Path) -> BytesIO | None:
+    with Image.open(path) as image:
+        width, height = image.size
+        target = fitted_image_size(width, height)
+        if target == (width, height):
+            return None
+        resized = image.resize(target, Image.Resampling.LANCZOS)
+        buffer = BytesIO()
+        format_name = "JPEG" if image.format in {"JPEG", "JPG"} else "PNG"
+        suffix = ".jpg" if format_name == "JPEG" else ".png"
+        resized.save(buffer, format=format_name)
+    buffer.seek(0)
+    buffer.name = f"{path.stem}-{target[0]}x{target[1]}{suffix}"  # type: ignore[attr-defined]
+    return buffer
+
+
 async def input_image_part(client: AsyncOpenAI, workspace: Path, source: str) -> dict[str, Any]:
     value = source.strip()
     if is_image_url(value):
@@ -173,8 +198,11 @@ async def input_image_part(client: AsyncOpenAI, workspace: Path, source: str) ->
     path = as_session_path(value, workspace)
     if path is None or not is_image_path(path):
         raise ValueError(f"Image not found: {source}")
-    with path.open("rb") as handle:
-        uploaded = await client.files.create(file=handle, purpose="vision")
+    if upload := resized_image_upload(path):
+        uploaded = await client.files.create(file=upload, purpose="vision")
+    else:
+        with path.open("rb") as handle:
+            uploaded = await client.files.create(file=handle, purpose="vision")
     return {"type": "input_image", "file_id": uploaded.id, "detail": "auto"}
 
 
