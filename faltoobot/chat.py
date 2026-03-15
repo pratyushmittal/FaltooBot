@@ -1201,10 +1201,18 @@ class FaltooChatApp(App[None]):
     def status(self) -> Static:
         return self.query_one("#status", Static)
 
+    def scroll_transcript_end(self) -> None:
+        transcript = self.transcript()
+        transcript.scroll_end(animate=False, immediate=True)
+        self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
+        self.set_timer(0.01, lambda: transcript.scroll_end(animate=False, immediate=True))
+        self.set_timer(0.05, lambda: transcript.scroll_end(animate=False, immediate=True))
+
     async def on_mount(self) -> None:
         self.runtime.set_notifier(self.sync_view)
         await self.runtime.start()
         self.sync_view(force=True)
+        self.scroll_transcript_end()
         self.set_interval(0.05, self.refresh_ui)
         self.call_after_refresh(self.composer().focus)
 
@@ -1339,10 +1347,7 @@ class FaltooChatApp(App[None]):
             or self.runtime.current_reply_task is not None
         )
         if should_scroll_end:
-            transcript.scroll_end(animate=False, immediate=True)
-            self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
-            self.set_timer(0.01, lambda: transcript.scroll_end(animate=False, immediate=True))
-            self.set_timer(0.05, lambda: transcript.scroll_end(animate=False, immediate=True))
+            self.scroll_transcript_end()
         else:
             transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
             self.call_after_refresh(

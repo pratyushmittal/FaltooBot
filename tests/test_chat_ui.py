@@ -772,6 +772,26 @@ async def test_textual_app_starts_with_saved_tool_text_containing_markup_chars(
 
 
 @pytest.mark.anyio
+async def test_textual_app_starts_scrolled_to_bottom_with_long_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    session = cli_session(config.sessions_dir, "CLI history", workspace)
+    for index in range(16):
+        session = add_turn(session, "user", f"prompt {index}")
+        session = add_turn(session, "assistant", f"reply {index} " * 12)
+
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert app.query_one("#transcript").is_vertical_scroll_end
+
+
+@pytest.mark.anyio
 async def test_textual_app_keeps_final_reply_visible_with_long_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
