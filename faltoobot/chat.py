@@ -18,10 +18,12 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
+from textual.widgets.markdown import MarkdownFence
 
 from faltoobot.agent import stream_reply
 from faltoobot.config import Config, build_config
@@ -48,6 +50,9 @@ BODY_STYLES = {
 STATUS_STYLE = "bold ansi_bright_black"
 TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
+
+
+MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))  # type: ignore[assignment]
 
 
 @dataclass(frozen=True, slots=True)
@@ -811,24 +816,41 @@ class FaltooChatApp(App[None]):
         text-style: bold;
     }
 
-    TextualMarkdown {
+    Markdown {
         background: ansi_default;
         background-tint: 0%;
+        link-background: transparent;
+        link-background-hover: transparent;
+        link-color: ansi_blue;
+        link-color-hover: ansi_bright_blue;
+        link-style: underline;
+        link-style-hover: bold underline;
     }
 
-    TextualMarkdown MarkdownFence {
+    Markdown MarkdownFence {
         background: ansi_default;
         background-tint: 0%;
         color: ansi_default;
     }
 
-    TextualMarkdown MarkdownFence > Label {
-        background: transparent;
+    Markdown MarkdownFence > Label {
+        background: ansi_default;
+        color: ansi_default;
     }
 
-    TextualMarkdown MarkdownBlock > .code_inline {
-        background: transparent;
+    Markdown MarkdownBlock > .code_inline {
+        background: ansi_default;
         color: ansi_yellow;
+    }
+
+    #transcript {
+        scrollbar-background: ansi_default;
+        scrollbar-background-hover: ansi_default;
+        scrollbar-background-active: ansi_default;
+        scrollbar-color: ansi_bright_black;
+        scrollbar-color-hover: ansi_blue;
+        scrollbar-color-active: ansi_bright_blue;
+        scrollbar-corner-color: ansi_default;
     }
     """
 
