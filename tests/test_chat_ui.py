@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 from rich.text import Text
-from textual.widgets import RichLog
 
 from faltoobot.chat import (
     Composer,
+    EntryBlock,
     build_chat_app,
     build_chat_runtime,
     input_hint,
@@ -67,6 +67,10 @@ def status_plain(app: object) -> str:
 
 def entry_tuples(runtime: object) -> list[tuple[str, str]]:
     return [(entry.kind, entry.content) for entry in runtime.display_entries()]  # type: ignore[attr-defined]
+
+
+def transcript_blocks(app: object) -> list[EntryBlock]:
+    return [block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)]  # type: ignore[attr-defined]
 
 
 def test_input_hint_shows_model_and_thinking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -351,9 +355,7 @@ async def test_textual_app_shows_completed_reply_without_restart(
         await app.runtime.wait_until_idle()
         await pilot.pause()
         assert ("bot", "visible now") in entry_tuples(app.runtime)
-        transcript = app.query_one("#transcript", RichLog)
-        lines = [line.text for line in transcript.lines]
-        assert any("visible now" in line for line in lines)
+        assert any(block.entry.content == "visible now" for block in transcript_blocks(app))
 
 
 @pytest.mark.anyio
@@ -384,10 +386,10 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
         assert app.runtime.live_entry is not None
         assert app.runtime.live_entry.kind == "thinking"
         assert app.runtime.live_entry.content == "Calculating a date\n\nDetails here"
-        transcript = app.query_one("#transcript", RichLog)
-        lines = [line.text for line in transcript.lines]
-        assert any("Calculating a date" in line for line in lines)
-        assert any("Details here" in line for line in lines)
+        assert any(
+            block.entry.kind == "thinking" and "Calculating a date\n\nDetails here" == block.entry.content
+            for block in transcript_blocks(app)
+        )
         release.set()
         await app.runtime.wait_until_idle()
 

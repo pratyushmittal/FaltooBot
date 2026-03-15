@@ -17,9 +17,10 @@ from rich.padding import Padding
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import RichLog, Static, TextArea
+from textual.widgets import Markdown as TextualMarkdown
+from textual.widgets import Static, TextArea
 
 from faltoobot.agent import stream_reply
 from faltoobot.config import Config, build_config
@@ -447,6 +448,72 @@ class Composer(TextArea):
             self.insert("\n")
 
 
+class EntryBlock(Vertical):
+    DEFAULT_CSS = """
+    EntryBlock {
+        height: auto;
+    }
+
+    EntryBlock > .body {
+        height: auto;
+        padding-left: 2;
+    }
+
+    EntryBlock > .inline {
+        height: auto;
+    }
+
+    EntryBlock > .inline > Static {
+        height: auto;
+    }
+    """
+
+    def __init__(self, entry: Entry) -> None:
+        self.entry = entry
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        kind = self.entry.kind
+        content = self.entry.content
+        if kind in {"banner", "meta"}:
+            yield Static(render_line(kind, content), classes="body")
+            return
+        if self.uses_markdown():
+            yield Static(render_line(kind, ""), id="prefix")
+            yield TextualMarkdown(content, id="body", classes="body")
+            return
+        if "\n" in content:
+            yield Static(render_line(kind, ""), id="prefix")
+            yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body", classes="body")
+            return
+        with Horizontal(classes="inline"):
+            yield Static(Text(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold")), id="prefix")
+            yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body")
+
+    def uses_markdown(self) -> bool:
+        return self.entry.kind in RICH_KINDS and (
+            looks_like_markdown(self.entry.content) or "\n" in self.entry.content
+        )
+
+    def same_layout(self, entry: Entry) -> bool:
+        return self.entry.kind == entry.kind and self.uses_markdown() == (
+            entry.kind in RICH_KINDS and (looks_like_markdown(entry.content) or "\n" in entry.content)
+        ) and ("\n" in self.entry.content) == ("\n" in entry.content)
+
+    def set_entry(self, entry: Entry) -> bool:
+        if not self.same_layout(entry):
+            return False
+        self.entry = entry
+        if entry.kind in {"banner", "meta"}:
+            self.query_one(".body", Static).update(render_line(entry.kind, entry.content))
+            return True
+        if self.uses_markdown():
+            self.query_one("#body", TextualMarkdown).update(entry.content)
+            return True
+        self.query_one("#body", Static).update(Text(entry.content, style=BODY_STYLES.get(entry.kind, "#eef3f9")))
+        return True
+
+
 class FaltooChatApp(App[None]):
     CSS = """
     Screen {
@@ -461,6 +528,8 @@ class FaltooChatApp(App[None]):
 
     #transcript {
         height: 1fr;
+        layout: vertical;
+        overflow-y: auto;
         background: #14100d;
         padding: 1 2;
         border: none;
@@ -495,10 +564,12 @@ class FaltooChatApp(App[None]):
         super().__init__()
         self.runtime = build_chat_runtime(config=config, name=name, client=client)
         self._snapshot: tuple[tuple[str, str], ...] = ()
+        self._blocks: list[EntryBlock] = []
+        self._live_block: EntryBlock | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
-            yield RichLog(id="transcript", wrap=True, auto_scroll=False, markup=False, highlight=False)
+            yield VerticalScroll(id="transcript")
             yield Composer(
                 id="composer",
                 text="",
@@ -509,8 +580,8 @@ class FaltooChatApp(App[None]):
             )
             yield Static("", id="status")
 
-    def transcript(self) -> RichLog:
-        return self.query_one("#transcript", RichLog)
+    def transcript(self) -> VerticalScroll:
+        return self.query_one("#transcript", VerticalScroll)
 
     def composer(self) -> Composer:
         return self.query_one("#composer", Composer)
@@ -519,10 +590,9 @@ class FaltooChatApp(App[None]):
         return self.query_one("#status", Static)
 
     async def on_mount(self) -> None:
-        self.runtime.set_notifier(lambda: None)
+        self.runtime.set_notifier(self.sync_view)
         await self.runtime.start()
-        self.refresh_status()
-        self.refresh_transcript(force=True)
+        self.sync_view(force=True)
         self.set_interval(0.05, self.refresh_ui)
         self.call_after_refresh(self.composer().focus)
 
@@ -537,12 +607,14 @@ class FaltooChatApp(App[None]):
             self.runtime.interrupt()
             self.exit()
             return
-        self.refresh_status()
-        self.refresh_transcript(force=True)
+        self.sync_view(force=True)
 
     def refresh_ui(self) -> None:
+        self.sync_view()
+
+    def sync_view(self, force: bool = False) -> None:
         self.refresh_status()
-        self.refresh_transcript()
+        self.refresh_transcript(force=force)
 
     def refresh_status(self) -> None:
         self.status().update(
@@ -557,16 +629,44 @@ class FaltooChatApp(App[None]):
         )
 
     def refresh_transcript(self, *, force: bool = False) -> None:
-        entries = self.runtime.display_entries()
-        snapshot = tuple((entry.kind, entry.content) for entry in entries)
+        entries = list(self.runtime.entries)
+        live = self.runtime.live_entry
+        snapshot = tuple((entry.kind, entry.content) for entry in [*entries, *( [live] if live else [] )])
         if not force and snapshot == self._snapshot:
             return
+
         transcript = self.transcript()
         at_end = transcript.is_vertical_scroll_end
         previous_scroll = transcript.scroll_y
-        transcript.clear()
-        for entry in entries:
-            transcript.write(rich_renderable(entry.kind, entry.content), scroll_end=False)
+        rendered = tuple((entry.kind, entry.content) for entry in entries)
+        append_only = rendered[: len(self._blocks)] == tuple((block.entry.kind, block.entry.content) for block in self._blocks)
+
+        if force or not append_only:
+            transcript.remove_children()
+            self._blocks = []
+            self._live_block = None
+            if entries:
+                self._blocks = [EntryBlock(entry) for entry in entries]
+                transcript.mount(*self._blocks)
+        else:
+            new_entries = entries[len(self._blocks) :]
+            if new_entries:
+                blocks = [EntryBlock(entry) for entry in new_entries]
+                self._blocks.extend(blocks)
+                transcript.mount(*blocks)
+
+        if live is None:
+            if self._live_block is not None:
+                self._live_block.remove()
+                self._live_block = None
+        elif self._live_block is None:
+            self._live_block = EntryBlock(live)
+            transcript.mount(self._live_block)
+        elif not self._live_block.set_entry(live):
+            self._live_block.remove()
+            self._live_block = EntryBlock(live)
+            transcript.mount(self._live_block)
+
         if at_end:
             transcript.scroll_end(animate=False, immediate=True)
         else:
