@@ -807,6 +807,7 @@ class QueueItem(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static(Text(self.content, overflow="ellipsis", no_wrap=True), classes="queue-text")
+        yield Button("✎", classes="queue-edit")
         yield Button("▶" if self.paused else "⏸", classes="queue-pause")
         yield Button("×", classes="queue-delete")
 
@@ -1030,6 +1031,7 @@ class FaltooChatApp(App[None]):
         color: $text;
     }
 
+    .queue-edit,
     .queue-delete {
         min-width: 3;
         width: 3;
@@ -1037,8 +1039,15 @@ class FaltooChatApp(App[None]):
         padding: 0;
         margin: 0 0 0 1;
         background: transparent;
-        color: $error;
         border: none;
+    }
+
+    .queue-edit {
+        color: $accent;
+    }
+
+    .queue-delete {
+        color: $error;
     }
 
     .queue-pause {
@@ -1340,7 +1349,7 @@ class FaltooChatApp(App[None]):
         if self._queue_drag_index is not None and self._queue_drag_index != message.index:
             return
         self._queue_selected = message.index
-        self.edit_queue(message.index)
+        self.sync_view(force=True)
 
     @on(QueueItem.DragStart)
     def on_queue_item_drag_start(self, message: QueueItem.DragStart) -> None:
@@ -1357,6 +1366,15 @@ class FaltooChatApp(App[None]):
         if source == message.index:
             return
         self.move_queue(source, message.index)
+
+    @on(Button.Pressed, ".queue-edit")
+    def on_queue_edit_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        parent = event.button.parent
+        if not isinstance(parent, QueueItem):
+            return
+        self._queue_selected = parent.index
+        self.edit_queue(parent.index)
 
     @on(Button.Pressed, ".queue-delete")
     def on_queue_delete_pressed(self, event: Button.Pressed) -> None:

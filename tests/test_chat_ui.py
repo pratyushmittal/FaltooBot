@@ -665,7 +665,7 @@ async def test_textual_app_shift_enter_keeps_multiline_text(
 
 
 @pytest.mark.anyio
-async def test_textual_app_clicks_queue_to_edit_and_delete(
+async def test_textual_app_uses_edit_button_for_queue_items(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -698,6 +698,11 @@ async def test_textual_app_clicks_queue_to_edit_and_delete(
         await pilot.pause()
         assert queue_texts(app) == ["second"]
         await pilot.click(queue_items(app)[0])
+        await pilot.pause()
+        assert queue_texts(app) == ["second"]
+        assert app.query_one("#composer", Composer).text == ""
+        edit_button = queue_items(app)[0].query_one(".queue-edit")  # type: ignore[attr-defined]
+        await pilot.click(edit_button)
         await pilot.pause()
         assert queue_texts(app) == []
         assert app.query_one("#composer", Composer).text == "second"
