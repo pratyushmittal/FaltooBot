@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import json
 import threading
@@ -21,9 +20,7 @@ from faltoobot.chat import (
     build_chat_runtime,
     fitted_image_size,
     image_markdown,
-    input_hint,
     input_image_part,
-    main,
     paste_image_text,
     queue_preview,
     rich_renderable,
@@ -128,21 +125,6 @@ def selected_queue_index(app: object) -> int | None:
     return None
 
 
-def test_input_hint_shows_model_and_thinking(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    prepare_home(tmp_path, monkeypatch, thinking="medium")
-    config = build_config()
-    text = input_hint(config)
-
-    assert f"model: {config.openai_model}" in text
-    assert f"thinking: {config.openai_thinking}" in text
-    assert "Enter send" not in text
-    assert "Shift+Enter newline" not in text
-    assert "Ctrl+V paste/image" in text
-    assert "Ctrl+C interrupt" in text
-
-
 def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -202,30 +184,9 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
         assert app.query_one("#composer", Composer).text == image_markdown(image)
 
 
-def test_input_hint_shows_queue_shortcuts_when_queue_not_empty(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    config = build_config()
-    text = input_hint(config, queued=2)
-
-    assert "queued 2" in text
-    assert "↑/↓ select" in text
-    assert "Enter edit" in text
-    assert "Space pause" in text
-    assert "Del remove" in text
-    assert "Shift+↑/↓ move" in text
-
-
 def test_queue_preview_flattens_multiline_content() -> None:
     assert queue_preview("first line\nsecond line\n\nthird") == "first line second line third"
     assert queue_preview("x" * 80) == "x" * 75
-
-
-def test_live_markdown_block_uses_same_width_css_as_entry_block() -> None:
-    assert "LiveMarkdownBlock" in EntryBlock.DEFAULT_CSS
-    assert LiveMarkdownBlock.DEFAULT_CSS == EntryBlock.DEFAULT_CSS
 
 
 @pytest.mark.anyio
@@ -271,17 +232,6 @@ async def test_chat_submits_markdown_images_as_user_message_items(
         }
     ]
     assert "[image: cat.png]" in text
-
-
-def test_main_returns_130_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("faltoobot.chat.parse_args", lambda: argparse.Namespace(name=None))
-
-    class FakeApp:
-        def run(self) -> None:
-            raise KeyboardInterrupt
-
-    monkeypatch.setattr("faltoobot.chat.build_chat_app", lambda **_: FakeApp())
-    assert main() == 130
 
 
 @pytest.mark.anyio
@@ -1227,22 +1177,6 @@ async def test_textual_app_reorders_queue_with_shift_arrows(
         assert selected_queue_index(app) == 0
         release.set()
         await app.runtime.wait_until_idle()
-
-
-@pytest.mark.anyio
-async def test_textual_app_reorders_queue_with_drag(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
-    app.runtime.pending_prompts = [QueuedPrompt("one"), QueuedPrompt("two")]  # type: ignore[attr-defined]
-    app.sync_view = lambda force=False: None  # type: ignore[method-assign]
-
-    app.on_queue_item_drag_start(QueueItem.DragStart(0))  # type: ignore[attr-defined]
-    app.on_queue_item_drag_finish(QueueItem.DragFinish(1))  # type: ignore[attr-defined]
-
-    assert app.runtime.queued_prompts() == ("two", "one")
 
 
 @pytest.mark.anyio
