@@ -883,7 +883,8 @@ class QueueItem(Horizontal):
 
 class EntryBlock(Vertical):
     DEFAULT_CSS = """
-    EntryBlock {
+    EntryBlock,
+    LiveMarkdownBlock {
         width: 1fr;
         max-width: 80;
         min-width: 0;
@@ -891,7 +892,8 @@ class EntryBlock(Vertical):
         margin: 0 0 1 0;
     }
 
-    EntryBlock > .body {
+    EntryBlock > .body,
+    LiveMarkdownBlock > .body {
         width: 1fr;
         min-width: 0;
         height: auto;
@@ -901,45 +903,55 @@ class EntryBlock(Vertical):
         overflow-x: hidden;
     }
 
-    EntryBlock.entry-you > .body {
+    EntryBlock.entry-you > .body,
+    LiveMarkdownBlock.entry-you > .body {
         background: $primary 8%;
     }
 
-    EntryBlock.entry-bot > .body {
+    EntryBlock.entry-bot > .body,
+    LiveMarkdownBlock.entry-bot > .body {
         background: $surface;
     }
 
-    EntryBlock.entry-thinking > .body {
+    EntryBlock.entry-thinking > .body,
+    LiveMarkdownBlock.entry-thinking > .body {
         color: $text-muted;
         background: $surface-active;
     }
 
-    EntryBlock.entry-tool > .body {
+    EntryBlock.entry-tool > .body,
+    LiveMarkdownBlock.entry-tool > .body {
         color: $secondary;
         background: $secondary 8%;
     }
 
-    EntryBlock.entry-error > .body {
+    EntryBlock.entry-error > .body,
+    LiveMarkdownBlock.entry-error > .body {
         color: $error;
         background: $error 8%;
     }
 
-    EntryBlock.entry-opened > .body {
+    EntryBlock.entry-opened > .body,
+    LiveMarkdownBlock.entry-opened > .body {
         color: $accent;
         background: $accent 8%;
     }
 
     EntryBlock.entry-banner > .body,
-    EntryBlock.entry-meta > .body {
+    EntryBlock.entry-meta > .body,
+    LiveMarkdownBlock.entry-banner > .body,
+    LiveMarkdownBlock.entry-meta > .body {
         background: transparent;
     }
 
-    EntryBlock.entry-banner > .body {
+    EntryBlock.entry-banner > .body,
+    LiveMarkdownBlock.entry-banner > .body {
         color: $warning;
         text-style: bold;
     }
 
-    EntryBlock.entry-meta > .body {
+    EntryBlock.entry-meta > .body,
+    LiveMarkdownBlock.entry-meta > .body {
         color: $text-disabled;
     }
     """

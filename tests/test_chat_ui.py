@@ -223,6 +223,11 @@ def test_queue_preview_flattens_multiline_content() -> None:
     assert queue_preview("x" * 80) == "x" * 75
 
 
+def test_live_markdown_block_uses_same_width_css_as_entry_block() -> None:
+    assert "LiveMarkdownBlock" in EntryBlock.DEFAULT_CSS
+    assert LiveMarkdownBlock.DEFAULT_CSS == EntryBlock.DEFAULT_CSS
+
+
 @pytest.mark.anyio
 async def test_chat_submits_markdown_images_as_user_message_items(
     tmp_path: Path,
