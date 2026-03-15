@@ -721,8 +721,8 @@ class FaltooChatApp(App[None]):
         background-tint: 0%;
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: #0b57d0;
-        link-color-hover: #0842a0;
+        link-color: ansi_blue;
+        link-color-hover: ansi_bright_blue;
         link-style: bold underline;
         link-style-hover: bold underline;
     }
@@ -827,8 +827,8 @@ class FaltooChatApp(App[None]):
         background-tint: 0%;
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: #0b57d0;
-        link-color-hover: #0842a0;
+        link-color: ansi_blue;
+        link-color-hover: ansi_bright_blue;
         link-style: bold underline;
         link-style-hover: bold underline;
     }
@@ -836,8 +836,8 @@ class FaltooChatApp(App[None]):
     MarkdownBlock {
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: #0b57d0;
-        link-color-hover: #0842a0;
+        link-color: ansi_blue;
+        link-color-hover: ansi_bright_blue;
         link-style: bold underline;
         link-style-hover: bold underline;
     }
