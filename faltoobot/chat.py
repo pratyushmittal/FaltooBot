@@ -570,18 +570,6 @@ class EntryBlock(Vertical):
         height: auto;
         padding-left: 2;
     }
-
-    EntryBlock > .inline {
-        height: auto;
-    }
-
-    EntryBlock > .inline > Static {
-        height: auto;
-    }
-
-    EntryBlock > .inline > .inline-body {
-        width: 1fr;
-    }
     """
 
     def __init__(self, entry: Entry) -> None:
@@ -602,9 +590,7 @@ class EntryBlock(Vertical):
             yield Static(render_line(kind, ""), id="prefix")
             yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body", classes="body")
             return
-        with Horizontal(classes="inline"):
-            yield Static(Text(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold")), id="prefix")
-            yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body", classes="inline-body")
+        yield Static(render_line(kind, content), id="body", classes="body")
 
     def uses_markdown(self) -> bool:
         return self.entry.kind in {"bot", "thinking"} and (
@@ -626,7 +612,10 @@ class EntryBlock(Vertical):
         if self.uses_markdown():
             self.query_one("#body", TextualMarkdown).update(entry.content)
             return True
-        self.query_one("#body", Static).update(Text(entry.content, style=BODY_STYLES.get(entry.kind, "#eef3f9")))
+        if "\n" in entry.content:
+            self.query_one("#body", Static).update(Text(entry.content, style=BODY_STYLES.get(entry.kind, "#eef3f9")))
+        else:
+            self.query_one("#body", Static).update(render_line(entry.kind, entry.content))
         return True
 
 

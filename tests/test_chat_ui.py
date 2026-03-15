@@ -75,6 +75,11 @@ def transcript_blocks(app: object) -> list[EntryBlock]:
     return [block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)]  # type: ignore[attr-defined]
 
 
+def block_plain(block: EntryBlock) -> str:
+    rendered = block.query_one("#body").render()
+    return rendered.plain if isinstance(rendered, Text) else str(rendered)
+
+
 def queue_texts(app: object) -> list[str]:
     return [item.content for item in app.query("#queue QueueItem")]  # type: ignore[attr-defined]
 
@@ -366,10 +371,41 @@ async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
         await pilot.pause()
         await pilot.press("p", "u", "s", "h", "enter")
         await pilot.pause()
-        assert any(block.entry.kind == "you" and block.entry.content == "push" for block in transcript_blocks(app))
+        you_block = next(block for block in transcript_blocks(app) if block.entry.kind == "you")
+        assert "you> push" in block_plain(you_block)
         assert app.query_one("#transcript").is_vertical_scroll_end
         release.set()
         await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
+async def test_textual_app_renders_plain_user_and_bot_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "text": "pong",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("p", "i", "n", "g", "enter")
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        blocks = transcript_blocks(app)
+        you_block = next(block for block in blocks if block.entry.kind == "you")
+        bot_block = next(block for block in blocks if block.entry.kind == "bot" and block.entry.content == "pong")
+        assert "you> ping" in block_plain(you_block)
+        assert "bot> pong" in block_plain(bot_block)
 
 
 @pytest.mark.anyio
