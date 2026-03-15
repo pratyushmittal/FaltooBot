@@ -283,6 +283,27 @@ def last_instructions(session: Session) -> str | None:
     return None
 
 
+def assistant_turn(
+    session: Session,
+    content: str,
+    items: list[dict[str, Any]] | None = None,
+    usage: dict[str, Any] | None = None,
+    instructions: str | None = None,
+    created_at: str | None = None,
+) -> Turn:
+    next_instructions = instructions if isinstance(instructions, str) else None
+    if next_instructions == last_instructions(session):
+        next_instructions = None
+    return Turn(
+        role="assistant",
+        content=content,
+        created_at=created_at or now(),
+        items=tuple(item for item in (items or []) if isinstance(item, dict)),
+        usage=usage if isinstance(usage, dict) else None,
+        instructions=next_instructions,
+    )
+
+
 def add_turn(
     session: Session,
     role: Role,
@@ -291,25 +312,39 @@ def add_turn(
     usage: dict[str, Any] | None = None,
     instructions: str | None = None,
 ) -> Session:
-    next_instructions = instructions if isinstance(instructions, str) else None
-    if role == "assistant" and next_instructions == last_instructions(session):
-        next_instructions = None
-    return save_session(
-        replace(
-            session,
-            messages=(
-                *session.messages,
-                Turn(
-                    role=role,
-                    content=content,
-                    created_at=now(),
-                    items=tuple(item for item in (items or []) if isinstance(item, dict)),
-                    usage=usage if isinstance(usage, dict) else None,
-                    instructions=next_instructions,
-                ),
-            ),
+    turn = (
+        assistant_turn(session, content, items, usage, instructions)
+        if role == "assistant"
+        else Turn(
+            role=role,
+            content=content,
+            created_at=now(),
+            items=tuple(item for item in (items or []) if isinstance(item, dict)),
+            usage=usage if isinstance(usage, dict) else None,
+            instructions=instructions if isinstance(instructions, str) else None,
         )
     )
+    return save_session(replace(session, messages=(*session.messages, turn)))
+
+
+def sync_assistant_turn(
+    session: Session,
+    content: str,
+    items: list[dict[str, Any]] | None = None,
+    usage: dict[str, Any] | None = None,
+    instructions: str | None = None,
+) -> Session:
+    last = session.messages[-1] if session.messages else None
+    base = replace(session, messages=session.messages[:-1]) if last and last.role == "assistant" else session
+    turn = assistant_turn(
+        base,
+        content,
+        items,
+        usage,
+        instructions,
+        last.created_at if last and last.role == "assistant" else None,
+    )
+    return save_session(replace(session, messages=(*base.messages, turn)))
 
 
 def replace_queued_prompts(

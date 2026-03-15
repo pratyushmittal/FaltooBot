@@ -279,6 +279,57 @@ async def test_chat_replays_existing_session_messages_on_start(
 
 
 @pytest.mark.anyio
+async def test_chat_updates_messages_file_after_tool_stream_ends(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    stream_saved = asyncio.Event()
+    release = asyncio.Event()
+    items = [
+        {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
+        {
+            "type": "shell_call_output",
+            "call_id": "call_1",
+            "status": "completed",
+            "output": [{"stdout": "/tmp", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+        },
+    ]
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_stream_end"](items, "")
+        stream_saved.set()
+        await release.wait()
+        return {
+            "text": "done",
+            "output_items": items,
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+
+    runtime = build_chat_runtime()
+    await runtime.start()
+    assert runtime.session is not None
+    assert await runtime.submit("hi")
+    await stream_saved.wait()
+    payload = json.loads(runtime.session.messages_file.read_text(encoding="utf-8"))
+    assert payload["messages"][-1]["role"] == "assistant"
+    assert payload["messages"][-1]["content"] == ""
+    assert [item["type"] for item in payload["messages"][-1]["items"]] == [
+        "shell_call",
+        "shell_call_output",
+    ]
+    release.set()
+    await runtime.wait_until_idle()
+    payload = json.loads(runtime.session.messages_file.read_text(encoding="utf-8"))
+    await runtime.close()
+
+    assert payload["messages"][-1]["content"] == "done"
+
+
+@pytest.mark.anyio
 async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

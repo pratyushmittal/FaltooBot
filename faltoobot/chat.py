@@ -45,6 +45,7 @@ from faltoobot.store import (
     existing_cli_session,
     replace_queued_prompts,
     session_items,
+    sync_assistant_turn,
 )
 
 MARKDOWN_KINDS = frozenset({"bot", "thinking"})
@@ -392,7 +393,7 @@ def item_key(item: dict[str, Any]) -> str | None:
 def turn_entries(turn: Turn) -> list[Entry]:
     return [
         *(entry for item in turn.items for entry in item_entries(item)),
-        Entry(TURN_KIND.get(turn.role, "bot"), turn.content),
+        *([Entry(TURN_KIND.get(turn.role, "bot"), turn.content)] if turn.content else []),
     ]
 
 
@@ -644,19 +645,34 @@ class ChatRuntime:
             self.live_entry = Entry(kind, self.live_entry.content + delta)
             self.notify()
 
-    def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
-        answer = result["text"]
-        turn = Turn(
-            role="assistant", content=answer, created_at="", items=tuple(result["output_items"])
-        )
-        self.session = add_turn(
+    def sync_assistant_progress(
+        self,
+        content: str,
+        items: list[dict[str, Any]],
+        *,
+        usage: dict[str, Any] | None = None,
+        instructions: str | None = None,
+    ) -> Turn | None:
+        if not items and not content:
+            return None
+        self.session = sync_assistant_turn(
             self.require_session(),
-            "assistant",
-            answer,
-            items=result["output_items"],
+            content,
+            items=items,
+            usage=usage,
+            instructions=instructions,
+        )
+        return self.require_session().messages[-1]
+
+    def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
+        turn = self.sync_assistant_progress(
+            result["text"],
+            list(result["output_items"]),
             usage=result["usage"],
             instructions=result["instructions"],
         )
+        if turn is None:
+            raise RuntimeError("assistant reply was empty")
         return turn
 
     def render_assistant_turn(self, turn: Turn, state: StreamState) -> None:
@@ -667,10 +683,11 @@ class ChatRuntime:
             for entry in item_entries(item)
             if not (state.saw_thinking and entry.kind == "thinking")
         )
-        if state.saw_bot:
-            self.replace_last_bot_entry(turn.content)
-        else:
-            self.entries.append(Entry("bot", turn.content))
+        if turn.content:
+            if state.saw_bot:
+                self.replace_last_bot_entry(turn.content)
+            else:
+                self.entries.append(Entry("bot", turn.content))
         self.notify()
 
     async def handle_prompt(self, prompt: str) -> None:
@@ -707,6 +724,9 @@ class ChatRuntime:
                 if key := item_key(item):
                     state.tool_keys.add(key)
 
+        async def on_stream_end(items: list[dict[str, Any]], text: str) -> None:
+            self.sync_assistant_progress(text, items)
+
         self.current_reply_task = asyncio.create_task(
             stream_reply(
                 self.require_client(),
@@ -717,6 +737,7 @@ class ChatRuntime:
                 on_reasoning_delta=on_reasoning_delta,
                 on_reasoning_done=on_reasoning_done,
                 on_output_item=on_output_item,
+                on_stream_end=on_stream_end,
             )
         )
         try:

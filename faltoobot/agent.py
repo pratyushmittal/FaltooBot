@@ -368,6 +368,7 @@ async def resolve_reply(
     messages: list[Any],
     instructions: str,
     request: Callable[[list[Any]], Any],
+    on_stream_end: Callable[[list[dict[str, Any]], str], Any] | None = None,
 ) -> ReplyResult:
     items = list(messages)
     outputs: list[dict[str, Any]] = []
@@ -377,10 +378,15 @@ async def resolve_reply(
         outputs.extend(response_outputs)
         items = compacted_items([*items, *response_outputs])
         next_items = collect_tool_outputs(config, session, response_outputs)
-        if not next_items:
-            return build_reply_result(response, instructions, outputs)
         outputs.extend(next_items)
         items.extend(next_items)
+        text = (response.output_text or "").strip()
+        if on_stream_end and (outputs or text):
+            result = on_stream_end(list(outputs), text)
+            if inspect.isawaitable(result):
+                await result
+        if not next_items:
+            return build_reply_result(response, instructions, outputs)
 
 
 async def reply(
@@ -408,6 +414,7 @@ async def stream_reply(
     on_reasoning_delta: Callable[[str], Any] | None = None,
     on_reasoning_done: Callable[[], Any] | None = None,
     on_output_item: Callable[[dict[str, Any]], Any] | None = None,
+    on_stream_end: Callable[[list[dict[str, Any]], str], Any] | None = None,
 ) -> ReplyResult:
     instructions = system_instructions(config, session)
 
@@ -429,4 +436,11 @@ async def stream_reply(
                     await emit_event(on_reasoning_done)
             return await stream.get_final_response()
 
-    return await resolve_reply(config, session, messages, instructions, stream_request)
+    return await resolve_reply(
+        config,
+        session,
+        messages,
+        instructions,
+        stream_request,
+        on_stream_end=on_stream_end,
+    )

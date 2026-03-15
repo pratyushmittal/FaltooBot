@@ -111,6 +111,56 @@ class FakeStreamManager:
         return response
 
 
+class FakeLoopStreamManager:
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+    async def __aenter__(self) -> "FakeLoopStreamManager":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+        return None
+
+    def __aiter__(self) -> "FakeLoopStreamManager":
+        self._events = iter(())
+        return self
+
+    async def __anext__(self) -> FakeStreamEvent:
+        raise StopAsyncIteration
+
+    async def get_final_response(self) -> FakeResponse:
+        response = FakeResponse()
+        if self.count == 1:
+            response.output_text = ""
+            response.output = [
+                {
+                    "type": "shell_call",
+                    "call_id": "call_1",
+                    "action": {"commands": ["pwd"], "max_output_length": 4000},
+                }
+            ]
+        else:
+            response.output_text = "done"
+            response.output = []
+        return response
+
+
+class FakeLoopStreamResponses:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.count = 0
+
+    def stream(self, **kwargs: Any) -> FakeLoopStreamManager:
+        self.calls.append(kwargs)
+        self.count += 1
+        return FakeLoopStreamManager(self.count)
+
+
+class FakeLoopStreamClient:
+    def __init__(self) -> None:
+        self.responses = FakeLoopStreamResponses()
+
+
 @pytest.mark.anyio
 async def test_reply_includes_global_and_session_agents_in_instructions(
     tmp_path: Path,
@@ -245,3 +295,36 @@ async def test_reply_strips_parsed_arguments_from_replayed_tool_items(
     sent_item = client.responses.calls[0]["input"][0]
     assert sent_item["arguments"] == '{"action":"list"}'
     assert "parsed_arguments" not in sent_item
+
+@pytest.mark.anyio
+async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    client = FakeLoopStreamClient()
+    snapshots: list[tuple[str, list[str]]] = []
+
+    result = await stream_reply(
+        client,
+        config,
+        session,
+        [{"type": "message", "role": "user", "content": "hi"}],  # type: ignore[arg-type]
+        on_stream_end=lambda items, text: snapshots.append((text, [item["type"] for item in items])),
+    )
+
+    assert snapshots == [
+        ("", ["shell_call", "shell_call_output"]),
+        ("done", ["shell_call", "shell_call_output"]),
+    ]
+    assert result["text"] == "done"
+
+
