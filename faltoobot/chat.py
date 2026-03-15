@@ -964,7 +964,7 @@ class EntryBlock(Vertical):
         kind = self.entry.kind
         content = self.entry.content
         if kind in {"banner", "meta"} or not self.uses_markdown():
-            yield Static(content, id="body", classes="body")
+            yield Static(Text(content), id="body", classes="body")
             return
         yield TextualMarkdown(content, id="body", classes="body")
 
@@ -985,7 +985,7 @@ class EntryBlock(Vertical):
         if self.uses_markdown():
             self.query_one("#body", TextualMarkdown).update(entry.content)
             return True
-        self.query_one("#body", Static).update(entry.content)
+        self.query_one("#body", Static).update(Text(entry.content))
         return True
 
 
@@ -997,13 +997,13 @@ class LiveMarkdownBlock(Vertical):
         super().__init__(classes=entry_class(entry.kind))
 
     def compose(self) -> ComposeResult:
-        yield Static(self.entry.content, id="body", classes="body")
+        yield Static(Text(self.entry.content), id="body", classes="body")
 
     def set_entry(self, entry: Entry) -> bool:
         if entry.kind != self.entry.kind or entry.kind not in {"bot", "thinking"}:
             return False
         self.entry = entry
-        self.query_one("#body", Static).update(entry.content)
+        self.query_one("#body", Static).update(Text(entry.content))
         return True
 
 
