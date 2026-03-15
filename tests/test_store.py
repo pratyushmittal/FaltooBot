@@ -87,3 +87,44 @@ def test_sync_assistant_turn_replaces_in_progress_assistant_turn(tmp_path: Path)
         "shell_call",
         "shell_call_output",
     ]
+
+
+def test_session_items_append_assistant_text_when_items_have_only_tools(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = create_cli_session(sessions_dir, "CLI test", workspace)
+
+    session = add_turn(
+        session,
+        "assistant",
+        "search-backed answer",
+        items=[{"type": "web_search_call", "id": "ws_1", "status": "completed"}],
+    )
+
+    assert session_items(session) == [
+        {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+        {"type": "message", "role": "assistant", "content": "search-backed answer"},
+    ]
+
+
+def test_session_items_do_not_duplicate_existing_assistant_message_item(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = create_cli_session(sessions_dir, "CLI test", workspace)
+
+    session = add_turn(
+        session,
+        "assistant",
+        "search-backed answer",
+        items=[
+            {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+            {"type": "message", "role": "assistant", "content": "search-backed answer"},
+        ],
+    )
+
+    assert session_items(session) == [
+        {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+        {"type": "message", "role": "assistant", "content": "search-backed answer"},
+    ]

@@ -271,9 +271,17 @@ def session_items(session: Session) -> list[dict[str, Any]]:
 
 
 def turn_items(turn: Turn) -> list[dict[str, Any]]:
-    if turn.items:
-        return list(turn.items)
-    return [{"type": "message", "role": turn.role, "content": turn.content}]
+    items = list(turn.items)
+    if not items:
+        return [{"type": "message", "role": turn.role, "content": turn.content}]
+    has_message = any(
+        item.get("type") == "message" and item.get("role") == turn.role
+        for item in items
+        if isinstance(item, dict)
+    )
+    if turn.content and not has_message:
+        items.append({"type": "message", "role": turn.role, "content": turn.content})
+    return items
 
 
 def last_instructions(session: Session) -> str | None:
