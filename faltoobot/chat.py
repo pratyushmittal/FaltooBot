@@ -593,38 +593,37 @@ class EntryBlock(Vertical):
         width: 1fr;
         height: auto;
         padding: 0 1;
-        background: ansi_default;
-        background-tint: 0%;
+        background: transparent;
     }
 
     EntryBlock.entry-you > .body {
         color: ansi_default;
-        background-tint: #3b82f6 6%;
+        background: rgba(59, 130, 246, 0.08);
     }
 
     EntryBlock.entry-bot > .body {
         color: ansi_default;
-        background-tint: #64748b 4%;
+        background: rgba(100, 116, 139, 0.06);
     }
 
     EntryBlock.entry-thinking > .body {
         color: ansi_bright_black;
-        background-tint: #64748b 3%;
+        background: rgba(100, 116, 139, 0.04);
     }
 
     EntryBlock.entry-tool > .body {
         color: ansi_cyan;
-        background-tint: #0891b2 4%;
+        background: rgba(8, 145, 178, 0.05);
     }
 
     EntryBlock.entry-error > .body {
         color: ansi_bright_red;
-        background-tint: #dc2626 5%;
+        background: rgba(220, 38, 38, 0.06);
     }
 
     EntryBlock.entry-opened > .body {
         color: ansi_blue;
-        background-tint: #2563eb 4%;
+        background: rgba(37, 99, 235, 0.05);
     }
 
     EntryBlock.entry-banner > .body,
