@@ -847,16 +847,19 @@ class EntryBlock(Vertical):
     EntryBlock {
         width: 1fr;
         max-width: 80;
+        min-width: 0;
         height: auto;
         margin: 0 0 1 0;
     }
 
     EntryBlock > .body {
         width: 1fr;
+        min-width: 0;
         height: auto;
         padding: 0 1;
         background: transparent;
         color: $text;
+        overflow-x: hidden;
     }
 
     EntryBlock.entry-you > .body {
@@ -1015,6 +1018,7 @@ class FaltooChatApp(App[None]):
         layout: vertical;
         align-horizontal: center;
         overflow-y: auto;
+        overflow-x: hidden;
         background: $background;
         padding: 1 2;
         border: none;

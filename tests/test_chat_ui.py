@@ -697,6 +697,100 @@ async def test_textual_app_shows_completed_reply_without_restart(
 
 
 @pytest.mark.anyio
+async def test_textual_app_shows_tool_details_while_streaming(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    class FakeItem:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def to_dict(self) -> dict[str, object]:
+            return self.payload
+
+    class FakeResponse:
+        def __init__(self, *, text: str, output: list[dict[str, object]]) -> None:
+            self.output_text = text
+            self.output = output
+            self.usage = None
+
+    class FakeEvent:
+        def __init__(self, event_type: str, item: dict[str, object] | None = None) -> None:
+            self.type = event_type
+            self.item = FakeItem(item) if item is not None else None
+
+    class FakeStreamManager:
+        def __init__(self, count: int) -> None:
+            self.count = count
+
+        async def __aenter__(self) -> "FakeStreamManager":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+            return None
+
+        def __aiter__(self) -> "FakeStreamManager":
+            events = [
+                FakeEvent(
+                    "response.output_item.done",
+                    {
+                        "type": "shell_call",
+                        "call_id": "call_1",
+                        "action": {"commands": ["pwd"]},
+                    },
+                )
+            ]
+            self._events = iter(events if self.count == 1 else [])
+            return self
+
+        async def __anext__(self) -> FakeEvent:
+            try:
+                return next(self._events)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        async def get_final_response(self) -> FakeResponse:
+            if self.count == 1:
+                await release.wait()
+                return FakeResponse(
+                    text="",
+                    output=[
+                        {
+                            "type": "shell_call",
+                            "call_id": "call_1",
+                            "action": {"commands": ["pwd"]},
+                        }
+                    ],
+                )
+            return FakeResponse(text="done", output=[])
+
+    class FakeResponses:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def stream(self, **kwargs: object) -> FakeStreamManager:
+            self.count += 1
+            return FakeStreamManager(self.count)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+    app = build_chat_app(client=FakeClient())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "enter")
+        await pilot.pause()
+        assert any(entry.kind == "tool" and "pwd" in entry.content for entry in app.runtime.entries)
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
 async def test_textual_app_reconciles_partial_bot_stream_with_final_reply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

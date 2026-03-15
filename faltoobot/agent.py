@@ -441,7 +441,7 @@ async def stream_reply(
         ) as stream:
             async for event in stream:
                 event_type = getattr(event, "type", None)
-                if event_type == "response.output_item.added":
+                if event_type == "response.output_item.done":
                     item = dict_item(getattr(event, "item", None).to_dict() if hasattr(getattr(event, "item", None), "to_dict") else getattr(event, "item", None))
                     if item is not None:
                         await emit_item(on_output_item, item)
