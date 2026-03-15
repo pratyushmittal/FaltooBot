@@ -691,8 +691,9 @@ class FaltooChatApp(App[None]):
     CSS = """
     Screen {
         layout: vertical;
-        color: #f8e9c7;
-        background: transparent;
+        color: ansi_default;
+        background: ansi_default;
+        background-tint: 0%;
     }
 
     #shell {
@@ -703,7 +704,8 @@ class FaltooChatApp(App[None]):
         height: 1fr;
         layout: vertical;
         overflow-y: auto;
-        background: transparent;
+        background: ansi_default;
+        background-tint: 0%;
         padding: 1 2;
         border: none;
     }
@@ -712,7 +714,8 @@ class FaltooChatApp(App[None]):
         height: auto;
         max-height: 8;
         layout: vertical;
-        background: transparent;
+        background: ansi_default;
+        background-tint: 0%;
         border: none;
         padding: 0 1;
     }
@@ -722,7 +725,8 @@ class FaltooChatApp(App[None]):
         min-height: 1;
         align: left middle;
         padding: 0 1;
-        background: transparent;
+        background: ansi_default;
+        background-tint: 0%;
         color: #f8e9c7;
         margin: 0 0 1 0;
     }
@@ -762,7 +766,8 @@ class FaltooChatApp(App[None]):
     #composer {
         height: 6;
         min-height: 3;
-        background: transparent;
+        background: ansi_default;
+        background-tint: 0%;
         color: #fff4df;
         padding: 0 1;
         border: none;
@@ -771,7 +776,8 @@ class FaltooChatApp(App[None]):
     #status {
         height: 1;
         padding: 0 2;
-        background: transparent;
+        background: ansi_default;
+        background-tint: 0%;
         color: #8ea4bc;
         text-style: bold;
     }
