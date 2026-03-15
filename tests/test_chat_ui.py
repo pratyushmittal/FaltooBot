@@ -1081,6 +1081,48 @@ async def test_textual_app_shift_enter_keeps_multiline_text(
 
 
 @pytest.mark.anyio
+async def test_textual_app_routes_queue_keys_from_composer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.runtime.pending_prompts = [QueuedPrompt("one"), QueuedPrompt("two")]  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert selected_queue_index(app) == 1
+        await pilot.press("enter")
+        await pilot.pause()
+        assert queue_texts(app) == ["one"]
+        assert app.query_one("#composer", Composer).text == "two"
+
+
+@pytest.mark.anyio
+async def test_textual_app_enter_edits_clicked_queue_item(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.runtime.pending_prompts = [QueuedPrompt("one")]  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        app.on_queue_item_picked(QueueItem.Picked(0))  # type: ignore[attr-defined]
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert queue_texts(app) == []
+        assert app.query_one("#composer", Composer).text == "one"
+
+
+@pytest.mark.anyio
 async def test_textual_app_uses_arrow_navigation_and_enter_for_queue_items(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

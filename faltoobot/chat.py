@@ -26,7 +26,7 @@ from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.content import Content
@@ -57,6 +57,17 @@ IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 MARKDOWN_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
 MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1200
+QUEUE_PREVIEW_CHARS = 75
+QUEUE_SHORTCUTS = (
+    "↑/↓ select",
+    "Enter edit",
+    "Space pause",
+    "Del remove",
+    "Shift+↑/↓ move",
+)
+SCROLL_SETTLE_DELAYS = (0.01, 0.05)
+STARTUP_SCROLL_INTERVAL = 0.1
+STARTUP_SCROLL_DURATION = 2.0
 
 
 MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))  # type: ignore[assignment]
@@ -318,17 +329,8 @@ def input_hint(
         parts.append("replying")
     if queued:
         parts.append(f"queued {queued}")
-        parts.append("↑/↓ select")
-        parts.append("Enter edit")
-        parts.append("Space pause")
-        parts.append("Del remove")
-        parts.append("Shift+↑/↓ move")
-    elif queue_selected:
-        parts.append("↑/↓ select")
-        parts.append("Enter edit")
-        parts.append("Space pause")
-        parts.append("Del remove")
-        parts.append("Shift+↑/↓ move")
+    if queued or queue_selected:
+        parts.extend(QUEUE_SHORTCUTS)
     parts.append("Ctrl+V paste/image")
     parts.append("Ctrl+C interrupt")
     return "  ".join(parts)
@@ -451,7 +453,7 @@ def rich_renderable(kind: str, content: str) -> Text | Group:
 
 def queue_preview(content: str) -> str:
     preview = " ".join(part.strip() for part in content.splitlines() if part.strip())
-    return (preview or content.strip())[:75]
+    return (preview or content.strip())[:QUEUE_PREVIEW_CHARS]
 
 
 @dataclass(slots=True)
@@ -819,6 +821,11 @@ class Composer(TextArea):
         self.insert_text(paste_image_text(self.app.clipboard, self.workspace()))
 
     def on_key(self, event: Any) -> None:
+        handler = getattr(self.app, "handle_composer_key", None)
+        if callable(handler) and handler(event.key):
+            event.prevent_default()
+            event.stop()
+            return
         if event.key == "enter":
             event.prevent_default()
             event.stop()
@@ -852,15 +859,17 @@ class QueueItem(Horizontal):
             self.index = index
             super().__init__()
 
-    def __init__(self, index: int, prompt: QueuedPrompt, *, selected: bool = False) -> None:
+    def __init__(self, index: int, prompt: QueuedPrompt) -> None:
         self.index = index
         self.content = queue_preview(prompt.content)
         self.paused = prompt.paused
-        self.selected = selected
         super().__init__(classes="queue-item")
 
     def marker(self) -> str:
         return "□" if self.paused else "☑︎"
+
+    def select(self, selected: bool) -> None:
+        self.set_class(selected, "-selected")
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -1169,6 +1178,7 @@ class FaltooChatApp(App[None]):
         self._queue_selected_snapshot: int | None = None
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
+        self._startup_scroll: Any | None = None
 
     def make_entry_block(self, entry: Entry) -> EntryBlock | LiveMarkdownBlock:
         return LiveMarkdownBlock(entry) if entry.kind in MARKDOWN_KINDS else EntryBlock(entry)
@@ -1201,27 +1211,47 @@ class FaltooChatApp(App[None]):
     def status(self) -> Static:
         return self.query_one("#status", Static)
 
-    def scroll_transcript_end(self) -> None:
+    def focus_composer(self) -> None:
         try:
-            transcript = self.transcript()
+            self.composer().focus()
+        except (NoMatches, ScreenStackError):
+            return
+
+    def scroll_transcript_end(self, *, settle: bool = False) -> None:
+        self._scroll_transcript_end_after_refresh()
+        self.call_after_refresh(self._scroll_transcript_end_after_refresh)
+        if settle:
+            for delay in SCROLL_SETTLE_DELAYS:
+                self.set_timer(delay, self._scroll_transcript_end_after_refresh)
+
+    def _scroll_transcript_end_after_refresh(self) -> None:
+        try:
+            self.transcript().scroll_end(animate=False, immediate=True)
         except NoMatches:
             return
-        transcript.scroll_end(animate=False, immediate=True)
-        self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
-        for delay in (0.01, 0.05, 0.2, 0.5):
-            self.set_timer(delay, lambda: transcript.scroll_end(animate=False, immediate=True))
+
+    def stop_startup_scroll(self) -> None:
+        if self._startup_scroll is None:
+            return
+        self._startup_scroll.stop()
+        self._startup_scroll = None
+
+    def pin_transcript_during_startup(self) -> None:
+        self.scroll_transcript_end(settle=True)
+        self.stop_startup_scroll()
+        self._startup_scroll = self.set_interval(STARTUP_SCROLL_INTERVAL, self.scroll_transcript_end)
+        self.set_timer(STARTUP_SCROLL_DURATION, self.stop_startup_scroll)
 
     async def on_mount(self) -> None:
         self.runtime.set_notifier(self.sync_view)
         await self.runtime.start()
         self.sync_view(force=True)
-        self.scroll_transcript_end()
-        startup_scroll = self.set_interval(0.1, self.scroll_transcript_end)
-        self.set_timer(2.0, startup_scroll.stop)
+        self.pin_transcript_during_startup()
         self.set_interval(0.05, self.refresh_ui)
-        self.call_after_refresh(self.composer().focus)
+        self.call_after_refresh(self.focus_composer)
 
     async def on_unmount(self) -> None:
+        self.stop_startup_scroll()
         await self.runtime.close()
 
     async def on_composer_submitted(self, message: Composer.Submitted) -> None:
@@ -1271,12 +1301,9 @@ class FaltooChatApp(App[None]):
             return False
         queue = self.queue()
         queue.remove_children()
-        items = [
-            QueueItem(index, prompt, selected=index == self._queue_selected)
-            for index, prompt in enumerate(queued)
-        ]
+        items = [QueueItem(index, prompt) for index, prompt in enumerate(queued)]
         for item in items:
-            item.set_class(item.index == self._queue_selected, "-selected")
+            item.select(item.index == self._queue_selected)
         if items:
             queue.mount(*items)
             queue.display = True
@@ -1352,7 +1379,7 @@ class FaltooChatApp(App[None]):
             or self.runtime.current_reply_task is not None
         )
         if should_scroll_end:
-            self.scroll_transcript_end()
+            self.scroll_transcript_end(settle=had_live or tail_updated)
         else:
             transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
             self.call_after_refresh(
@@ -1364,27 +1391,23 @@ class FaltooChatApp(App[None]):
         if not self.runtime.interrupt():
             self.exit()
 
+    def queue_selection_after_change(self, index: int) -> int | None:
+        total = len(self.runtime.pending_prompts)
+        return min(index, total - 1) if total else None
+
     def edit_queue(self, index: int) -> None:
         if (prompt := self.runtime.remove_prompt(index)) is None:
             return
-        self._queue_selected = (
-            min(index, len(self.runtime.pending_prompts) - 1)
-            if self.runtime.pending_prompts
-            else None
-        )
+        self._queue_selected = self.queue_selection_after_change(index)
         composer = self.composer()
         composer.load_text(prompt)
-        composer.focus()
+        self.focus_composer()
         self.sync_view(force=True)
 
     def delete_queue(self, index: int) -> None:
         if self.runtime.remove_prompt(index) is None:
             return
-        self._queue_selected = (
-            min(index, len(self.runtime.pending_prompts) - 1)
-            if self.runtime.pending_prompts
-            else None
-        )
+        self._queue_selected = self.queue_selection_after_change(index)
         self.sync_view(force=True)
 
     def move_queue(self, index: int, target: int) -> None:
@@ -1398,14 +1421,17 @@ class FaltooChatApp(App[None]):
         if not total:
             return False
         if delta < 0:
-            self._queue_selected = total - 1 if self._queue_selected is None else max(0, self._queue_selected - 1)
+            if self._queue_selected is None:
+                self._queue_selected = total - 1
+            else:
+                self._queue_selected = max(0, self._queue_selected - 1)
         elif self._queue_selected is None:
             return False
         elif self._queue_selected >= total - 1:
             self._queue_selected = None
         else:
             self._queue_selected += 1
-        self.composer().focus()
+        self.focus_composer()
         self.sync_view(force=True)
         return True
 
@@ -1438,12 +1464,14 @@ class FaltooChatApp(App[None]):
         if self._queue_drag_index is not None and self._queue_drag_index != message.index:
             return
         self._queue_selected = message.index
+        self.focus_composer()
         self.sync_view(force=True)
 
     @on(QueueItem.DragStart)
     def on_queue_item_drag_start(self, message: QueueItem.DragStart) -> None:
         self._queue_drag_index = message.index
         self._queue_selected = message.index
+        self.focus_composer()
         self.sync_view(force=True)
 
     @on(QueueItem.DragFinish)
