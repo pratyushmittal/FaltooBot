@@ -710,6 +710,12 @@ class LiveMarkdownBlock(Vertical):
 
 class FaltooChatApp(App[None]):
     CSS = """
+    App {
+        color: ansi_default;
+        background: ansi_default;
+        background-tint: 0%;
+    }
+
     Screen {
         layout: vertical;
         color: ansi_default;
@@ -719,6 +725,8 @@ class FaltooChatApp(App[None]):
 
     #shell {
         height: 1fr;
+        background: ansi_default;
+        background-tint: 0%;
     }
 
     #transcript {
