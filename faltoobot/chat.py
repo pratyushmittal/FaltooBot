@@ -17,7 +17,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -751,7 +751,6 @@ class FaltooChatApp(App[None]):
 
     #shell {
         height: 1fr;
-        align-horizontal: center;
         background: ansi_default;
         background-tint: 0%;
     }
@@ -769,8 +768,6 @@ class FaltooChatApp(App[None]):
     }
 
     #queue {
-        width: 1fr;
-        max-width: 80;
         height: auto;
         max-height: 8;
         layout: vertical;
@@ -823,9 +820,14 @@ class FaltooChatApp(App[None]):
         border: none;
     }
 
+    #footer {
+        width: 80;
+        height: auto;
+        layout: vertical;
+    }
+
     #composer {
         width: 1fr;
-        max-width: 80;
         height: 6;
         min-height: 3;
         background: ansi_default;
@@ -837,7 +839,6 @@ class FaltooChatApp(App[None]):
 
     #status {
         width: 1fr;
-        max-width: 80;
         height: 1;
         padding: 0 2;
         background: ansi_default;
@@ -924,16 +925,18 @@ class FaltooChatApp(App[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield VerticalScroll(id="transcript")
-            yield Vertical(id="queue")
-            yield Composer(
-                id="composer",
-                text="",
-                soft_wrap=True,
-                show_line_numbers=False,
-                highlight_cursor_line=False,
-                placeholder="Type a message or /help",
-            )
-            yield Static("", id="status")
+            with Center():
+                with Vertical(id="footer"):
+                    yield Vertical(id="queue")
+                    yield Composer(
+                        id="composer",
+                        text="",
+                        soft_wrap=True,
+                        show_line_numbers=False,
+                        highlight_cursor_line=False,
+                        placeholder="Type a message or /help",
+                    )
+                    yield Static("", id="status")
 
     def transcript(self) -> VerticalScroll:
         return self.query_one("#transcript", VerticalScroll)
