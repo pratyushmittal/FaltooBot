@@ -162,7 +162,7 @@ class FakeLoopStreamClient:
 
 
 @pytest.mark.anyio
-async def test_reply_includes_global_and_session_agents_in_instructions(
+async def test_reply_includes_global_home_and_session_agents_in_instructions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -173,6 +173,7 @@ async def test_reply_includes_global_and_session_agents_in_instructions(
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     (root / "AGENTS.md").write_text("Global guardrails.", encoding="utf-8")
+    (home / "AGENTS.md").write_text("Home rules.", encoding="utf-8")
     (workspace / "AGENTS.md").write_text("Session rules.", encoding="utf-8")
 
     config = build_config()
@@ -186,6 +187,7 @@ async def test_reply_includes_global_and_session_agents_in_instructions(
     assert result["instructions"] == instructions
     assert instructions == system_instructions(config, session)
     assert "Global AGENTS.md:\nGlobal guardrails." in instructions
+    assert "Home AGENTS.md:\nHome rules." in instructions
     assert "Session AGENTS.md:\nSession rules." in instructions
     assert config.system_prompt in instructions
 
@@ -328,3 +330,16 @@ async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
     assert result["text"] == "done"
 
 
+def test_instruction_parts_deduplicate_same_agents_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    (home / "AGENTS.md").write_text("Home rules.", encoding="utf-8")
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", home)
+
+    instructions = system_instructions(config, session)
+
+    assert instructions.count("Home AGENTS.md:\nHome rules.") == 1

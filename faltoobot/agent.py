@@ -53,6 +53,7 @@ def instruction_parts(config: Config, session: Session) -> list[str]:
     seen = set[Path]()
     for base, label in (
         (config.root, "Global AGENTS.md"),
+        (Path.home(), "Home AGENTS.md"),
         (session.workspace, "Session AGENTS.md"),
     ):
         agents_path = agents_file(base).resolve()

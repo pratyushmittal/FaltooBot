@@ -1262,9 +1262,15 @@ class FaltooChatApp(App[None]):
         at_end = transcript.is_vertical_scroll_end
         previous_scroll = transcript.scroll_y
         had_live = self._live_block is not None or live is not None
+        previous_rendered = tuple((block.entry.kind, block.entry.content) for block in self._blocks)
         rendered = tuple((entry.kind, entry.content) for entry in entries)
-        append_only = rendered[: len(self._blocks)] == tuple(
-            (block.entry.kind, block.entry.content) for block in self._blocks
+        append_only = rendered[: len(self._blocks)] == previous_rendered
+        tail_updated = (
+            len(rendered) == len(previous_rendered)
+            and bool(rendered)
+            and rendered[:-1] == previous_rendered[:-1]
+            and rendered[-1][0] == previous_rendered[-1][0]
+            and rendered[-1][1] != previous_rendered[-1][1]
         )
 
         if force or not append_only:
@@ -1293,10 +1299,19 @@ class FaltooChatApp(App[None]):
             self._live_block = self.make_entry_block(live)
             transcript.mount(self._live_block)
 
-        should_scroll_end = force or at_end or had_live or self.runtime.current_reply_task is not None
+        should_scroll_end = (
+            force
+            or at_end
+            or had_live
+            or tail_updated
+            or self.runtime.current_reply_task is not None
+        )
         if should_scroll_end:
+            transcript.scroll_end(animate=False, immediate=True)
             self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
+            self.set_timer(0.01, lambda: transcript.scroll_end(animate=False, immediate=True))
         else:
+            transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
             self.call_after_refresh(
                 lambda: transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
             )
