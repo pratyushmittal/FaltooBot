@@ -3,7 +3,6 @@ import asyncio
 import json
 import subprocess
 import sys
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,12 +14,13 @@ from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
+from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
+from textual.widgets import Button, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets import Static, TextArea
 
 from faltoobot.agent import stream_reply
 from faltoobot.config import Config, build_config
@@ -85,12 +85,22 @@ def status_text(config: Config) -> str:
     return f"model: {config.openai_model}  thinking: {config.openai_thinking}"
 
 
-def input_hint(config: Config, *, replying: bool = False, queued: int = 0) -> str:
+def input_hint(
+    config: Config,
+    *,
+    replying: bool = False,
+    queued: int = 0,
+    queue_selected: bool = False,
+) -> str:
     parts = [status_text(config), "Enter send", "Shift+Enter newline", "Ctrl+C interrupt"]
     if replying:
         parts.append("replying")
     if queued:
         parts.append(f"queued {queued}")
+    if queue_selected:
+        parts.append("Ctrl+E edit")
+        parts.append("Del remove")
+        parts.append("Alt+Up/Down reorder")
     return "  ".join(parts)
 
 
@@ -220,7 +230,7 @@ class ChatRuntime:
     client: AsyncOpenAI | None = None
     session: Session | None = None
     own_client: bool = False
-    pending_prompts: deque[str] = field(default_factory=deque)
+    pending_prompts: list[str] = field(default_factory=list)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[dict[str, Any]] | None = None
     entries: list[Entry] = field(default_factory=list)
@@ -283,10 +293,41 @@ class ChatRuntime:
             return True
         if (command_result := await self.handle_command(text)) is not None:
             return command_result
-        self.pending_prompts.append(text)
+        self.enqueue_prompt(text)
         self.notify()
         self.ensure_processing()
         return True
+
+    def queued_prompts(self) -> tuple[str, ...]:
+        return tuple(self.pending_prompts)
+
+    def enqueue_prompt(self, prompt: str) -> None:
+        self.pending_prompts.append(prompt)
+
+    def pop_next_prompt(self) -> str | None:
+        return self.pending_prompts.pop(0) if self.pending_prompts else None
+
+    def remove_prompt(self, index: int) -> str | None:
+        if 0 <= index < len(self.pending_prompts):
+            prompt = self.pending_prompts.pop(index)
+            self.notify()
+            return prompt
+        return None
+
+    def replace_prompt(self, index: int, prompt: str) -> bool:
+        if 0 <= index < len(self.pending_prompts):
+            self.pending_prompts[index] = prompt
+            self.notify()
+            return True
+        return False
+
+    def move_prompt(self, index: int, target: int) -> int | None:
+        if not (0 <= index < len(self.pending_prompts) and 0 <= target < len(self.pending_prompts)):
+            return None
+        prompt = self.pending_prompts.pop(index)
+        self.pending_prompts.insert(target, prompt)
+        self.notify()
+        return target
 
     async def handle_command(self, text: str) -> bool | None:
         match text:
@@ -314,8 +355,9 @@ class ChatRuntime:
             self.processing_task = asyncio.create_task(self.process_pending())
 
     async def process_pending(self) -> None:
-        while self.pending_prompts:
-            await self.handle_prompt(self.pending_prompts.popleft())
+        while prompt := self.pop_next_prompt():
+            self.notify()
+            await self.handle_prompt(prompt)
         self.notify()
 
     async def wait_until_idle(self) -> None:
@@ -448,6 +490,45 @@ class Composer(TextArea):
             self.insert("\n")
 
 
+class QueueItem(Horizontal):
+    class Picked(Message):
+        def __init__(self, index: int) -> None:
+            self.index = index
+            super().__init__()
+
+    class DragStart(Message):
+        def __init__(self, index: int) -> None:
+            self.index = index
+            super().__init__()
+
+    class DragFinish(Message):
+        def __init__(self, index: int) -> None:
+            self.index = index
+            super().__init__()
+
+    def __init__(self, index: int, content: str, *, selected: bool = False) -> None:
+        self.index = index
+        self.content = content
+        self.selected = selected
+        super().__init__(classes="queue-item")
+
+    def compose(self) -> ComposeResult:
+        yield Static(Text(self.content, overflow="ellipsis", no_wrap=True), classes="queue-text")
+        yield Button("×", classes="queue-delete")
+
+    def on_mouse_down(self, event: Any) -> None:
+        event.stop()
+        self.post_message(self.DragStart(self.index))
+
+    def on_mouse_up(self, event: Any) -> None:
+        event.stop()
+        self.post_message(self.DragFinish(self.index))
+
+    def on_click(self, event: Any) -> None:
+        event.stop()
+        self.post_message(self.Picked(self.index))
+
+
 class EntryBlock(Vertical):
     DEFAULT_CSS = """
     EntryBlock {
@@ -535,6 +616,47 @@ class FaltooChatApp(App[None]):
         border: none;
     }
 
+    #queue {
+        height: auto;
+        max-height: 8;
+        layout: vertical;
+        background: #1a1410;
+        border: none;
+        padding: 0 1;
+    }
+
+    .queue-item {
+        height: auto;
+        min-height: 1;
+        align: left middle;
+        padding: 0 1;
+        background: #221914;
+        color: #f8e9c7;
+        margin: 0 0 1 0;
+    }
+
+    .queue-item.-selected {
+        background: #2a211b;
+        tint: #0f2840 15%;
+    }
+
+    .queue-text {
+        width: 1fr;
+        height: auto;
+        color: #f8e9c7;
+    }
+
+    .queue-delete {
+        min-width: 3;
+        width: 3;
+        height: 1;
+        padding: 0;
+        margin: 0 0 0 1;
+        background: transparent;
+        color: #ff7b72;
+        border: none;
+    }
+
     #composer {
         height: 6;
         min-height: 3;
@@ -553,7 +675,14 @@ class FaltooChatApp(App[None]):
     }
     """
 
-    BINDINGS = [Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False)]
+    BINDINGS = [
+        Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False),
+        Binding("ctrl+e", "edit_selected_queue", "Edit Queue", show=False),
+        Binding("delete", "delete_selected_queue", "Delete Queue", show=False),
+        Binding("backspace", "delete_selected_queue", "Delete Queue", show=False),
+        Binding("alt+up", "move_selected_queue_up", "Queue Up", show=False),
+        Binding("alt+down", "move_selected_queue_down", "Queue Down", show=False),
+    ]
 
     def __init__(
         self,
@@ -566,10 +695,14 @@ class FaltooChatApp(App[None]):
         self._snapshot: tuple[tuple[str, str], ...] = ()
         self._blocks: list[EntryBlock] = []
         self._live_block: EntryBlock | None = None
+        self._queue_snapshot: tuple[str, ...] = ()
+        self._queue_selected: int | None = None
+        self._queue_drag_index: int | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield VerticalScroll(id="transcript")
+            yield Vertical(id="queue")
             yield Composer(
                 id="composer",
                 text="",
@@ -585,6 +718,9 @@ class FaltooChatApp(App[None]):
 
     def composer(self) -> Composer:
         return self.query_one("#composer", Composer)
+
+    def queue(self) -> Vertical:
+        return self.query_one("#queue", Vertical)
 
     def status(self) -> Static:
         return self.query_one("#status", Static)
@@ -613,6 +749,7 @@ class FaltooChatApp(App[None]):
         self.sync_view()
 
     def sync_view(self, force: bool = False) -> None:
+        self.refresh_queue(force=force)
         self.refresh_status()
         self.refresh_transcript(force=force)
 
@@ -623,10 +760,38 @@ class FaltooChatApp(App[None]):
                     self.runtime.config,
                     replying=self.runtime.current_reply_task is not None,
                     queued=len(self.runtime.pending_prompts),
+                    queue_selected=self._queue_selected is not None,
                 ),
                 style=STATUS_STYLE,
             )
         )
+
+    def normalize_queue_selection(self) -> None:
+        queued = self.runtime.queued_prompts()
+        if not queued:
+            self._queue_selected = None
+        elif self._queue_selected is None or self._queue_selected >= len(queued):
+            self._queue_selected = len(queued) - 1
+
+    def refresh_queue(self, *, force: bool = False) -> None:
+        queued = self.runtime.queued_prompts()
+        if not force and queued == self._queue_snapshot:
+            return
+        self.normalize_queue_selection()
+        queue = self.queue()
+        queue.remove_children()
+        items = [
+            QueueItem(index, prompt, selected=index == self._queue_selected)
+            for index, prompt in enumerate(queued)
+        ]
+        for item in items:
+            item.set_class(item.index == self._queue_selected, "-selected")
+        if items:
+            queue.mount(*items)
+            queue.display = True
+        else:
+            queue.display = False
+        self._queue_snapshot = queued
 
     def refresh_transcript(self, *, force: bool = False) -> None:
         entries = list(self.runtime.entries)
@@ -676,6 +841,76 @@ class FaltooChatApp(App[None]):
     def action_interrupt_or_quit(self) -> None:
         if not self.runtime.interrupt():
             self.exit()
+
+    def edit_queue(self, index: int) -> None:
+        if (prompt := self.runtime.remove_prompt(index)) is None:
+            return
+        self._queue_selected = min(index, len(self.runtime.pending_prompts) - 1) if self.runtime.pending_prompts else None
+        composer = self.composer()
+        composer.load_text(prompt)
+        composer.focus()
+        self.sync_view(force=True)
+
+    def delete_queue(self, index: int) -> None:
+        if self.runtime.remove_prompt(index) is None:
+            return
+        self._queue_selected = min(index, len(self.runtime.pending_prompts) - 1) if self.runtime.pending_prompts else None
+        self.sync_view(force=True)
+
+    def move_queue(self, index: int, target: int) -> None:
+        if (new_index := self.runtime.move_prompt(index, target)) is None:
+            return
+        self._queue_selected = new_index
+        self.sync_view(force=True)
+
+    @on(QueueItem.Picked)
+    def on_queue_item_picked(self, message: QueueItem.Picked) -> None:
+        if self._queue_drag_index is not None and self._queue_drag_index != message.index:
+            return
+        self._queue_selected = message.index
+        self.edit_queue(message.index)
+
+    @on(QueueItem.DragStart)
+    def on_queue_item_drag_start(self, message: QueueItem.DragStart) -> None:
+        self._queue_drag_index = message.index
+        self._queue_selected = message.index
+        self.sync_view(force=True)
+
+    @on(QueueItem.DragFinish)
+    def on_queue_item_drag_finish(self, message: QueueItem.DragFinish) -> None:
+        if self._queue_drag_index is None:
+            return
+        source = self._queue_drag_index
+        self._queue_drag_index = None
+        if source == message.index:
+            return
+        self.move_queue(source, message.index)
+
+    @on(Button.Pressed, ".queue-delete")
+    def on_queue_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        parent = event.button.parent
+        if not isinstance(parent, QueueItem):
+            return
+        self.delete_queue(parent.index)
+
+    def action_edit_selected_queue(self) -> None:
+        if self._queue_selected is not None:
+            self.edit_queue(self._queue_selected)
+
+    def action_delete_selected_queue(self) -> None:
+        if self._queue_selected is not None:
+            self.delete_queue(self._queue_selected)
+
+    def action_move_selected_queue_up(self) -> None:
+        if self._queue_selected not in {None, 0}:
+            self.move_queue(self._queue_selected, self._queue_selected - 1)
+
+    def action_move_selected_queue_down(self) -> None:
+        if self._queue_selected is None:
+            return
+        if self._queue_selected < len(self.runtime.pending_prompts) - 1:
+            self.move_queue(self._queue_selected, self._queue_selected + 1)
 
 
 def build_chat_runtime(

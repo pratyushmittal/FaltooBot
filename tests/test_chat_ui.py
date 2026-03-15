@@ -11,6 +11,7 @@ from rich.text import Text
 from faltoobot.chat import (
     Composer,
     EntryBlock,
+    QueueItem,
     build_chat_app,
     build_chat_runtime,
     input_hint,
@@ -71,6 +72,14 @@ def entry_tuples(runtime: object) -> list[tuple[str, str]]:
 
 def transcript_blocks(app: object) -> list[EntryBlock]:
     return [block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)]  # type: ignore[attr-defined]
+
+
+def queue_texts(app: object) -> list[str]:
+    return [item.content for item in app.query("#queue QueueItem")]  # type: ignore[attr-defined]
+
+
+def queue_items(app: object) -> list[object]:
+    return list(app.query("#queue QueueItem"))  # type: ignore[attr-defined]
 
 
 def test_input_hint_shows_model_and_thinking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -407,3 +416,98 @@ async def test_textual_app_shift_enter_keeps_multiline_text(
         await pilot.press("h", "i", "shift+enter", "t", "h", "e", "r", "e")
         composer = app.query_one("#composer", Composer)
         assert composer.text == "hi\nthere"
+
+
+@pytest.mark.anyio
+async def test_textual_app_clicks_queue_to_edit_and_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        if args[2].messages[-1].content == "first":
+            await release.wait()
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f", "i", "r", "s", "t", "enter")
+        await pilot.pause()
+        await pilot.press("s", "e", "c", "o", "n", "d", "enter")
+        await pilot.press("t", "h", "i", "r", "d", "enter")
+        await pilot.pause()
+        assert queue_texts(app) == ["second", "third"]
+        delete_button = queue_items(app)[1].query_one(".queue-delete")  # type: ignore[attr-defined]
+        await pilot.click(delete_button)
+        await pilot.pause()
+        assert queue_texts(app) == ["second"]
+        await pilot.click(queue_items(app)[0])
+        await pilot.pause()
+        assert queue_texts(app) == []
+        assert app.query_one("#composer", Composer).text == "second"
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
+async def test_textual_app_reorders_queue_with_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        if args[2].messages[-1].content == "first":
+            await release.wait()
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f", "i", "r", "s", "t", "enter")
+        await pilot.pause()
+        await pilot.press("o", "n", "e", "enter")
+        await pilot.press("t", "w", "o", "enter")
+        await pilot.pause()
+        app._queue_selected = 1  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        await pilot.pause()
+        await pilot.press("alt+up")
+        await pilot.pause()
+        assert queue_texts(app) == ["two", "one"]
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
+async def test_textual_app_reorders_queue_with_drag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+    app.runtime.pending_prompts = ["one", "two"]  # type: ignore[attr-defined]
+    app.sync_view = lambda force=False: None  # type: ignore[method-assign]
+
+    app.on_queue_item_drag_start(QueueItem.DragStart(0))  # type: ignore[attr-defined]
+    app.on_queue_item_drag_finish(QueueItem.DragFinish(1))  # type: ignore[attr-defined]
+
+    assert app.runtime.queued_prompts() == ("two", "one")
