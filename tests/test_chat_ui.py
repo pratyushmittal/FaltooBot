@@ -162,11 +162,11 @@ async def test_chat_replays_existing_session_messages_on_start(
     text = transcript_text(runtime)
     await runtime.close()
 
-    assert "tool> shell" in text
+    assert "shell" in text
     assert "\npwd" in text
-    assert "thinking> Checking context." in text
-    assert "you> hello" in text
-    assert "bot> world" in text
+    assert "Checking context." in text
+    assert "hello" in text
+    assert "world" in text
 
 
 @pytest.mark.anyio
@@ -201,11 +201,10 @@ async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
     text = transcript_text(runtime)
     await runtime.close()
 
-    assert "you> hi" in text
-    assert "thinking>" in text
+    assert "hi" in text
     assert "Planning reply" in text
-    assert text.count("tool> shell") == 1
-    assert "bot> done" in text
+    assert text.count("shell") == 1
+    assert "done" in text
 
 
 @pytest.mark.anyio
@@ -269,8 +268,8 @@ async def test_chat_queues_messages_while_reply_is_running(
     await runtime.close()
 
     assert prompts == ["first", "second"]
-    assert "bot> reply:first" in text
-    assert "bot> reply:second" in text
+    assert "reply:first" in text
+    assert "reply:second" in text
 
 
 @pytest.mark.anyio
@@ -305,7 +304,7 @@ async def test_chat_can_interrupt_inflight_reply(
     text = transcript_text(runtime)
     await runtime.close()
 
-    assert "bot> partial" in text
+    assert "partial" in text
     assert "reply interrupted" in text
 
 
@@ -378,7 +377,7 @@ async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
         await pilot.press("p", "u", "s", "h", "enter")
         await pilot.pause()
         you_block = next(block for block in transcript_blocks(app) if block.entry.kind == "you")
-        assert "you> push" in block_plain(you_block)
+        assert "push" in block_plain(you_block)
         assert app.query_one("#transcript").is_vertical_scroll_end
         release.set()
         await app.runtime.wait_until_idle()
@@ -410,8 +409,8 @@ async def test_textual_app_renders_plain_user_and_bot_text(
         blocks = transcript_blocks(app)
         you_block = next(block for block in blocks if block.entry.kind == "you")
         bot_block = next(block for block in blocks if block.entry.kind == "bot" and block.entry.content == "pong")
-        assert "you> ping" in block_plain(you_block)
-        assert "bot> pong" in block_plain(bot_block)
+        assert "ping" in block_plain(you_block)
+        assert "pong" in block_plain(bot_block)
 
 
 @pytest.mark.anyio

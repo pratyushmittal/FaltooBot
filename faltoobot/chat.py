@@ -35,14 +35,6 @@ from faltoobot.store import (
 )
 
 RICH_KINDS = frozenset({"you", "bot", "thinking", "tool"})
-PREFIX_STYLES = {
-    "you": "bold #ffb347",
-    "bot": "bold #76c7ff",
-    "thinking": "bold #93a8bd",
-    "tool": "bold #7fd4b6",
-    "error": "bold #ff7b72",
-    "opened": "bold #8ea4bc",
-}
 BODY_STYLES = {
     "you": "#fff4df",
     "bot": "#e8f0f8",
@@ -205,10 +197,7 @@ def render_line(kind: str, content: str) -> Text:
         return Text(content, style="dim #8ea4bc")
     if kind == "banner":
         return Text(content, style="bold #0a0c10 on #ffb347")
-    text = Text()
-    text.append(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold"))
-    text.append(content, style=BODY_STYLES.get(kind, "#eef3f9"))
-    return text
+    return Text(content, style=BODY_STYLES.get(kind, "#eef3f9"))
 
 
 def looks_like_markdown(content: str) -> bool:
@@ -216,7 +205,7 @@ def looks_like_markdown(content: str) -> bool:
 
 
 def render_markdown_block(kind: str, content: str) -> Group:
-    return Group(render_line(kind, ""), Padding(Markdown(content), (0, 0, 0, 2)))
+    return Group(Padding(Markdown(content), 0))
 
 
 def rich_renderable(kind: str, content: str) -> Text | Group:
@@ -557,17 +546,43 @@ class EntryBlock(Vertical):
     DEFAULT_CSS = """
     EntryBlock {
         height: auto;
+        margin: 0 0 1 0;
     }
 
     EntryBlock > .body {
         height: auto;
-        padding-left: 2;
+        padding: 0 1;
+    }
+
+    EntryBlock.entry-you > .body {
+        background: #241a13;
+    }
+
+    EntryBlock.entry-bot > .body {
+        background: #181310;
+    }
+
+    EntryBlock.entry-thinking > .body {
+        background: #171513;
+        color: #aab9c9;
+    }
+
+    EntryBlock.entry-tool > .body {
+        background: #141916;
+    }
+
+    EntryBlock.entry-error > .body {
+        background: #2a1616;
+    }
+
+    EntryBlock.entry-opened > .body {
+        background: #141820;
     }
     """
 
     def __init__(self, entry: Entry) -> None:
         self.entry = entry
-        super().__init__()
+        super().__init__(classes=f"entry-{entry.kind}")
 
     def compose(self) -> ComposeResult:
         kind = self.entry.kind
@@ -576,11 +591,9 @@ class EntryBlock(Vertical):
             yield Static(render_line(kind, content), classes="body")
             return
         if self.uses_markdown():
-            yield Static(render_line(kind, ""), id="prefix")
             yield TextualMarkdown(content, id="body", classes="body")
             return
         if "\n" in content:
-            yield Static(render_line(kind, ""), id="prefix")
             yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body", classes="body")
             return
         yield Static(render_line(kind, content), id="body", classes="body")
@@ -619,10 +632,9 @@ class LiveMarkdownBlock(Vertical):
         self.entry = entry
         self._stream: Any = None
         self._pending: asyncio.Task[None] | None = None
-        super().__init__()
+        super().__init__(classes=f"entry-{entry.kind}")
 
     def compose(self) -> ComposeResult:
-        yield Static(render_line(self.entry.kind, ""), id="prefix")
         yield TextualMarkdown("", id="body", classes="body")
 
     async def on_mount(self) -> None:
