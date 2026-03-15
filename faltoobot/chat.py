@@ -1205,8 +1205,8 @@ class FaltooChatApp(App[None]):
         transcript = self.transcript()
         transcript.scroll_end(animate=False, immediate=True)
         self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
-        self.set_timer(0.01, lambda: transcript.scroll_end(animate=False, immediate=True))
-        self.set_timer(0.05, lambda: transcript.scroll_end(animate=False, immediate=True))
+        for delay in (0.01, 0.05, 0.2, 0.5):
+            self.set_timer(delay, lambda: transcript.scroll_end(animate=False, immediate=True))
 
     async def on_mount(self) -> None:
         self.runtime.set_notifier(self.sync_view)
