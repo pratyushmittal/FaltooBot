@@ -45,15 +45,6 @@ from faltoobot.store import (
 )
 
 MARKDOWN_KINDS = frozenset({"bot", "thinking"})
-BODY_STYLES = {
-    "you": "ansi_default",
-    "bot": "ansi_default",
-    "thinking": "ansi_bright_black",
-    "tool": "ansi_cyan",
-    "error": "ansi_bright_red",
-    "opened": "ansi_blue",
-}
-STATUS_STYLE = "bold ansi_bright_black"
 TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
 
@@ -244,14 +235,6 @@ def history_entries(session: Session) -> list[Entry]:
     return [entry for turn in session.messages for entry in turn_entries(turn)]
 
 
-def render_line(kind: str, content: str) -> Text:
-    if kind == "meta":
-        return Text(content, style="dim ansi_bright_black")
-    if kind == "banner":
-        return Text(content, style="bold ansi_yellow")
-    return Text(content, style=BODY_STYLES.get(kind, "#eef3f9"))
-
-
 def looks_like_markdown(content: str) -> bool:
     return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
 
@@ -260,14 +243,14 @@ def uses_markdown(kind: str, content: str) -> bool:
     return kind in MARKDOWN_KINDS and (looks_like_markdown(content) or "\n" in content)
 
 
-def render_markdown_block(content: str) -> Group:
-    return Group(Padding(Markdown(content), 0))
-
-
 def rich_renderable(kind: str, content: str) -> Text | Group:
+    if kind == "banner":
+        return Text(content, style="bold")
+    if kind == "meta":
+        return Text(content, style="dim")
     if uses_markdown(kind, content):
-        return render_markdown_block(content)
-    return render_line(kind, content)
+        return Group(Padding(Markdown(content), 0))
+    return Text(content)
 
 
 @dataclass(slots=True)
@@ -641,41 +624,49 @@ class EntryBlock(Vertical):
         height: auto;
         padding: 0 1;
         background: transparent;
+        color: $text;
     }
 
     EntryBlock.entry-you > .body {
-        color: ansi_default;
-        background: #3b82f6 6%;
+        background: $primary 8%;
     }
 
     EntryBlock.entry-bot > .body {
-        color: ansi_default;
-        background: #64748b 4%;
+        background: $surface;
     }
 
     EntryBlock.entry-thinking > .body {
-        color: ansi_bright_black;
-        background: #64748b 3%;
+        color: $text-muted;
+        background: $surface-active;
     }
 
     EntryBlock.entry-tool > .body {
-        color: ansi_cyan;
-        background: #0891b2 4%;
+        color: $secondary;
+        background: $secondary 8%;
     }
 
     EntryBlock.entry-error > .body {
-        color: ansi_bright_red;
-        background: #dc2626 5%;
+        color: $error;
+        background: $error 8%;
     }
 
     EntryBlock.entry-opened > .body {
-        color: ansi_blue;
-        background: #2563eb 4%;
+        color: $accent;
+        background: $accent 8%;
     }
 
     EntryBlock.entry-banner > .body,
     EntryBlock.entry-meta > .body {
         background: transparent;
+    }
+
+    EntryBlock.entry-banner > .body {
+        color: $warning;
+        text-style: bold;
+    }
+
+    EntryBlock.entry-meta > .body {
+        color: $text-disabled;
     }
     """
 
@@ -686,16 +677,10 @@ class EntryBlock(Vertical):
     def compose(self) -> ComposeResult:
         kind = self.entry.kind
         content = self.entry.content
-        if kind in {"banner", "meta"}:
-            yield Static(render_line(kind, content), classes="body")
+        if kind in {"banner", "meta"} or not self.uses_markdown():
+            yield Static(content, id="body", classes="body")
             return
-        if self.uses_markdown():
-            yield TextualMarkdown(content, id="body", classes="body")
-            return
-        if "\n" in content:
-            yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body", classes="body")
-            return
-        yield Static(render_line(kind, content), id="body", classes="body")
+        yield TextualMarkdown(content, id="body", classes="body")
 
     def uses_markdown(self) -> bool:
         return uses_markdown(self.entry.kind, self.entry.content)
@@ -711,16 +696,10 @@ class EntryBlock(Vertical):
         if not self.same_layout(entry):
             return False
         self.entry = entry
-        if entry.kind in {"banner", "meta"}:
-            self.query_one(".body", Static).update(render_line(entry.kind, entry.content))
-            return True
         if self.uses_markdown():
             self.query_one("#body", TextualMarkdown).update(entry.content)
             return True
-        if "\n" in entry.content:
-            self.query_one("#body", Static).update(Text(entry.content, style=BODY_STYLES.get(entry.kind, "#eef3f9")))
-        else:
-            self.query_one("#body", Static).update(render_line(entry.kind, entry.content))
+        self.query_one("#body", Static).update(entry.content)
         return True
 
 
@@ -777,28 +756,25 @@ class LiveMarkdownBlock(Vertical):
 class FaltooChatApp(App[None]):
     CSS = """
     App {
-        color: ansi_default;
-        background: ansi_default;
-        background-tint: 0%;
+        color: $text;
+        background: $background;
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: ansi_blue;
-        link-color-hover: ansi_bright_blue;
+        link-color: $primary;
+        link-color-hover: $accent;
         link-style: bold underline;
         link-style-hover: bold underline;
     }
 
     Screen {
         layout: vertical;
-        color: ansi_default;
-        background: ansi_default;
-        background-tint: 0%;
+        color: $text;
+        background: $background;
     }
 
     #shell {
         height: 1fr;
-        background: ansi_default;
-        background-tint: 0%;
+        background: $background;
     }
 
     #transcript {
@@ -807,8 +783,7 @@ class FaltooChatApp(App[None]):
         layout: vertical;
         align-horizontal: center;
         overflow-y: auto;
-        background: ansi_default;
-        background-tint: 0%;
+        background: $background;
         padding: 1 2;
         border: none;
     }
@@ -817,8 +792,7 @@ class FaltooChatApp(App[None]):
         height: auto;
         max-height: 8;
         layout: vertical;
-        background: ansi_default;
-        background-tint: 0%;
+        background: $background;
         border: none;
         padding: 0 1;
     }
@@ -828,9 +802,8 @@ class FaltooChatApp(App[None]):
         min-height: 1;
         align: left middle;
         padding: 0 1;
-        background: ansi_default;
-        background-tint: 0%;
-        color: ansi_default;
+        background: $background;
+        color: $text;
         margin: 0 0 1 0;
     }
 
@@ -841,7 +814,7 @@ class FaltooChatApp(App[None]):
     .queue-text {
         width: 1fr;
         height: auto;
-        color: ansi_default;
+        color: $text;
     }
 
     .queue-delete {
@@ -851,7 +824,7 @@ class FaltooChatApp(App[None]):
         padding: 0;
         margin: 0 0 0 1;
         background: transparent;
-        color: ansi_bright_red;
+        color: $error;
         border: none;
     }
 
@@ -862,7 +835,7 @@ class FaltooChatApp(App[None]):
         padding: 0;
         margin: 0 0 0 1;
         background: transparent;
-        color: ansi_bright_black;
+        color: $text-muted;
         border: none;
     }
 
@@ -876,9 +849,8 @@ class FaltooChatApp(App[None]):
         width: 1fr;
         height: 6;
         min-height: 3;
-        background: ansi_default;
-        background-tint: 0%;
-        color: ansi_default;
+        background: $surface;
+        color: $text;
         padding: 0 1;
         border: none;
     }
@@ -887,19 +859,17 @@ class FaltooChatApp(App[None]):
         width: 1fr;
         height: 1;
         padding: 0 2;
-        background: ansi_default;
-        background-tint: 0%;
-        color: ansi_bright_black;
+        background: $surface;
+        color: $text-muted;
         text-style: bold;
     }
 
     Markdown {
-        background: ansi_default;
-        background-tint: 0%;
+        background: transparent;
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: ansi_blue;
-        link-color-hover: ansi_bright_blue;
+        link-color: $primary;
+        link-color-hover: $accent;
         link-style: bold underline;
         link-style-hover: bold underline;
     }
@@ -907,36 +877,35 @@ class FaltooChatApp(App[None]):
     MarkdownBlock {
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: ansi_blue;
-        link-color-hover: ansi_bright_blue;
+        link-color: $primary;
+        link-color-hover: $accent;
         link-style: bold underline;
         link-style-hover: bold underline;
     }
 
     Markdown MarkdownFence {
-        background: ansi_default;
-        background-tint: 0%;
-        color: ansi_default;
+        background: transparent;
+        color: $text;
     }
 
     Markdown MarkdownFence > Label {
-        background: ansi_default;
-        color: ansi_default;
+        background: transparent;
+        color: $text;
     }
 
     Markdown MarkdownBlock > .code_inline {
-        background: ansi_default;
-        color: ansi_yellow;
+        background: $surface;
+        color: $warning;
     }
 
     #transcript {
-        scrollbar-background: ansi_default;
-        scrollbar-background-hover: ansi_default;
-        scrollbar-background-active: ansi_default;
-        scrollbar-color: ansi_bright_black;
-        scrollbar-color-hover: ansi_blue;
-        scrollbar-color-active: ansi_bright_blue;
-        scrollbar-corner-color: ansi_default;
+        scrollbar-background: $background;
+        scrollbar-background-hover: $background;
+        scrollbar-background-active: $background;
+        scrollbar-color: $text-muted;
+        scrollbar-color-hover: $primary;
+        scrollbar-color-active: $accent;
+        scrollbar-corner-color: $background;
     }
     """
 
@@ -957,7 +926,7 @@ class FaltooChatApp(App[None]):
         client: AsyncOpenAI | None = None,
         terminal_dark: bool | None = None,
     ) -> None:
-        super().__init__(ansi_color=True)
+        super().__init__()
         if terminal_dark is not None:
             self.theme = "textual-dark" if terminal_dark else "textual-light"
         self.runtime = build_chat_runtime(config=config, name=name, client=client)
@@ -1032,14 +1001,11 @@ class FaltooChatApp(App[None]):
 
     def refresh_status(self) -> None:
         self.status().update(
-            Text(
-                input_hint(
-                    self.runtime.config,
-                    replying=self.runtime.current_reply_task is not None,
-                    queued=len(self.runtime.pending_prompts),
-                    queue_selected=self._queue_selected is not None,
-                ),
-                style=STATUS_STYLE,
+            input_hint(
+                self.runtime.config,
+                replying=self.runtime.current_reply_task is not None,
+                queued=len(self.runtime.pending_prompts),
+                queue_selected=self._queue_selected is not None,
             )
         )
 
