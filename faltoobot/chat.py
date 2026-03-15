@@ -751,11 +751,13 @@ class FaltooChatApp(App[None]):
 
     #shell {
         height: 1fr;
+        align-horizontal: center;
         background: ansi_default;
         background-tint: 0%;
     }
 
     #transcript {
+        width: 1fr;
         height: 1fr;
         layout: vertical;
         align-horizontal: center;
@@ -767,6 +769,8 @@ class FaltooChatApp(App[None]):
     }
 
     #queue {
+        width: 1fr;
+        max-width: 80;
         height: auto;
         max-height: 8;
         layout: vertical;
@@ -820,6 +824,8 @@ class FaltooChatApp(App[None]):
     }
 
     #composer {
+        width: 1fr;
+        max-width: 80;
         height: 6;
         min-height: 3;
         background: ansi_default;
@@ -830,6 +836,8 @@ class FaltooChatApp(App[None]):
     }
 
     #status {
+        width: 1fr;
+        max-width: 80;
         height: 1;
         padding: 0 2;
         background: ansi_default;
