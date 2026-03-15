@@ -719,6 +719,12 @@ class FaltooChatApp(App[None]):
         color: ansi_default;
         background: ansi_default;
         background-tint: 0%;
+        link-background: transparent;
+        link-background-hover: transparent;
+        link-color: ansi_black;
+        link-color-hover: ansi_blue;
+        link-style: underline;
+        link-style-hover: bold underline;
     }
 
     Screen {
@@ -821,8 +827,8 @@ class FaltooChatApp(App[None]):
         background-tint: 0%;
         link-background: transparent;
         link-background-hover: transparent;
-        link-color: ansi_blue;
-        link-color-hover: ansi_bright_blue;
+        link-color: ansi_black;
+        link-color-hover: ansi_blue;
         link-style: underline;
         link-style-hover: bold underline;
     }
