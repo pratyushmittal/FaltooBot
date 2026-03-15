@@ -687,3 +687,31 @@ async def test_textual_app_can_toggle_selected_queue_pause_with_key(
     app.action_toggle_selected_queue_pause()
 
     assert app.runtime.queued_prompt_items()[0].paused is True
+
+
+@pytest.mark.anyio
+async def test_textual_app_restores_saved_queue_as_paused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    runtime = build_chat_runtime()
+    await runtime.start()
+    runtime.enqueue_prompt("one")
+    runtime.enqueue_prompt("two")
+    assert runtime.session is not None
+    messages_file = runtime.session.messages_file
+    await runtime.close()
+
+    payload = json.loads(messages_file.read_text(encoding="utf-8"))
+    assert [item["content"] for item in payload["queued_prompts"]] == ["one", "two"]
+
+    app = build_chat_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert queue_texts(app) == ["one", "two"]
+        assert queue_paused(app) == [True, True]
+        assert app.runtime.current_reply_task is None
+
+    payload = json.loads(messages_file.read_text(encoding="utf-8"))
+    assert [item["paused"] for item in payload["queued_prompts"]] == [True, True]

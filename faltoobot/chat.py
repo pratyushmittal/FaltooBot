@@ -26,11 +26,13 @@ from textual.widgets import Markdown as TextualMarkdown
 from faltoobot.agent import stream_reply
 from faltoobot.config import Config, build_config
 from faltoobot.store import (
+    QueuedPrompt,
     Session,
     Turn,
     add_turn,
     cli_session,
     existing_cli_session,
+    replace_queued_prompts,
     session_items,
 )
 
@@ -52,12 +54,6 @@ MAX_TOOL_LINES = 8
 class Entry:
     kind: str
     content: str
-
-
-@dataclass(slots=True)
-class QueuedPrompt:
-    content: str
-    paused: bool = False
 
 
 @dataclass(slots=True)
@@ -241,6 +237,11 @@ class ChatRuntime:
     def set_notifier(self, notify: Callable[[], None]) -> None:
         self.notify = notify
 
+    def save_queue(self) -> None:
+        if self.session is None:
+            return
+        self.session = replace_queued_prompts(self.require_session(), self.pending_prompts)
+
     def display_entries(self) -> list[Entry]:
         return [*self.entries, self.live_entry] if self.live_entry else list(self.entries)
 
@@ -263,6 +264,9 @@ class ChatRuntime:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
         self.session = self.cli_session(Path.cwd(), self.name)
+        if self.session.queued_prompts:
+            self.pending_prompts = [QueuedPrompt(prompt.content, True) for prompt in self.session.queued_prompts]
+            self.save_queue()
         self.start_client()
         session = self.require_session()
         self.entries = [
@@ -304,16 +308,20 @@ class ChatRuntime:
 
     def enqueue_prompt(self, prompt: str) -> None:
         self.pending_prompts.append(QueuedPrompt(prompt))
+        self.save_queue()
 
     def pop_next_prompt(self) -> str | None:
         for index, prompt in enumerate(self.pending_prompts):
             if not prompt.paused:
-                return self.pending_prompts.pop(index).content
+                value = self.pending_prompts.pop(index).content
+                self.save_queue()
+                return value
         return None
 
     def remove_prompt(self, index: int) -> str | None:
         if 0 <= index < len(self.pending_prompts):
             prompt = self.pending_prompts.pop(index)
+            self.save_queue()
             self.notify()
             return prompt.content
         return None
@@ -321,6 +329,7 @@ class ChatRuntime:
     def replace_prompt(self, index: int, prompt: str) -> bool:
         if 0 <= index < len(self.pending_prompts):
             self.pending_prompts[index].content = prompt
+            self.save_queue()
             self.notify()
             return True
         return False
@@ -329,6 +338,7 @@ class ChatRuntime:
         if 0 <= index < len(self.pending_prompts):
             prompt = self.pending_prompts[index]
             prompt.paused = not prompt.paused
+            self.save_queue()
             self.notify()
             return prompt.paused
         return None
@@ -338,6 +348,7 @@ class ChatRuntime:
             return None
         prompt = self.pending_prompts.pop(index)
         self.pending_prompts.insert(target, prompt)
+        self.save_queue()
         self.notify()
         return target
 
@@ -354,6 +365,7 @@ class ChatRuntime:
             case "/reset":
                 session = self.require_session()
                 self.session = self.cli_session(session.workspace, default_session_name())
+                self.pending_prompts = []
                 new_session = self.require_session()
                 self.append_entry("meta", f"new session: {new_session.name} ({new_session.id})")
                 return True

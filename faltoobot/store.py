@@ -19,6 +19,12 @@ class Turn:
     instructions: str | None = None
 
 
+@dataclass(slots=True)
+class QueuedPrompt:
+    content: str
+    paused: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class Session:
     id: str
@@ -30,6 +36,7 @@ class Session:
     workspace: Path
     processed_message_ids: tuple[str, ...]
     messages: tuple[Turn, ...]
+    queued_prompts: tuple[QueuedPrompt, ...]
 
 
 def ensure_sessions_dir(path: Path) -> Path:
@@ -65,6 +72,7 @@ def session_payload(session: Session) -> dict[str, Any]:
         "chat_key": session.chat_key,
         "workspace": str(session.workspace),
         "processed_message_ids": list(session.processed_message_ids),
+        "queued_prompts": [queued_prompt_payload(prompt) for prompt in session.queued_prompts],
         "messages": [
             turn_payload(turn)
             for turn in session.messages
@@ -85,6 +93,10 @@ def turn_payload(turn: Turn) -> dict[str, Any]:
     if turn.instructions:
         payload["instructions"] = turn.instructions
     return payload
+
+
+def queued_prompt_payload(prompt: QueuedPrompt) -> dict[str, Any]:
+    return {"content": prompt.content, "paused": prompt.paused}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -120,6 +132,11 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
     processed = tuple(
         message_id for message_id in raw_processed if isinstance(message_id, str)
     ) if isinstance(raw_processed, list) else ()
+    queued_prompts = tuple(
+        QueuedPrompt(content=item["content"], paused=bool(item.get("paused")))
+        for item in payload.get("queued_prompts", [])
+        if isinstance(item, dict) and isinstance(item.get("content"), str)
+    )
     return Session(
         id=str(payload.get("id") or root.name),
         name=str(payload.get("name") or root.name),
@@ -132,6 +149,7 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
         else workspace_path(root),
         processed_message_ids=processed,
         messages=messages,
+        queued_prompts=queued_prompts,
     )
 
 
@@ -212,6 +230,7 @@ def create_session(
         workspace=workspace or workspace_path(root),
         processed_message_ids=(),
         messages=(),
+        queued_prompts=(),
     )
     return save_session(session)
 
@@ -293,6 +312,22 @@ def add_turn(
                     usage=usage if isinstance(usage, dict) else None,
                     instructions=next_instructions,
                 ),
+            ),
+        )
+    )
+
+
+def replace_queued_prompts(
+    session: Session,
+    queued_prompts: list[QueuedPrompt] | tuple[QueuedPrompt, ...],
+) -> Session:
+    return save_session(
+        replace(
+            session,
+            queued_prompts=tuple(
+                prompt
+                for prompt in queued_prompts
+                if isinstance(prompt, QueuedPrompt) and prompt.content.strip()
             ),
         )
     )
