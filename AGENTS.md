@@ -5,7 +5,7 @@
  Infra:
  - uv
  - python3.13+
- - textual (for TUI)
+ - textual + rich (for TUI)
 
  Tests:
  - Keep tests small.
