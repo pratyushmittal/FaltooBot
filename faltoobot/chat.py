@@ -45,7 +45,7 @@ BODY_STYLES = {
     "error": "#ffd5cf",
     "opened": "#d7e3ef",
 }
-STATUS_STYLE = "bold #8ea4bc on #0b1520"
+STATUS_STYLE = "bold #8ea4bc"
 TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
 
@@ -192,7 +192,7 @@ def render_line(kind: str, content: str) -> Text:
     if kind == "meta":
         return Text(content, style="dim #8ea4bc")
     if kind == "banner":
-        return Text(content, style="bold #0a0c10 on #ffb347")
+        return Text(content, style="bold #ffb347")
     return Text(content, style=BODY_STYLES.get(kind, "#eef3f9"))
 
 
@@ -691,8 +691,8 @@ class FaltooChatApp(App[None]):
     CSS = """
     Screen {
         layout: vertical;
-        background: #171411;
         color: #f8e9c7;
+        background: transparent;
     }
 
     #shell {
@@ -703,7 +703,7 @@ class FaltooChatApp(App[None]):
         height: 1fr;
         layout: vertical;
         overflow-y: auto;
-        background: #14100d;
+        background: transparent;
         padding: 1 2;
         border: none;
     }
@@ -712,7 +712,7 @@ class FaltooChatApp(App[None]):
         height: auto;
         max-height: 8;
         layout: vertical;
-        background: #1a1410;
+        background: transparent;
         border: none;
         padding: 0 1;
     }
@@ -722,14 +722,13 @@ class FaltooChatApp(App[None]):
         min-height: 1;
         align: left middle;
         padding: 0 1;
-        background: #221914;
+        background: transparent;
         color: #f8e9c7;
         margin: 0 0 1 0;
     }
 
     .queue-item.-selected {
-        background: #2a211b;
-        tint: #0f2840 15%;
+        text-style: bold underline;
     }
 
     .queue-text {
@@ -763,7 +762,7 @@ class FaltooChatApp(App[None]):
     #composer {
         height: 6;
         min-height: 3;
-        background: #1f1713;
+        background: transparent;
         color: #fff4df;
         padding: 0 1;
         border: none;
@@ -772,7 +771,7 @@ class FaltooChatApp(App[None]):
     #status {
         height: 1;
         padding: 0 2;
-        background: #0b1520;
+        background: transparent;
         color: #8ea4bc;
         text-style: bold;
     }
