@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 import os
@@ -288,21 +289,37 @@ def run_skill_call(config: Config, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def collect_tool_outputs(config: Config, session: Session, items: list[Any]) -> list[dict[str, Any]]:
-    outputs: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        match item.get("type"), item.get("name"):
-            case "shell_call", _:
-                outputs.append(run_shell_call(session, item))
-            case "local_shell_call", _:
-                outputs.append(run_local_shell_call(session, item))
-            case "function_call", "skills":
-                outputs.append(run_skill_call(config, item))
-            case _:
-                pass
-    return outputs
+def needs_tool_output(item: dict[str, Any]) -> bool:
+    match item.get("type"), item.get("name"):
+        case ("shell_call", _) | ("local_shell_call", _) | ("function_call", "skills"):
+            return True
+        case _:
+            return False
+
+
+def tool_output(config: Config, session: Session, item: dict[str, Any]) -> dict[str, Any] | None:
+    match item.get("type"), item.get("name"):
+        case "shell_call", _:
+            return run_shell_call(session, item)
+        case "local_shell_call", _:
+            return run_local_shell_call(session, item)
+        case "function_call", "skills":
+            return run_skill_call(config, item)
+        case _:
+            return None
+
+
+async def collect_tool_outputs(
+    config: Config,
+    session: Session,
+    items: list[Any],
+) -> list[dict[str, Any]]:
+    tasks = [
+        asyncio.to_thread(tool_output, config, session, item)
+        for item in items
+        if isinstance(item, dict) and needs_tool_output(item)
+    ]
+    return [output for output in await asyncio.gather(*tasks) if isinstance(output, dict)]
 
 
 def request_args(
@@ -377,7 +394,7 @@ async def resolve_reply(
         response_outputs = [item for item in normalized_items(response.output) if isinstance(item, dict)]
         outputs.extend(response_outputs)
         items = compacted_items([*items, *response_outputs])
-        next_items = collect_tool_outputs(config, session, response_outputs)
+        next_items = await collect_tool_outputs(config, session, response_outputs)
         outputs.extend(next_items)
         items.extend(next_items)
         text = (response.output_text or "").strip()

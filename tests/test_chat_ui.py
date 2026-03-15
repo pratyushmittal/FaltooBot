@@ -1,6 +1,8 @@
 import argparse
 import asyncio
 import json
+import threading
+import time
 from io import StringIO
 from pathlib import Path
 
@@ -484,6 +486,92 @@ async def test_textual_app_focuses_composer_and_shows_status(
         assert isinstance(app.focused, Composer)
         assert "model: gpt-5.2" in status_plain(app)
         assert "thinking: medium" in status_plain(app)
+
+
+@pytest.mark.anyio
+async def test_textual_app_stays_responsive_while_shell_tool_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    shell_started = threading.Event()
+
+    class FakeResponse:
+        def __init__(self, *, text: str, output: list[dict[str, object]]) -> None:
+            self.output_text = text
+            self.output = output
+            self.usage = None
+
+    class FakeStreamManager:
+        def __init__(self, count: int) -> None:
+            self.count = count
+
+        async def __aenter__(self) -> "FakeStreamManager":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+            return None
+
+        def __aiter__(self) -> "FakeStreamManager":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def get_final_response(self) -> FakeResponse:
+            return (
+                FakeResponse(
+                    text="",
+                    output=[
+                        {
+                            "type": "shell_call",
+                            "call_id": "call_1",
+                            "action": {"commands": ["pwd"]},
+                        }
+                    ],
+                )
+                if self.count == 1
+                else FakeResponse(text="done", output=[])
+            )
+
+    class FakeResponses:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def stream(self, **kwargs: object) -> FakeStreamManager:
+            self.count += 1
+            return FakeStreamManager(self.count)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+    def slow_shell_call(*args: object, **kwargs: object) -> dict[str, object]:
+        shell_started.set()
+        time.sleep(0.5)
+        return {
+            "type": "shell_call_output",
+            "call_id": "call_1",
+            "status": "completed",
+            "output": [
+                {"stdout": "/tmp", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}
+            ],
+        }
+
+    monkeypatch.setattr("faltoobot.agent.run_shell_call", slow_shell_call)
+    app = build_chat_app(client=FakeClient())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        started_at = time.perf_counter()
+        await pilot.press("h", "i", "enter")
+        assert await asyncio.wait_for(asyncio.to_thread(shell_started.wait, 1.0), timeout=1.2)
+        assert app.runtime.current_reply_task is not None
+        assert time.perf_counter() - started_at < 0.45
+        await pilot.press("x")
+        await pilot.pause()
+        assert app.query_one("#composer", Composer).text == "x"
+        await app.runtime.wait_until_idle()
 
 
 @pytest.mark.anyio
