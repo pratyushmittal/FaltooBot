@@ -578,6 +578,10 @@ class EntryBlock(Vertical):
     EntryBlock > .inline > Static {
         height: auto;
     }
+
+    EntryBlock > .inline > .inline-body {
+        width: 1fr;
+    }
     """
 
     def __init__(self, entry: Entry) -> None:
@@ -600,7 +604,7 @@ class EntryBlock(Vertical):
             return
         with Horizontal(classes="inline"):
             yield Static(Text(f"{kind}> ", style=PREFIX_STYLES.get(kind, "bold")), id="prefix")
-            yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body")
+            yield Static(Text(content, style=BODY_STYLES.get(kind, "#eef3f9")), id="body", classes="inline-body")
 
     def uses_markdown(self) -> bool:
         return self.entry.kind in {"bot", "thinking"} and (

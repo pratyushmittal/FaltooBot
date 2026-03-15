@@ -343,6 +343,36 @@ async def test_textual_app_submits_prompt_and_updates_runtime(
 
 
 @pytest.mark.anyio
+async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await release.wait()
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("p", "u", "s", "h", "enter")
+        await pilot.pause()
+        assert any(block.entry.kind == "you" and block.entry.content == "push" for block in transcript_blocks(app))
+        assert app.query_one("#transcript").is_vertical_scroll_end
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
 async def test_textual_app_shows_completed_reply_without_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
