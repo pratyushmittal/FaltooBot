@@ -439,7 +439,12 @@ class ChatRuntime:
             for entry in item_entries(item)
             if not (state.saw_thinking and entry.kind == "thinking")
         )
-        if not state.saw_bot:
+        if state.saw_bot:
+            for index in range(len(self.entries) - 1, -1, -1):
+                if self.entries[index].kind == "bot":
+                    self.entries[index] = Entry("bot", turn.content)
+                    break
+        else:
             self.entries.append(Entry("bot", turn.content))
         self.notify()
 

@@ -444,6 +444,34 @@ async def test_textual_app_shows_completed_reply_without_restart(
 
 
 @pytest.mark.anyio
+async def test_textual_app_reconciles_partial_bot_stream_with_final_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_text_delta"]("partial")
+        return {
+            "text": "partial and complete",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "enter")
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        assert ("bot", "partial and complete") in entry_tuples(app.runtime)
+        assert any(block.entry.content == "partial and complete" for block in transcript_blocks(app))
+
+
+@pytest.mark.anyio
 async def test_textual_app_preserves_live_thinking_line_breaks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
