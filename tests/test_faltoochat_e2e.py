@@ -1,10 +1,8 @@
 import json
 import os
-from io import StringIO
 from pathlib import Path
 
 import pytest
-from rich.console import Console
 
 from faltoobot.chat import build_chat_runtime
 
@@ -39,8 +37,7 @@ async def run_chat_turn(
     prompt: str,
     name: str | None = "E2E Chat",
 ) -> dict[str, object]:
-    console = Console(file=StringIO(), force_terminal=False, width=100)
-    runtime = build_chat_runtime(name=name, console=console)
+    runtime = build_chat_runtime(name=name)
     await runtime.start()
     assert await runtime.submit(prompt)
     await runtime.close()

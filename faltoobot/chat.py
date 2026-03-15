@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
-from rich.console import Console, Group
+from rich.console import Group
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
@@ -36,7 +36,7 @@ from faltoobot.store import (
     session_items,
 )
 
-RICH_KINDS = frozenset({"you", "bot", "thinking", "tool"})
+MARKDOWN_KINDS = frozenset({"bot", "thinking"})
 BODY_STYLES = {
     "you": "#fff4df",
     "bot": "#e8f0f8",
@@ -154,6 +154,10 @@ def tool_entry(item: dict[str, Any]) -> str | None:
     return "\n".join(clipped)
 
 
+def entry_class(kind: str) -> str:
+    return f"entry-{kind}"
+
+
 def item_entries(item: dict[str, Any]) -> list[Entry]:
     if item.get("type") == "reasoning":
         return [
@@ -200,13 +204,17 @@ def looks_like_markdown(content: str) -> bool:
     return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
 
 
-def render_markdown_block(kind: str, content: str) -> Group:
+def uses_markdown(kind: str, content: str) -> bool:
+    return kind in MARKDOWN_KINDS and (looks_like_markdown(content) or "\n" in content)
+
+
+def render_markdown_block(content: str) -> Group:
     return Group(Padding(Markdown(content), 0))
 
 
 def rich_renderable(kind: str, content: str) -> Text | Group:
-    if kind in RICH_KINDS and looks_like_markdown(content):
-        return render_markdown_block(kind, content)
+    if uses_markdown(kind, content):
+        return render_markdown_block(content)
     return render_line(kind, content)
 
 
@@ -243,7 +251,7 @@ class ChatRuntime:
         self.session = replace_queued_prompts(self.require_session(), self.pending_prompts)
 
     def display_entries(self) -> list[Entry]:
-        return [*self.entries, self.live_entry] if self.live_entry else list(self.entries)
+        return [*self.entries, *([self.live_entry] if self.live_entry else [])]
 
     def append_entry(self, kind: str, content: str, *, notify: bool = True) -> None:
         self.entries.append(Entry(kind, content))
@@ -255,6 +263,12 @@ class ChatRuntime:
             return existing
         return cli_session(self.config.sessions_dir, session_name(name), workspace=workspace)
 
+    def restore_queue(self) -> None:
+        if self.session is None or not self.session.queued_prompts:
+            return
+        self.pending_prompts = [QueuedPrompt(prompt.content, True) for prompt in self.session.queued_prompts]
+        self.save_queue()
+
     def start_client(self) -> None:
         if self.client is None:
             self.client = AsyncOpenAI(api_key=self.config.openai_api_key)
@@ -264,9 +278,7 @@ class ChatRuntime:
         if not self.config.openai_api_key:
             raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
         self.session = self.cli_session(Path.cwd(), self.name)
-        if self.session.queued_prompts:
-            self.pending_prompts = [QueuedPrompt(prompt.content, True) for prompt in self.session.queued_prompts]
-            self.save_queue()
+        self.restore_queue()
         self.start_client()
         session = self.require_session()
         self.entries = [
@@ -304,7 +316,7 @@ class ChatRuntime:
         return tuple(prompt.content for prompt in self.pending_prompts)
 
     def queued_prompt_items(self) -> tuple[QueuedPrompt, ...]:
-        return tuple(QueuedPrompt(prompt.content, prompt.paused) for prompt in self.pending_prompts)
+        return tuple(self.pending_prompts)
 
     def enqueue_prompt(self, prompt: str) -> None:
         self.pending_prompts.append(QueuedPrompt(prompt))
@@ -403,6 +415,13 @@ class ChatRuntime:
         state.active_kind = None
         self.notify()
 
+    def replace_last_bot_entry(self, content: str) -> None:
+        for index in range(len(self.entries) - 1, -1, -1):
+            if self.entries[index].kind == "bot":
+                self.entries[index] = Entry("bot", content)
+                return
+        self.entries.append(Entry("bot", content))
+
     def stream_delta(self, state: StreamState, kind: str, delta: str) -> None:
         if not delta:
             return
@@ -440,10 +459,7 @@ class ChatRuntime:
             if not (state.saw_thinking and entry.kind == "thinking")
         )
         if state.saw_bot:
-            for index in range(len(self.entries) - 1, -1, -1):
-                if self.entries[index].kind == "bot":
-                    self.entries[index] = Entry("bot", turn.content)
-                    break
+            self.replace_last_bot_entry(turn.content)
         else:
             self.entries.append(Entry("bot", turn.content))
         self.notify()
@@ -599,7 +615,7 @@ class EntryBlock(Vertical):
 
     def __init__(self, entry: Entry) -> None:
         self.entry = entry
-        super().__init__(classes=f"entry-{entry.kind}")
+        super().__init__(classes=entry_class(entry.kind))
 
     def compose(self) -> ComposeResult:
         kind = self.entry.kind
@@ -616,14 +632,14 @@ class EntryBlock(Vertical):
         yield Static(render_line(kind, content), id="body", classes="body")
 
     def uses_markdown(self) -> bool:
-        return self.entry.kind in {"bot", "thinking"} and (
-            looks_like_markdown(self.entry.content) or "\n" in self.entry.content
-        )
+        return uses_markdown(self.entry.kind, self.entry.content)
 
     def same_layout(self, entry: Entry) -> bool:
-        return self.entry.kind == entry.kind and self.uses_markdown() == (
-            entry.kind in RICH_KINDS and (looks_like_markdown(entry.content) or "\n" in entry.content)
-        ) and ("\n" in self.entry.content) == ("\n" in entry.content)
+        return (
+            self.entry.kind == entry.kind
+            and self.uses_markdown() == uses_markdown(entry.kind, entry.content)
+            and ("\n" in self.entry.content) == ("\n" in entry.content)
+        )
 
     def set_entry(self, entry: Entry) -> bool:
         if not self.same_layout(entry):
@@ -649,7 +665,7 @@ class LiveMarkdownBlock(Vertical):
         self.entry = entry
         self._stream: Any = None
         self._pending: asyncio.Task[None] | None = None
-        super().__init__(classes=f"entry-{entry.kind}")
+        super().__init__(classes=entry_class(entry.kind))
 
     def compose(self) -> ComposeResult:
         yield TextualMarkdown("", id="body", classes="body")
@@ -813,6 +829,9 @@ class FaltooChatApp(App[None]):
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
 
+    def make_entry_block(self, entry: Entry) -> EntryBlock | LiveMarkdownBlock:
+        return LiveMarkdownBlock(entry) if entry.kind in MARKDOWN_KINDS else EntryBlock(entry)
+
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield VerticalScroll(id="transcript")
@@ -942,11 +961,11 @@ class FaltooChatApp(App[None]):
                 self._live_block.remove()
                 self._live_block = None
         elif self._live_block is None:
-            self._live_block = LiveMarkdownBlock(live) if live.kind in {"bot", "thinking"} else EntryBlock(live)
+            self._live_block = self.make_entry_block(live)
             transcript.mount(self._live_block)
         elif not self._live_block.set_entry(live):
             self._live_block.remove()
-            self._live_block = LiveMarkdownBlock(live) if live.kind in {"bot", "thinking"} else EntryBlock(live)
+            self._live_block = self.make_entry_block(live)
             transcript.mount(self._live_block)
 
         should_scroll_end = force or at_end or self.runtime.current_reply_task is not None
@@ -1055,10 +1074,8 @@ class FaltooChatApp(App[None]):
 def build_chat_runtime(
     config: Config | None = None,
     name: str | None = None,
-    console: Console | None = None,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
-    _ = console
     return ChatRuntime(config=config or build_config(), name=name, client=client)
 
 
