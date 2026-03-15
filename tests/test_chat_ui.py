@@ -11,6 +11,7 @@ from rich.text import Text
 from faltoobot.chat import (
     Composer,
     EntryBlock,
+    LiveMarkdownBlock,
     QueuedPrompt,
     QueueItem,
     build_chat_app,
@@ -73,6 +74,10 @@ def entry_tuples(runtime: object) -> list[tuple[str, str]]:
 
 def transcript_blocks(app: object) -> list[EntryBlock]:
     return [block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)]  # type: ignore[attr-defined]
+
+
+def live_markdown_blocks(app: object) -> list[LiveMarkdownBlock]:
+    return [block for block in app.query_one("#transcript").children if isinstance(block, LiveMarkdownBlock)]  # type: ignore[attr-defined]
 
 
 def block_plain(block: EntryBlock) -> str:
@@ -197,7 +202,8 @@ async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
     await runtime.close()
 
     assert "you> hi" in text
-    assert "thinking> Planning reply" in text
+    assert "thinking>" in text
+    assert "Planning reply" in text
     assert text.count("tool> shell") == 1
     assert "bot> done" in text
 
@@ -465,11 +471,52 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
         await pilot.pause()
         assert app.runtime.live_entry is not None
         assert app.runtime.live_entry.kind == "thinking"
-        assert app.runtime.live_entry.content == "Calculating a date\n\nDetails here"
-        assert any(
-            block.entry.kind == "thinking" and "Calculating a date\n\nDetails here" == block.entry.content
-            for block in transcript_blocks(app)
-        )
+        assert app.runtime.live_entry.content == "**Calculating a date**\n\nDetails here"
+        assert any(block.entry.content == "**Calculating a date**\n\nDetails here" for block in live_markdown_blocks(app))
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
+async def test_textual_app_streams_live_markdown_blocks_incrementally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+    writes: list[str] = []
+
+    class FakeStream:
+        async def write(self, markdown_fragment: str) -> None:
+            writes.append(markdown_fragment)
+
+        async def stop(self) -> None:
+            writes.append("<stop>")
+
+    monkeypatch.setattr("faltoobot.chat.TextualMarkdown.get_stream", lambda _: FakeStream())
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_reasoning_delta"]("**Planning**")
+        await kwargs["on_reasoning_delta"]("\n\nDetails")
+        await release.wait()
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "enter")
+        await pilot.pause()
+        live_block = live_markdown_blocks(app)[0]
+        assert live_block.entry.kind == "thinking"
+        streamed = "".join(part for part in writes if part != "<stop>")
+        assert streamed == "**Planning**\n\nDetails"
         release.set()
         await app.runtime.wait_until_idle()
 

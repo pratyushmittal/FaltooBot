@@ -225,12 +225,6 @@ def rich_renderable(kind: str, content: str) -> Text | Group:
     return render_line(kind, content)
 
 
-def stream_text(kind: str, delta: str) -> str:
-    if kind != "thinking":
-        return delta
-    return delta.replace("**", "").replace("`", "")
-
-
 @dataclass(slots=True)
 class ChatRuntime:
     config: Config
@@ -419,9 +413,8 @@ class ChatRuntime:
             state.saw_bot = True
         if kind == "thinking":
             state.saw_thinking = True
-        text = stream_text(kind, delta)
-        if self.live_entry is not None and text:
-            self.live_entry = Entry(kind, self.live_entry.content + text)
+        if self.live_entry is not None and delta:
+            self.live_entry = Entry(kind, self.live_entry.content + delta)
             self.notify()
 
     def store_assistant_turn(self, result: dict[str, Any]) -> Turn:
@@ -619,6 +612,57 @@ class EntryBlock(Vertical):
         return True
 
 
+class LiveMarkdownBlock(Vertical):
+    DEFAULT_CSS = EntryBlock.DEFAULT_CSS
+
+    def __init__(self, entry: Entry) -> None:
+        self.entry = entry
+        self._stream: Any = None
+        self._pending: asyncio.Task[None] | None = None
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        yield Static(render_line(self.entry.kind, ""), id="prefix")
+        yield TextualMarkdown("", id="body", classes="body")
+
+    async def on_mount(self) -> None:
+        body = self.query_one("#body", TextualMarkdown)
+        self._stream = TextualMarkdown.get_stream(body)
+        if self.entry.content:
+            self._write(self.entry.content)
+
+    async def on_unmount(self) -> None:
+        if self._pending is not None:
+            await self._pending
+        if self._stream is not None:
+            await self._stream.stop()
+
+    def _write(self, chunk: str) -> None:
+        if self._stream is None or not chunk:
+            return
+
+        async def run(after: asyncio.Task[None] | None) -> None:
+            if after is not None:
+                await after
+            await self._stream.write(chunk)
+
+        self._pending = asyncio.create_task(run(self._pending))
+
+    def set_entry(self, entry: Entry) -> bool:
+        if entry.kind != self.entry.kind or entry.kind not in {"bot", "thinking"}:
+            return False
+        if entry.content == self.entry.content:
+            self.entry = entry
+            return True
+        if not entry.content.startswith(self.entry.content):
+            return False
+        delta = entry.content[len(self.entry.content) :]
+        self.entry = entry
+        if delta:
+            self._write(delta)
+        return True
+
+
 class FaltooChatApp(App[None]):
     CSS = """
     Screen {
@@ -730,7 +774,7 @@ class FaltooChatApp(App[None]):
         self.runtime = build_chat_runtime(config=config, name=name, client=client)
         self._snapshot: tuple[tuple[str, str], ...] = ()
         self._blocks: list[EntryBlock] = []
-        self._live_block: EntryBlock | None = None
+        self._live_block: EntryBlock | LiveMarkdownBlock | None = None
         self._queue_snapshot: tuple[QueuedPrompt, ...] = ()
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
@@ -835,7 +879,7 @@ class FaltooChatApp(App[None]):
     def refresh_transcript(self, *, force: bool = False) -> None:
         entries = list(self.runtime.entries)
         live = self.runtime.live_entry
-        snapshot = tuple((entry.kind, entry.content) for entry in [*entries, *( [live] if live else [] )])
+        snapshot = tuple((entry.kind, entry.content) for entry in [*entries, *([live] if live else [])])
         if not force and snapshot == self._snapshot:
             return
 
@@ -864,11 +908,11 @@ class FaltooChatApp(App[None]):
                 self._live_block.remove()
                 self._live_block = None
         elif self._live_block is None:
-            self._live_block = EntryBlock(live)
+            self._live_block = LiveMarkdownBlock(live) if live.kind in {"bot", "thinking"} else EntryBlock(live)
             transcript.mount(self._live_block)
         elif not self._live_block.set_entry(live):
             self._live_block.remove()
-            self._live_block = EntryBlock(live)
+            self._live_block = LiveMarkdownBlock(live) if live.kind in {"bot", "thinking"} else EntryBlock(live)
             transcript.mount(self._live_block)
 
         should_scroll_end = force or at_end or self.runtime.current_reply_task is not None
