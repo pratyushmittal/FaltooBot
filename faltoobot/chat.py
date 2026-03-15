@@ -590,31 +590,43 @@ class EntryBlock(Vertical):
     EntryBlock > .body {
         height: auto;
         padding: 0 1;
-        background: transparent;
+        background: ansi_default;
+        background-tint: 0%;
     }
 
     EntryBlock.entry-you > .body {
         color: ansi_default;
+        background-tint: ansi_blue 12%;
     }
 
     EntryBlock.entry-bot > .body {
         color: ansi_default;
+        background-tint: ansi_default 0%;
     }
 
     EntryBlock.entry-thinking > .body {
         color: ansi_bright_black;
+        background-tint: ansi_bright_black 8%;
     }
 
     EntryBlock.entry-tool > .body {
         color: ansi_cyan;
+        background-tint: ansi_cyan 8%;
     }
 
     EntryBlock.entry-error > .body {
         color: ansi_bright_red;
+        background-tint: ansi_red 10%;
     }
 
     EntryBlock.entry-opened > .body {
         color: ansi_blue;
+        background-tint: ansi_blue 8%;
+    }
+
+    EntryBlock.entry-banner > .body,
+    EntryBlock.entry-meta > .body {
+        background: transparent;
     }
     """
 
