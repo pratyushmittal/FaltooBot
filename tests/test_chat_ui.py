@@ -489,6 +489,22 @@ async def test_textual_app_focuses_composer_and_shows_status(
 
 
 @pytest.mark.anyio
+async def test_textual_app_keeps_focus_on_composer_when_tab_is_pressed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("a", "tab", "b")
+        await pilot.pause()
+        assert isinstance(app.focused, Composer)
+        assert app.query_one("#composer", Composer).text == "a\tb"
+
+
+@pytest.mark.anyio
 async def test_textual_app_stays_responsive_while_shell_tool_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

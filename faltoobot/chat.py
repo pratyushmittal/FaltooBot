@@ -794,10 +794,16 @@ class Composer(TextArea):
             event.stop()
             self.post_message(self.Submitted(self.text))
             return
+        if event.key == "tab":
+            event.prevent_default()
+            event.stop()
+            self.insert("\t")
+            return
         if event.key in {"shift+enter", "ctrl+j"}:
             event.prevent_default()
             event.stop()
             self.insert("\n")
+
 
 
 class QueueItem(Horizontal):
