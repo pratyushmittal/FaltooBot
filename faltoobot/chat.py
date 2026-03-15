@@ -583,6 +583,8 @@ class QueueItem(Horizontal):
 class EntryBlock(Vertical):
     DEFAULT_CSS = """
     EntryBlock {
+        width: 1fr;
+        max-width: 80;
         height: auto;
         margin: 0 0 1 0;
     }
@@ -755,6 +757,7 @@ class FaltooChatApp(App[None]):
     #transcript {
         height: 1fr;
         layout: vertical;
+        align-horizontal: center;
         overflow-y: auto;
         background: ansi_default;
         background-tint: 0%;
