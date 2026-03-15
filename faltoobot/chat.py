@@ -943,48 +943,16 @@ class LiveMarkdownBlock(Vertical):
 
     def __init__(self, entry: Entry) -> None:
         self.entry = entry
-        self._stream: Any = None
-        self._pending: asyncio.Task[None] | None = None
         super().__init__(classes=entry_class(entry.kind))
 
     def compose(self) -> ComposeResult:
-        yield TextualMarkdown("", id="body", classes="body")
-
-    async def on_mount(self) -> None:
-        body = self.query_one("#body", TextualMarkdown)
-        self._stream = TextualMarkdown.get_stream(body)
-        if self.entry.content:
-            self._write(self.entry.content)
-
-    async def on_unmount(self) -> None:
-        if self._pending is not None:
-            await self._pending
-        if self._stream is not None:
-            await self._stream.stop()
-
-    def _write(self, chunk: str) -> None:
-        if self._stream is None or not chunk:
-            return
-
-        async def run(after: asyncio.Task[None] | None) -> None:
-            if after is not None:
-                await after
-            await self._stream.write(chunk)
-
-        self._pending = asyncio.create_task(run(self._pending))
+        yield TextualMarkdown(self.entry.content, id="body", classes="body")
 
     def set_entry(self, entry: Entry) -> bool:
         if entry.kind != self.entry.kind or entry.kind not in {"bot", "thinking"}:
             return False
-        if entry.content == self.entry.content:
-            self.entry = entry
-            return True
-        if not entry.content.startswith(self.entry.content):
-            return False
-        delta = entry.content[len(self.entry.content) :]
         self.entry = entry
-        if delta:
-            self._write(delta)
+        self.query_one("#body", TextualMarkdown).update(entry.content)
         return True
 
 
@@ -1293,6 +1261,7 @@ class FaltooChatApp(App[None]):
         transcript = self.transcript()
         at_end = transcript.is_vertical_scroll_end
         previous_scroll = transcript.scroll_y
+        had_live = self._live_block is not None or live is not None
         rendered = tuple((entry.kind, entry.content) for entry in entries)
         append_only = rendered[: len(self._blocks)] == tuple(
             (block.entry.kind, block.entry.content) for block in self._blocks
@@ -1324,7 +1293,7 @@ class FaltooChatApp(App[None]):
             self._live_block = self.make_entry_block(live)
             transcript.mount(self._live_block)
 
-        should_scroll_end = force or at_end or self.runtime.current_reply_task is not None
+        should_scroll_end = force or at_end or had_live or self.runtime.current_reply_task is not None
         if should_scroll_end:
             self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
         else:

@@ -667,6 +667,49 @@ async def test_textual_app_renders_plain_user_and_bot_text(
 
 
 @pytest.mark.anyio
+async def test_textual_app_keeps_final_reply_visible_with_long_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    session = cli_session(config.sessions_dir, "CLI history", workspace)
+    for index in range(16):
+        session = add_turn(session, "user", f"prompt {index}")
+        session = add_turn(session, "assistant", f"reply {index} " * 12)
+
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_text_delta"]("partial")
+        await release.wait()
+        return {
+            "text": "final answer line 1\nfinal answer line 2",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript")
+        transcript.scroll_end(animate=False, immediate=True)
+        await pilot.press("n", "e", "x", "t", "enter")
+        await pilot.pause()
+        release.set()
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        assert transcript.is_vertical_scroll_end
+        assert any(
+            block.entry.content == "final answer line 1\nfinal answer line 2"
+            for block in transcript_blocks(app)
+        )
+
+
+@pytest.mark.anyio
 async def test_textual_app_shows_completed_reply_without_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -857,25 +900,19 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
 
 
 @pytest.mark.anyio
-async def test_textual_app_streams_live_markdown_blocks_incrementally(
+async def test_textual_app_updates_live_markdown_blocks_incrementally(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
+    first_delta = asyncio.Event()
+    second_delta = asyncio.Event()
     release = asyncio.Event()
-    writes: list[str] = []
-
-    class FakeStream:
-        async def write(self, markdown_fragment: str) -> None:
-            writes.append(markdown_fragment)
-
-        async def stop(self) -> None:
-            writes.append("<stop>")
-
-    monkeypatch.setattr("faltoobot.chat.TextualMarkdown.get_stream", lambda _: FakeStream())
 
     async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
         await kwargs["on_reasoning_delta"]("**Planning**")
+        first_delta.set()
+        await second_delta.wait()
         await kwargs["on_reasoning_delta"]("\n\nDetails")
         await release.wait()
         return {
@@ -891,11 +928,14 @@ async def test_textual_app_streams_live_markdown_blocks_incrementally(
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("h", "i", "enter")
+        await first_delta.wait()
         await pilot.pause()
         live_block = live_markdown_blocks(app)[0]
         assert live_block.entry.kind == "thinking"
-        streamed = "".join(part for part in writes if part != "<stop>")
-        assert streamed == "**Planning**\n\nDetails"
+        assert live_block.entry.content == "**Planning**"
+        second_delta.set()
+        await pilot.pause()
+        assert live_markdown_blocks(app)[0].entry.content == "**Planning**\n\nDetails"
         release.set()
         await app.runtime.wait_until_idle()
 
