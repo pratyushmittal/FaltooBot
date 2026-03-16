@@ -14,6 +14,7 @@ from faltoobot.chat import run_chat
 from faltoobot.config import (
     APP_LABEL,
     MODEL_OPTIONS,
+    DEFAULT_THINKING,
     THINKING_OPTIONS,
     Config,
     build_config,
@@ -282,7 +283,7 @@ def configure_app(config: Config) -> None:
                     secret=True,
                 ),
                 "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
-                "thinking": prompt_thinking(str(openai.get("thinking") or THINKING_OPTIONS[0])),
+                "thinking": prompt_thinking(str(openai.get("thinking") or DEFAULT_THINKING)),
                 "fast": prompt_bool("OpenAI fast mode", bool(openai.get("fast"))),
             },
             "bot": {

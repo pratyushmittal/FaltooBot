@@ -317,7 +317,7 @@ def test_request_args_use_priority_tier_when_fast_mode_is_enabled(
                 "[openai]",
                 'api_key = "test-key"',
                 'model = "gpt-5.4"',
-                'thinking = "none"',
+                'thinking = "high"',
                 "fast = true",
                 "",
                 "[bot]",

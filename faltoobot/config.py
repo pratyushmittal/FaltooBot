@@ -8,6 +8,7 @@ from typing import Any
 APP_LABEL = "com.faltoobot.agent"
 MODEL_OPTIONS = ("gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
+DEFAULT_THINKING = "high"
 DEFAULT_SYSTEM_PROMPT = (
     "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "
     "Keep replies practical and readable on mobile."
@@ -42,7 +43,7 @@ def default_config() -> dict[str, dict[str, Any]]:
         "openai": {
             "api_key": "",
             "model": MODEL_OPTIONS[0],
-            "thinking": THINKING_OPTIONS[0],
+            "thinking": DEFAULT_THINKING,
             "fast": False,
         },
         "bot": {
@@ -184,7 +185,7 @@ def build_config() -> Config:
         run_script=root / "run.sh",
         openai_api_key=as_str(openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")),
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
-        openai_thinking=as_str(openai.get("thinking"), THINKING_OPTIONS[0]),
+        openai_thinking=as_str(openai.get("thinking"), DEFAULT_THINKING),
         openai_fast=as_bool(openai.get("fast"), False),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         allow_groups=as_bool(bot.get("allow_groups"), False),
