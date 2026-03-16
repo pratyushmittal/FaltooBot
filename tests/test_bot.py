@@ -2,7 +2,9 @@ from pathlib import Path
 
 from neonize.proto import Neonize_pb2
 
-from faltoobot.bot import is_allowed_chat, source_chat_ids
+import asyncio
+
+from faltoobot.bot import is_allowed_chat, keep_chat_typing, source_chat_ids
 from faltoobot.config import Config
 
 
@@ -68,3 +70,29 @@ def test_allowlist_matches_phone_without_country_code() -> None:
     config = make_config(allowed_chats={'8960294979@s.whatsapp.net'})
 
     assert is_allowed_chat(config, source) is True
+
+
+class FakePresenceClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def send_chat_presence(self, jid: Neonize_pb2.JID, state: object, media: object) -> str:
+        self.calls.append((state.name, media.name))
+        return 'ok'
+
+
+def test_keep_chat_typing_sends_composing_then_paused() -> None:
+    async def run() -> list[tuple[str, str]]:
+        client = FakePresenceClient()
+        stop = asyncio.Event()
+        task = asyncio.create_task(keep_chat_typing(client, jid('918960294979', 's.whatsapp.net'), stop))
+
+        await asyncio.sleep(0)
+        stop.set()
+        await task
+        return client.calls
+
+    assert asyncio.run(run()) == [
+        ('CHAT_PRESENCE_COMPOSING', 'CHAT_PRESENCE_MEDIA_TEXT'),
+        ('CHAT_PRESENCE_PAUSED', 'CHAT_PRESENCE_MEDIA_TEXT'),
+    ]

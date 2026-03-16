@@ -8,6 +8,7 @@ from typing import Any
 
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
+from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 from openai import AsyncOpenAI
 
@@ -24,6 +25,7 @@ from faltoobot.store import (
 
 logger = logging.getLogger("faltoobot")
 AUTH_STOP_DELAY = 0.5
+TYPING_REFRESH_SECONDS = 4.0
 
 
 def configure_logging(log_path: Path) -> None:
@@ -116,6 +118,27 @@ def split_message(text: str, limit: int) -> list[str]:
     return chunks or [text[:limit]]
 
 
+async def send_chat_state(client: NewAClient, chat: Any, state: ChatPresence) -> None:
+    try:
+        await client.send_chat_presence(
+            chat,
+            state,
+            ChatPresenceMedia.CHAT_PRESENCE_MEDIA_TEXT,
+        )
+    except Exception:
+        logger.debug("Failed to update chat presence", exc_info=True)
+
+
+async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        await send_chat_state(client, chat, ChatPresence.CHAT_PRESENCE_COMPOSING)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=TYPING_REFRESH_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+    await send_chat_state(client, chat, ChatPresence.CHAT_PRESENCE_PAUSED)
+
+
 async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
     chunks = split_message(text, 3500)
     if not chunks:
@@ -201,11 +224,16 @@ async def process_message(
         if text == "/reset":
             await handle_reset(client, event, session)
             return
+        typing_stop = asyncio.Event()
+        typing_task = asyncio.create_task(keep_chat_typing(client, source.Chat, typing_stop))
         try:
             await handle_prompt(client, event, config, session, openai_client)
         except Exception as exc:  # comment: this guard keeps the bot alive if one model call fails.
             logger.exception("Failed to handle message %s", event.Info.ID)
             await client.reply_message(f"Sorry, that failed: {exc}", event)
+        finally:
+            typing_stop.set()
+            await typing_task
 
 
 async def wait_for_login(client: NewAClient) -> None:
