@@ -156,7 +156,10 @@ def normalize_chat(value: str) -> str:
     if not value:
         return value
     if "@" in value:
-        return value
+        user, _, server = value.partition("@")
+        base, sep, device = user.rpartition(":")
+        clean_user = base if sep and device.isdigit() else user
+        return f"{clean_user}@{server}"
     digits = "".join(char for char in value if char.isdigit())
     return f"{digits}@s.whatsapp.net" if digits else value
 

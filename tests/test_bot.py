@@ -96,3 +96,16 @@ def test_keep_chat_typing_sends_composing_then_paused() -> None:
         ('CHAT_PRESENCE_COMPOSING', 'CHAT_PRESENCE_MEDIA_TEXT'),
         ('CHAT_PRESENCE_PAUSED', 'CHAT_PRESENCE_MEDIA_TEXT'),
     ]
+
+
+def test_source_chat_ids_strip_device_suffixes() -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid('56002716151848', 'lid'),
+        Sender=jid('56002716151848:4', 'lid'),
+        SenderAlt=jid('918960294979:4', 's.whatsapp.net'),
+    )
+
+    assert source_chat_ids(source) == {
+        '56002716151848@lid',
+        '918960294979@s.whatsapp.net',
+    }
