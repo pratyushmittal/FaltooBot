@@ -359,6 +359,7 @@ def request_args(
         "input": sanitize_input(items),  # type: ignore[arg-type]
         "instructions": instructions,
         "reasoning": reasoning_config(config),
+        "service_tier": "priority" if config.openai_fast else "default",
         "store": False,
         "parallel_tool_calls": True,
         "include": ["reasoning.encrypted_content", "web_search_call.action.sources"],

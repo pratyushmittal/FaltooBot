@@ -27,6 +27,7 @@ class Config:
     openai_api_key: str
     openai_model: str
     openai_thinking: str
+    openai_fast: bool
     system_prompt: str
     allow_groups: bool
     allowed_chats: set[str]
@@ -42,6 +43,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "api_key": "",
             "model": MODEL_OPTIONS[0],
             "thinking": THINKING_OPTIONS[0],
+            "fast": False,
         },
         "bot": {
             "allow_groups": False,
@@ -60,6 +62,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "api_key": as_str(openai.get("api_key"), defaults["openai"]["api_key"]),
             "model": as_str(openai.get("model"), defaults["openai"]["model"]),
             "thinking": as_str(openai.get("thinking"), defaults["openai"]["thinking"]),
+            "fast": as_bool(openai.get("fast"), defaults["openai"]["fast"]),
         },
         "bot": {
             "allow_groups": as_bool(bot.get("allow_groups"), defaults["bot"]["allow_groups"]),
@@ -106,6 +109,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"api_key = {quote(str(openai['api_key']))}",
             f"model = {quote(str(openai['model']))}",
             f"thinking = {quote(str(openai['thinking']))}",
+            f"fast = {str(bool(openai['fast'])).lower()}",
             "",
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
@@ -181,6 +185,7 @@ def build_config() -> Config:
         openai_api_key=as_str(openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")),
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
         openai_thinking=as_str(openai.get("thinking"), THINKING_OPTIONS[0]),
+        openai_fast=as_bool(openai.get("fast"), False),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),

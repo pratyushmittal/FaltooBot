@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 from rich.console import Console
 from rich.text import Text
+from textual.widgets import Markdown as TextualMarkdown
 
 from faltoobot.chat import (
     Composer,
@@ -24,6 +25,7 @@ from faltoobot.chat import (
     paste_image_text,
     queue_preview,
     rich_renderable,
+    status_text,
 )
 from faltoobot.config import build_config
 from faltoobot.store import add_turn, cli_session, existing_cli_session
@@ -182,6 +184,19 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
         await pilot.press("ctrl+v")
         await pilot.pause()
         assert app.query_one("#composer", Composer).text == image_markdown(image)
+
+
+def test_status_text_shows_fast_suffix_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    assert status_text(config) == "model: gpt-5.2  thinking: none"
+
+    config.config_file.write_text(
+        config.config_file.read_text(encoding="utf-8").replace("fast = false", "fast = true"),
+        encoding="utf-8",
+    )
+    fast_config = build_config()
+    assert status_text(fast_config) == "model: gpt-5.2 (fast)  thinking: none"
 
 
 def test_queue_preview_flattens_multiline_content() -> None:
@@ -1016,6 +1031,37 @@ async def test_textual_app_updates_live_markdown_blocks_incrementally(
 
 
 @pytest.mark.anyio
+async def test_textual_app_commits_streamed_markdown_as_markdown_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await kwargs["on_text_delta"]("**Bold**")
+        return {
+            "text": "**Bold**",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "enter")
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+
+        assert not live_markdown_blocks(app)
+        bot_blocks = [block for block in transcript_blocks(app) if block.entry.kind == "bot"]
+        assert bot_blocks
+        assert isinstance(bot_blocks[-1].query_one("#body"), TextualMarkdown)
+
+
+@pytest.mark.anyio
 async def test_textual_app_shift_enter_keeps_multiline_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1115,6 +1161,30 @@ async def test_textual_app_uses_arrow_navigation_and_enter_for_queue_items(
         assert app.query_one("#composer", Composer).text == "second"
         release.set()
         await pilot.pause()
+
+
+@pytest.mark.anyio
+async def test_textual_app_moves_queue_selection_without_rebuilding_transcript(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.runtime.entries.append(type(app.runtime.entries[0])("bot", "hello"))  # type: ignore[attr-defined]
+        app.runtime.pending_prompts = [QueuedPrompt("one"), QueuedPrompt("two")]  # type: ignore[attr-defined]
+        app.sync_view(force=True)  # type: ignore[attr-defined]
+        await pilot.pause()
+
+        before = list(app.query_one("#transcript").children)
+        assert app.handle_composer_key("up")  # type: ignore[attr-defined]
+        await pilot.pause()
+        after = list(app.query_one("#transcript").children)
+
+        assert before == after
+        assert selected_queue_index(app) == 1
 
 
 @pytest.mark.anyio

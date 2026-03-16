@@ -283,6 +283,7 @@ def configure_app(config: Config) -> None:
                 ),
                 "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
                 "thinking": prompt_thinking(str(openai.get("thinking") or THINKING_OPTIONS[0])),
+                "fast": prompt_bool("OpenAI fast mode", bool(openai.get("fast"))),
             },
             "bot": {
                 "allow_groups": prompt_bool(

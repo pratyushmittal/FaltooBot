@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from faltoobot.agent import reasoning_config, reply, stream_reply, system_instructions
+from faltoobot.agent import reasoning_config, reply, request_args, stream_reply, system_instructions
 from faltoobot.config import build_config
 from faltoobot.store import create_cli_session
 
@@ -280,6 +280,60 @@ async def test_reply_includes_global_home_and_session_agents_in_instructions(
     assert "Home AGENTS.md:\nHome rules." in instructions
     assert "Session AGENTS.md:\nSession rules." in instructions
     assert config.system_prompt in instructions
+
+
+def test_request_args_use_default_tier_when_fast_mode_is_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+
+    assert request_args(config, session, [], "Test instructions")["service_tier"] == "default"
+
+
+def test_request_args_use_priority_tier_when_fast_mode_is_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = home / ".faltoobot"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    (root / "config.toml").write_text(
+        "\n".join(
+            [
+                "# Faltoobot config",
+                "",
+                "[openai]",
+                'api_key = "test-key"',
+                'model = "gpt-5.2"',
+                'thinking = "none"',
+                "fast = true",
+                "",
+                "[bot]",
+                "allow_groups = false",
+                "allowed_chats = []",
+                'system_prompt = "Test prompt."',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = build_config()
+    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+
+    assert request_args(config, session, [], "Test instructions")["service_tier"] == "priority"
 
 
 def test_reasoning_config_enables_auto_summaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
