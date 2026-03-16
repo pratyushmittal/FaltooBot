@@ -51,11 +51,29 @@ def source_chat_ids(source: Any) -> set[str]:
     return {jid for jid in ids if jid}
 
 
+def phone_digits(value: str) -> str:
+    if not value.endswith("@s.whatsapp.net"):
+        return ""
+    return value.split("@", 1)[0]
+
+
+
+def phone_id_matches(left: str, right: str) -> bool:
+    left_digits = phone_digits(left)
+    right_digits = phone_digits(right)
+    if min(len(left_digits), len(right_digits)) < 8:  # comment: short suffixes are too loose for allowlists.
+        return False
+    return left_digits.endswith(right_digits) or right_digits.endswith(left_digits)
+
+
 
 def is_allowed_chat(config: Config, source: Any) -> bool:
     if not config.allowed_chats:
         return True
-    return not source_chat_ids(source).isdisjoint(config.allowed_chats)
+    ids = source_chat_ids(source)
+    if not ids.isdisjoint(config.allowed_chats):
+        return True
+    return any(phone_id_matches(allowed, seen) for allowed in config.allowed_chats for seen in ids)
 
 
 def should_skip(event: MessageEv, config: Config) -> bool:

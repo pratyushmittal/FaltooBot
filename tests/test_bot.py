@@ -57,3 +57,14 @@ def test_allowlist_matches_sender_alt_phone_identity() -> None:
     config = make_config(allowed_chats={'8960294979@s.whatsapp.net'})
 
     assert is_allowed_chat(config, source) is True
+
+
+def test_allowlist_matches_phone_without_country_code() -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid('56002716151848', 'lid'),
+        Sender=jid('56002716151848', 'lid'),
+        SenderAlt=jid('918960294979', 's.whatsapp.net'),
+    )
+    config = make_config(allowed_chats={'8960294979@s.whatsapp.net'})
+
+    assert is_allowed_chat(config, source) is True
