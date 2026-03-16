@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.2.1 — 2026-03-16
+
+### Changed
+- CLI output now uses Rich for cleaner configuration, status, and path displays.
+
+### Fixed
+- WhatsApp allowlisting now also matches phone numbers when WhatsApp includes the country code but your `allowed_chats` entry does not.
+
 ## 0.2.0 — 2026-03-16
 
 ### Added
