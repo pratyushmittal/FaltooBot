@@ -43,13 +43,19 @@ def message_text(event: MessageEv) -> str:
     return text.strip()
 
 
-def is_allowed_chat(config: Config, chat_jid: str, sender_jid: str) -> bool:
+def source_chat_ids(source: Any) -> set[str]:
+    ids = {
+        normalize_chat(Jid2String(jid))
+        for jid in (source.Chat, source.Sender, source.SenderAlt, source.RecipientAlt)
+    }
+    return {jid for jid in ids if jid}
+
+
+
+def is_allowed_chat(config: Config, source: Any) -> bool:
     if not config.allowed_chats:
         return True
-    return (
-        normalize_chat(chat_jid) in config.allowed_chats
-        or normalize_chat(sender_jid) in config.allowed_chats
-    )
+    return not source_chat_ids(source).isdisjoint(config.allowed_chats)
 
 
 def should_skip(event: MessageEv, config: Config) -> bool:
@@ -151,9 +157,13 @@ async def process_message(
     sender_jid = Jid2String(source.Sender)
     if should_skip(event, config):
         return
-    if not is_allowed_chat(config, chat_jid, sender_jid):
+    candidate_ids = source_chat_ids(source)
+    if not is_allowed_chat(config, source):
         logger.info(
-            "Ignoring message from %s in %s because it is not allowlisted", sender_jid, chat_jid
+            "Ignoring message from %s in %s because it is not allowlisted. Seen IDs: %s",
+            sender_jid,
+            chat_jid,
+            ", ".join(sorted(candidate_ids)) or "<none>",
         )
         return
     text = message_text(event)
