@@ -17,6 +17,7 @@ from faltoobot.chat import (
     EntryBlock,
     LiveMarkdownBlock,
     SlashCommandItem,
+    slash_query,
     slash_suggestions,
     QueuedPrompt,
     QueueItem,
@@ -626,6 +627,29 @@ async def test_textual_app_clicking_slash_command_completes_composer(
         await pilot.pause()
 
         assert app.query_one("#composer", Composer).text == "/reset"
+        assert slash_command_texts(app) == ["/reset"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_escape_hides_slash_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("/")
+        await pilot.pause()
+        assert slash_command_texts(app) == ["/help", "/tree", "/reset", "/exit"]
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert slash_command_texts(app) == []
+
+        await pilot.press("r")
+        await pilot.pause()
         assert slash_command_texts(app) == ["/reset"]
 
 

@@ -279,9 +279,16 @@ def help_text() -> str:
     return f"Commands: {names}, Ctrl+V image"
 
 
-def slash_suggestions(text: str) -> tuple[tuple[str, str], ...]:
+def slash_query(text: str) -> str | None:
     query = text.strip()
     if not query.startswith("/") or any(char.isspace() for char in query):
+        return None
+    return query
+
+
+def slash_suggestions(text: str) -> tuple[tuple[str, str], ...]:
+    query = slash_query(text)
+    if query is None:
         return ()
     if query == "/":
         return COMMANDS
@@ -1248,6 +1255,7 @@ class FaltooChatApp(App[None]):
         self._stream_block: EntryBlock | LiveMarkdownBlock | None = None
         self._queue_snapshot: tuple[tuple[str, bool], ...] = ()
         self._command_snapshot: tuple[tuple[str, str], ...] = ()
+        self._dismissed_slash_query: str | None = None
         self._queue_selected_snapshot: int | None = None
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
@@ -1360,7 +1368,12 @@ class FaltooChatApp(App[None]):
         self.refresh_transcript(force=force or queue_layout_changed)
 
     def refresh_commands(self, *, force: bool = False) -> None:
-        suggestions = slash_suggestions(self.composer().text)
+        query = slash_query(self.composer().text)
+        if self._dismissed_slash_query is not None and query != self._dismissed_slash_query:
+            self._dismissed_slash_query = None
+        suggestions = (
+            () if query is not None and query == self._dismissed_slash_query else slash_suggestions(self.composer().text)
+        )
         if not force and suggestions == self._command_snapshot:
             return
         commands = self.commands()
@@ -1495,8 +1508,17 @@ class FaltooChatApp(App[None]):
     def on_composer_changed(self, _: TextArea.Changed) -> None:
         self.refresh_commands()
 
+    def dismiss_slash_commands(self) -> bool:
+        query = slash_query(self.composer().text)
+        if query is None or not self._command_snapshot:
+            return False
+        self._dismissed_slash_query = query
+        self.refresh_commands(force=True)
+        return True
+
     @on(SlashCommandItem.Picked)
     def on_slash_command_item_picked(self, message: SlashCommandItem.Picked) -> None:
+        self._dismissed_slash_query = None
         composer = self.composer()
         composer.load_text(message.command)
         self.focus_composer()
@@ -1562,6 +1584,8 @@ class FaltooChatApp(App[None]):
         return True
 
     def handle_composer_key(self, key: str) -> bool:
+        if key == "escape":
+            return self.dismiss_slash_commands()
         if key == "tab":
             return self.toggle_queue_focus()
         if self._queue_selected is None:
