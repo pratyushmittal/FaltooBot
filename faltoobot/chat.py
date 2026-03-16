@@ -59,6 +59,7 @@ MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1200
 QUEUE_PREVIEW_CHARS = 75
 QUEUE_SHORTCUTS = (
+    "Tab queue",
     "↑/↓ select",
     "Enter edit",
     "Space pause",
@@ -1066,17 +1067,16 @@ class FaltooChatApp(App[None]):
         layout: vertical;
         background: $background;
         border: none;
-        padding: 0 1;
+        padding: 0;
     }
 
     .queue-item {
-        height: auto;
-        min-height: 1;
+        height: 1;
         align: left middle;
         padding: 0 1;
         background: $background;
         color: $text;
-        margin: 0 0 1 0;
+        margin: 0;
     }
 
     .queue-item.-selected {
@@ -1089,7 +1089,7 @@ class FaltooChatApp(App[None]):
 
     .queue-text {
         width: 1fr;
-        height: auto;
+        height: 1;
         color: $text;
     }
 
@@ -1447,37 +1447,41 @@ class FaltooChatApp(App[None]):
 
     def move_queue_selection(self, delta: int) -> bool:
         total = len(self.runtime.pending_prompts)
-        if not total:
+        if not total or self._queue_selected is None:
             return False
         if delta < 0:
-            if self._queue_selected is None:
-                self._queue_selected = total - 1
-            else:
-                self._queue_selected = max(0, self._queue_selected - 1)
-        elif self._queue_selected is None:
-            return False
-        elif self._queue_selected >= total - 1:
-            self._queue_selected = None
+            self._queue_selected = max(0, self._queue_selected - 1)
         else:
-            self._queue_selected += 1
+            self._queue_selected = min(total - 1, self._queue_selected + 1)
+        self.focus_composer()
+        self.sync_view()
+        return True
+
+    def toggle_queue_focus(self) -> bool:
+        total = len(self.runtime.pending_prompts)
+        if not total:
+            return True
+        self._queue_selected = None if self._queue_selected is not None else total - 1
         self.focus_composer()
         self.sync_view()
         return True
 
     def handle_composer_key(self, key: str) -> bool:
+        if key == "tab":
+            return self.toggle_queue_focus()
+        if self._queue_selected is None:
+            return False
         if key == "up":
             return self.move_queue_selection(-1)
         if key == "down":
             return self.move_queue_selection(1)
-        if self._queue_selected is None:
-            return False
         if key == "enter":
             self.action_edit_selected_queue()
             return True
         if key in {"delete", "backspace"}:
             self.action_delete_selected_queue()
             return True
-        if key in {"space", "tab"}:
+        if key == "space":
             self.action_toggle_selected_queue_pause()
             return True
         if key == "shift+up":
