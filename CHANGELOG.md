@@ -1,0 +1,32 @@
+# Changelog
+
+All notable changes to `faltoobot` will be documented in this file.
+
+## 0.1.1 — 2026-03-16
+
+### Added
+- OpenAI fast mode in `config.toml`, mapped to priority requests.
+- `(fast)` indicator in the chat footer when fast mode is enabled.
+- README install and quick-start updates for `uv tool install faltoobot`.
+
+### Changed
+- Streamed assistant markdown now commits into normal markdown blocks after the reply finishes.
+- Chat UI redraws less often, making queue navigation and general interaction feel more immediate.
+- Queue keyboard flow now uses `Tab` to move between the composer and queued messages.
+- Queued messages are rendered more compactly with tighter spacing.
+- README now explains the WhatsApp account setup and safer `allowed_chats` usage.
+
+### Fixed
+- Live replies no longer stay in the unformatted streaming style after completion.
+- Auto-scroll now follows new submissions without yanking the user back down after they scroll up.
+- Text paste no longer duplicates on `Cmd+V`.
+- Very long pasted text no longer crashes path detection with `OSError: [Errno 63] File name too long`.
+- `Up` works again for multiline composer editing unless the queue is explicitly selected.
+
+## 0.1.0 — 2026-03-16
+
+### Added
+- Initial PyPI release of `faltoobot`.
+- WhatsApp bot mode with authentication, run, update, logs, and macOS service commands.
+- Terminal chat mode via `faltoobot chat` and `faltoochat`.
+- Local session history, queued prompts, tool output rendering, and image paste support.
