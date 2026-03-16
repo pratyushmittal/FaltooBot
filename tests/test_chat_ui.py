@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 from rich.console import Console
 from rich.text import Text
+from textual import events
 from textual.widgets import Markdown as TextualMarkdown
 
 from faltoobot.chat import (
@@ -166,6 +167,42 @@ async def test_input_image_part_resizes_large_local_images(
 
     assert part == {"type": "input_image", "file_id": "file_123", "detail": "auto"}
     assert seen == [("vision", (1600, 1200), "large-1600x1200.png")]
+
+
+@pytest.mark.anyio
+async def test_textual_app_action_paste_does_not_duplicate_text_paste(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    monkeypatch.setattr("faltoobot.chat.save_clipboard_image", lambda session: None)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        composer = app.query_one("#composer", Composer)
+        composer.action_paste()
+        await composer._on_paste(events.Paste("hello"))
+        assert composer.text == "hello"
+
+
+@pytest.mark.anyio
+async def test_textual_app_action_paste_skips_following_text_event_for_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    image = workspace / "clipboard.png"
+    image.write_bytes(b"png")
+    monkeypatch.setattr("faltoobot.chat.save_clipboard_image", lambda session: image)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        composer = app.query_one("#composer", Composer)
+        composer.action_paste()
+        await composer._on_paste(events.Paste("ignored"))
+        assert composer.text == image_markdown(image)
 
 
 @pytest.mark.anyio

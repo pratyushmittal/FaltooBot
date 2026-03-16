@@ -809,6 +809,9 @@ class Composer(TextArea):
     async def _on_paste(self, event: events.Paste) -> None:
         if self.read_only:
             return
+        if getattr(self, "_skip_next_paste", False):
+            self._skip_next_paste = False
+            return
         self.insert_text(paste_image_text(event.text, self.workspace()))
 
     def action_paste(self) -> None:
@@ -817,9 +820,8 @@ class Composer(TextArea):
         runtime = getattr(self.app, "runtime", None)
         session = getattr(runtime, "session", None)
         if isinstance(session, Session) and (path := save_clipboard_image(session)):
+            self._skip_next_paste = True
             self.insert_text(image_markdown(path))
-            return
-        self.insert_text(paste_image_text(self.app.clipboard, self.workspace()))
 
     def on_key(self, event: Any) -> None:
         handler = getattr(self.app, "handle_composer_key", None)
