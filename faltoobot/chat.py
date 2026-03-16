@@ -1333,6 +1333,8 @@ class FaltooChatApp(App[None]):
 
         transcript = self.transcript()
         at_end = transcript.is_vertical_scroll_end
+        if not at_end:
+            self.stop_startup_scroll()
         previous_scroll = transcript.scroll_y
         had_live = self._stream_block is not None or live is not None
         previous_rendered = tuple((block.entry.kind, block.entry.content) for block in self._blocks)
@@ -1382,13 +1384,7 @@ class FaltooChatApp(App[None]):
             self._stream_block = self.make_live_block(live)
             transcript.mount(self._stream_block)
 
-        should_scroll_end = (
-            force
-            or at_end
-            or had_live
-            or tail_updated
-            or self.runtime.current_reply_task is not None
-        )
+        should_scroll_end = force or at_end
         if should_scroll_end:
             self.scroll_transcript_end(settle=had_live or tail_updated)
         else:
