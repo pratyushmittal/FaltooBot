@@ -9,6 +9,9 @@ import sys
 import time
 from pathlib import Path
 
+from rich.console import Console
+from rich.table import Table
+
 from faltoobot.bot import run_auth, run_bot
 from faltoobot.chat import run_chat
 from faltoobot.config import (
@@ -26,6 +29,9 @@ from faltoobot.config import (
     render_config,
 )
 from faltoobot.store import ensure_sessions_dir
+
+
+console = Console()
 
 
 def require_macos() -> None:
@@ -114,7 +120,7 @@ async def run_migrations(config: Config) -> list[str]:
 def update_app(config: Config, migrate_only: bool) -> None:
     if migrate_only:
         changes = asyncio.run(run_migrations(config))
-        print("Migrations:", ", ".join(changes))
+        console.print(f"[green]Migrations:[/] {", ".join(changes)}")
         return
 
     repo = project_root()
@@ -138,9 +144,9 @@ def install_service(config: Config) -> None:
     run_launchctl("bootstrap", f"gui/{uid()}", config.launch_agent.as_posix())
     run_launchctl("enable", service_target(), check=False)
     run_launchctl("kickstart", "-k", service_target())
-    print(f"Installed {APP_LABEL}")
-    print(f"config: {config.config_file}")
-    print(f"logs: {config.log_file}")
+    console.print(f"[green]Installed[/] {APP_LABEL}")
+    console.print(f"config: [cyan]{config.config_file}[/]")
+    console.print(f"logs: [cyan]{config.log_file}[/]")
 
 
 def uninstall_service(config: Config) -> None:
@@ -150,27 +156,27 @@ def uninstall_service(config: Config) -> None:
         config.launch_agent.unlink()
     if config.run_script.exists():
         config.run_script.unlink()
-    print(f"Removed {APP_LABEL}")
+    console.print(f"[green]Removed[/] {APP_LABEL}")
 
 
 def service_status(config: Config) -> None:
     require_macos()
     result = run_launchctl("print", service_target(), check=False)
     if result.returncode == 0:
-        print(f"{APP_LABEL}: loaded")
+        console.print(f"[green]{APP_LABEL}: loaded[/]")
         return
-    print(f"{APP_LABEL}: not loaded")
+    console.print(f"[yellow]{APP_LABEL}: not loaded[/]")
     if config.launch_agent.exists():
-        print(f"plist: {config.launch_agent}")
+        console.print(f"plist: [cyan]{config.launch_agent}[/]")
 
 
 def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
     if not path.exists():
-        print(f"No log file at {path}")
+        console.print(f"[yellow]No log file at[/] [cyan]{path}[/]")
         return
     data = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for line in data[-lines:]:
-        print(line)
+        console.print(line, markup=False)
     if not follow:
         return
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -178,7 +184,7 @@ def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
         while True:
             line = handle.readline()
             if line:
-                print(line, end="")
+                console.out(line)
                 continue
             time.sleep(0.5)
 
@@ -188,7 +194,7 @@ def prompt_text(label: str, current: str, *, secret: bool = False) -> str:
     raw = (
         getpass.getpass(f"{label} {current_text} (blank keeps current): ")
         if secret
-        else input(f"{label} {current_text} (blank keeps current): ")
+        else console.input(f"[bold]{label}[/] {current_text} (blank keeps current): ")
     ).strip()
     if not raw:
         return current
@@ -198,29 +204,29 @@ def prompt_text(label: str, current: str, *, secret: bool = False) -> str:
 def prompt_bool(label: str, current: bool) -> bool:
     current_text = "y" if current else "n"
     while True:
-        raw = input(f"{label} [y/n] (blank keeps {current_text}): ").strip().lower()
+        raw = console.input(f"[bold]{label}[/] [y/n] (blank keeps {current_text}): ").strip().lower()
         if not raw:
             return current
         if raw in {"y", "yes"}:
             return True
         if raw in {"n", "no"}:
             return False
-        print("Enter y or n.")
+        console.print("[yellow]Enter y or n.[/]")
 
 
 def prompt_model(current: str) -> str:
-    print("OpenAI model:")
+    console.print("[bold]OpenAI model[/]")
     for index, model in enumerate(MODEL_OPTIONS, start=1):
         current_marker = " (current)" if model == current else ""
-        print(f"  {index}. {model}{current_marker}")
+        console.print(f"  [cyan]{index}.[/] {model}{current_marker}")
     custom_index = len(MODEL_OPTIONS) + 1
     custom_marker = " (current)" if current and current not in MODEL_OPTIONS else ""
-    print(f"  {custom_index}. custom{custom_marker}")
+    console.print(f"  [cyan]{custom_index}.[/] custom{custom_marker}")
     while True:
         default_choice = (
             str(MODEL_OPTIONS.index(current) + 1) if current in MODEL_OPTIONS else str(custom_index)
         )
-        raw = input(f"Select model [{default_choice}]: ").strip()
+        raw = console.input(f"Select model [{default_choice}]: ").strip()
         if not raw:
             choice = default_choice
         else:
@@ -231,29 +237,29 @@ def prompt_model(current: str) -> str:
                 return MODEL_OPTIONS[index - 1]
             if index == custom_index:
                 return prompt_text("Custom model", current if current not in MODEL_OPTIONS else "")
-        print(f"Enter a number between 1 and {custom_index}.")
+        console.print(f"[yellow]Enter a number between 1 and {custom_index}.[/]")
 
 
 def prompt_thinking(current: str) -> str:
-    print("Thinking mode:")
+    console.print("[bold]Thinking mode[/]")
     for index, value in enumerate(THINKING_OPTIONS, start=1):
         current_marker = " (current)" if value == current else ""
-        print(f"  {index}. {value}{current_marker}")
+        console.print(f"  [cyan]{index}.[/] {value}{current_marker}")
     while True:
         default_choice = str(THINKING_OPTIONS.index(current) + 1) if current in THINKING_OPTIONS else "1"
-        raw = input(f"Select thinking mode [{default_choice}]: ").strip()
+        raw = console.input(f"Select thinking mode [{default_choice}]: ").strip()
         choice = default_choice if not raw else raw
         if choice.isdigit():
             index = int(choice)
             if 1 <= index <= len(THINKING_OPTIONS):
                 return THINKING_OPTIONS[index - 1]
-        print(f"Enter a number between 1 and {len(THINKING_OPTIONS)}.")
+        console.print(f"[yellow]Enter a number between 1 and {len(THINKING_OPTIONS)}.[/]")
 
 
 def prompt_allowed_chats(current: list[str]) -> list[str]:
     current_text = ", ".join(current) if current else "<none>"
-    raw = input(
-        f"Allowed chats [{current_text}] (comma-separated, blank keeps current, '-' clears): "
+    raw = console.input(
+        f"[bold]Allowed chats[/] [{current_text}] (comma-separated, blank keeps current, '-' clears): "
     ).strip()
     if not raw:
         return current
@@ -272,8 +278,8 @@ def configure_app(config: Config) -> None:
     data = merge_config(load_toml(config.config_file))
     openai = data["openai"]
     bot = data["bot"]
-    print(f"Config file: {config.config_file}")
-    print("Press Enter to keep the current value. Enter '-' to clear text fields.")
+    console.print(f"[bold]Config file:[/] [cyan]{config.config_file}[/]")
+    console.print("Press Enter to keep the current value. Enter '-' to clear text fields.")
     updated = merge_config(
         {
             "openai": {
@@ -302,7 +308,7 @@ def configure_app(config: Config) -> None:
         }
     )
     config.config_file.write_text(render_config(updated), encoding="utf-8")
-    print(f"Saved {config.config_file}")
+    console.print(f"[green]Saved[/] [cyan]{config.config_file}[/]")
 
 
 def parse_args() -> argparse.Namespace:
@@ -330,12 +336,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def show_paths(config: Config) -> None:
-    print(f"home: {config.root}")
-    print(f"config: {config.config_file}")
-    print(f"session_db: {config.session_db}")
-    print(f"sessions: {config.sessions_dir}")
-    print(f"log: {config.log_file}")
-    print(f"launch_agent: {config.launch_agent}")
+    table = Table(box=None, show_header=False, pad_edge=False)
+    table.add_column(style="cyan", no_wrap=True)
+    table.add_column()
+    table.add_row("home", str(config.root))
+    table.add_row("config", str(config.config_file))
+    table.add_row("session_db", str(config.session_db))
+    table.add_row("sessions", str(config.sessions_dir))
+    table.add_row("log", str(config.log_file))
+    table.add_row("launch_agent", str(config.launch_agent))
+    console.print(table)
 
 
 def main() -> None:
