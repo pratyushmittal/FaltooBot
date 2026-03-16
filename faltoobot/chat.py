@@ -575,6 +575,9 @@ class ChatRuntime:
             return True
         if (command_result := await self.handle_command(text)) is not None:
             return command_result
+        if self.can_start_prompt_now():
+            self.start_prompt_now(text)
+            return True
         self.enqueue_prompt(text)
         self.notify()
         self.ensure_processing()
@@ -654,6 +657,19 @@ class ChatRuntime:
             case _:
                 return None
 
+    def can_start_prompt_now(self) -> bool:
+        return (
+            self.current_reply_task is None
+            and not self.pending_prompts
+            and (self.processing_task is None or self.processing_task.done())
+        )
+
+    def start_prompt_now(self, prompt: str) -> None:
+        display_text = display_prompt(prompt, self.require_session().workspace)
+        self.append_entry("you", display_text, notify=False)
+        self.notify()
+        self.processing_task = asyncio.create_task(self.process_now(prompt, display_text))
+
     def ensure_processing(self) -> None:
         if self.processing_task is None or self.processing_task.done():
             self.processing_task = asyncio.create_task(self.process_pending())
@@ -669,6 +685,13 @@ class ChatRuntime:
             await self.processing_task
             self.processing_task = None
 
+    async def process_now(self, prompt: str, display_text: str) -> None:
+        await self.handle_prompt(prompt, display_text=display_text, already_rendered=True)
+        if self.pending_prompts:
+            await self.process_pending()
+        else:
+            self.notify()
+
     def interrupt(self) -> bool:
         if self.current_reply_task is None or self.current_reply_task.done():
             return False
@@ -683,12 +706,15 @@ class ChatRuntime:
         state.active_kind = None
         self.notify()
 
-    def replace_last_bot_entry(self, content: str) -> None:
+    def replace_last_entry(self, kind: str, content: str) -> None:
         for index in range(len(self.entries) - 1, -1, -1):
-            if self.entries[index].kind == "bot":
-                self.entries[index] = Entry("bot", content)
+            if self.entries[index].kind == kind:
+                self.entries[index] = Entry(kind, content)
                 return
-        self.entries.append(Entry("bot", content))
+        self.entries.append(Entry(kind, content))
+
+    def replace_last_bot_entry(self, content: str) -> None:
+        self.replace_last_entry("bot", content)
 
     def stream_delta(self, state: StreamState, kind: str, delta: str) -> None:
         if not delta:
@@ -750,8 +776,17 @@ class ChatRuntime:
                 self.entries.append(Entry("bot", turn.content))
         self.notify()
 
-    async def handle_prompt(self, prompt: str) -> None:
+    async def handle_prompt(
+        self,
+        prompt: str,
+        *,
+        display_text: str | None = None,
+        already_rendered: bool = False,
+    ) -> None:
         session = self.require_session()
+        optimistic_text = display_text or display_prompt(prompt, session.workspace)
+        if not already_rendered:
+            self.append_entry("you", optimistic_text)
         display_text, message_item = await prompt_message_item(
             self.require_client(),
             session.workspace,
@@ -764,7 +799,9 @@ class ChatRuntime:
             items=[message_item] if message_item else None,
         )
         self.session = session
-        self.append_entry("you", display_text)
+        if already_rendered and display_text != optimistic_text:
+            self.replace_last_entry("you", display_text)
+            self.notify()
         state = StreamState()
 
         async def on_text_delta(delta: str) -> None:

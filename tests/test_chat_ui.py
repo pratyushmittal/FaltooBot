@@ -740,6 +740,38 @@ async def test_textual_app_stays_responsive_while_shell_tool_runs(
 
 
 @pytest.mark.anyio
+async def test_textual_app_shows_submitted_message_immediately(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        await release.wait()
+        return {
+            "text": "pong",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("p", "i", "n", "g", "enter")
+        await pilot.pause()
+
+        assert ("you", "ping") in entry_tuples(app.runtime)
+        assert app.runtime.current_reply_task is not None
+
+        release.set()
+        await app.runtime.wait_until_idle()
+
+
+@pytest.mark.anyio
 async def test_textual_app_submits_prompt_and_updates_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
