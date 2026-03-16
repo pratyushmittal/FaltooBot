@@ -809,6 +809,8 @@ class Composer(TextArea):
     async def _on_paste(self, event: events.Paste) -> None:
         if self.read_only:
             return
+        event.stop()
+        event.prevent_default()
         if getattr(self, "_skip_next_paste", False):
             self._skip_next_paste = False
             return
