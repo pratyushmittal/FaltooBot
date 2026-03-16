@@ -687,6 +687,39 @@ async def test_textual_app_submits_prompt_and_updates_runtime(
 
 
 @pytest.mark.anyio
+async def test_textual_app_scrolls_to_new_submission_with_long_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    config = build_config()
+    session = cli_session(config.sessions_dir, "CLI history", workspace)
+    for index in range(16):
+        session = add_turn(session, "user", f"prompt {index}")
+        session = add_turn(session, "assistant", f"reply {index} " * 12)
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("p", "u", "s", "h", "enter")
+        await app.runtime.wait_until_idle()
+        await pilot.pause()
+        assert app.query_one("#transcript").is_vertical_scroll_end
+        you_block = [block for block in transcript_blocks(app) if block.entry.kind == "you"][-1]
+        assert "push" in block_plain(you_block)
+
+
+@pytest.mark.anyio
 async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -710,7 +743,7 @@ async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
         await pilot.pause()
         await pilot.press("p", "u", "s", "h", "enter")
         await pilot.pause()
-        you_block = next(block for block in transcript_blocks(app) if block.entry.kind == "you")
+        you_block = [block for block in transcript_blocks(app) if block.entry.kind == "you"][-1]
         assert "push" in block_plain(you_block)
         assert app.query_one("#transcript").is_vertical_scroll_end
         release.set()
@@ -843,6 +876,7 @@ async def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
         assert transcript.is_vertical_scroll_end
 
         transcript.scroll_to(y=0, animate=False, immediate=True)
+        app.stop_following_transcript()  # type: ignore[attr-defined]
         await pilot.pause()
         assert not transcript.is_vertical_scroll_end
 
@@ -891,6 +925,7 @@ async def test_textual_app_keeps_final_reply_visible_with_long_history(
         await pilot.pause()
         release.set()
         await app.runtime.wait_until_idle()
+        await pilot.pause()
         await pilot.pause()
         assert transcript.is_vertical_scroll_end
         assert any(
