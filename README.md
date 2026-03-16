@@ -2,13 +2,28 @@
 
 WhatsApp bot for LLMs.
 
-## Setup
+## Install
+
+Install the CLI globally with uv:
 
 ```bash
-git clone https://github.com/pratyushmittal/FaltooBot.git
-cd FaltooBot
-uv sync
-uv run faltoobot configure
+uv tool install faltoobot
+```
+
+Then you can run `faltoobot` and `faltoochat` from any folder.
+
+If uv asks you to add its tool bin directory to your `PATH`, run:
+
+```bash
+uv tool update-shell
+```
+
+## Setup
+
+Create your config:
+
+```bash
+faltoobot configure
 ```
 
 Configure `~/.faltoobot/config.toml` interactively:
@@ -21,7 +36,7 @@ thinking = "none"
 fast = false
 ```
 
-You can rerun `uv run faltoobot configure` anytime to update the file.
+You can rerun `faltoobot configure` anytime to update the file.
 If `api_key` is left blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
 ## Run
@@ -29,21 +44,21 @@ If `api_key` is left blank, Faltoobot falls back to `OPENAI_API_KEY` from the en
 Authenticate once:
 
 ```bash
-uv run faltoobot auth
+faltoobot auth
 ```
 
 Start the bot:
 
 ```bash
-uv run faltoobot run
+faltoobot run
 ```
 
 Start a new CLI session:
 
 ```bash
-uv run faltoobot chat
-uv run faltoobot chat --name "Scratchpad"
-uv run faltoochat
+faltoobot chat
+faltoobot chat --name "Scratchpad"
+faltoochat
 ```
 
 ## Use
@@ -69,15 +84,25 @@ In CLI chat:
 ## Update
 
 ```bash
-uv run faltoobot update
+uv tool upgrade faltoobot
 ```
 
 ## macOS service
 
 ```bash
-uv run faltoobot install
-uv run faltoobot status
-uv run faltoobot logs -f
+faltoobot install
+faltoobot status
+faltoobot logs -f
+```
+
+## Development
+
+```bash
+git clone https://github.com/pratyushmittal/FaltooBot.git
+cd FaltooBot
+uv sync
+uv run faltoobot configure
+uv run faltoochat
 ```
 
 More details: `docs/guide.md`
