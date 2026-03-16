@@ -58,6 +58,12 @@ MARKDOWN_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
 MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1200
 QUEUE_PREVIEW_CHARS = 75
+COMMANDS = (
+    ("/help", "show help"),
+    ("/tree", "open messages file"),
+    ("/reset", "start a new session"),
+    ("/exit", "exit chat"),
+)
 QUEUE_SHORTCUTS = (
     "Tab queue/input",
     "↑/↓ select",
@@ -269,7 +275,17 @@ def default_session_name() -> str:
 
 
 def help_text() -> str:
-    return "Commands: /help, /tree, /reset, /exit, Ctrl+V image"
+    names = ", ".join(name for name, _ in COMMANDS)
+    return f"Commands: {names}, Ctrl+V image"
+
+
+def slash_suggestions(text: str) -> tuple[tuple[str, str], ...]:
+    query = text.strip()
+    if not query.startswith("/") or any(char.isspace() for char in query):
+        return ()
+    if query == "/":
+        return COMMANDS
+    return tuple(item for item in COMMANDS if item[0].startswith(query))
 
 
 def session_name(name: str | None) -> str:
@@ -852,6 +868,26 @@ class Composer(TextArea):
 
 
 
+class SlashCommandItem(Horizontal):
+    class Picked(Message):
+        def __init__(self, command: str) -> None:
+            self.command = command
+            super().__init__()
+
+    def __init__(self, command: str, detail: str) -> None:
+        self.command = command
+        self.detail = detail
+        super().__init__(classes="slash-command-item")
+
+    def compose(self) -> ComposeResult:
+        yield Static(Text(self.command), classes="slash-command-name")
+        yield Static(Text(self.detail), classes="slash-command-detail")
+
+    def on_click(self, event: Any) -> None:
+        event.stop()
+        self.post_message(self.Picked(self.command))
+
+
 class QueueItem(Horizontal):
     class Picked(Message):
         def __init__(self, index: int) -> None:
@@ -1070,6 +1106,34 @@ class FaltooChatApp(App[None]):
         padding: 0;
     }
 
+    #commands {
+        height: auto;
+        layout: vertical;
+        background: $background;
+        border: none;
+        padding: 0 0 1 0;
+    }
+
+    .slash-command-item {
+        height: 1;
+        layout: horizontal;
+        align: left middle;
+        padding: 0 1;
+        background: $background;
+        color: $text;
+    }
+
+    .slash-command-name {
+        width: 10;
+        text-style: bold;
+        color: $accent;
+    }
+
+    .slash-command-detail {
+        width: 1fr;
+        color: $text-muted;
+    }
+
     .queue-item {
         height: 1;
         align: left middle;
@@ -1183,6 +1247,7 @@ class FaltooChatApp(App[None]):
         self._blocks: list[EntryBlock | LiveMarkdownBlock] = []
         self._stream_block: EntryBlock | LiveMarkdownBlock | None = None
         self._queue_snapshot: tuple[tuple[str, bool], ...] = ()
+        self._command_snapshot: tuple[tuple[str, str], ...] = ()
         self._queue_selected_snapshot: int | None = None
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
@@ -1198,6 +1263,7 @@ class FaltooChatApp(App[None]):
             with Center():
                 with Vertical(id="footer"):
                     yield Vertical(id="queue")
+                    yield Vertical(id="commands")
                     yield Composer(
                         id="composer",
                         text="",
@@ -1216,6 +1282,9 @@ class FaltooChatApp(App[None]):
 
     def queue(self) -> Vertical:
         return self.query_one("#queue", Vertical)
+
+    def commands(self) -> Vertical:
+        return self.query_one("#commands", Vertical)
 
     def status(self) -> Static:
         return self.query_one("#status", Static)
@@ -1286,8 +1355,23 @@ class FaltooChatApp(App[None]):
 
     def sync_view(self, force: bool = False) -> None:
         queue_layout_changed = self.refresh_queue(force=force)
+        self.refresh_commands(force=force)
         self.refresh_status()
         self.refresh_transcript(force=force or queue_layout_changed)
+
+    def refresh_commands(self, *, force: bool = False) -> None:
+        suggestions = slash_suggestions(self.composer().text)
+        if not force and suggestions == self._command_snapshot:
+            return
+        commands = self.commands()
+        commands.remove_children()
+        items = [SlashCommandItem(command, detail) for command, detail in suggestions]
+        if items:
+            commands.mount(*items)
+            commands.display = True
+        else:
+            commands.display = False
+        self._command_snapshot = suggestions
 
     def refresh_status(self) -> None:
         self.status().update(
@@ -1406,6 +1490,17 @@ class FaltooChatApp(App[None]):
                 lambda: transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
             )
         self._snapshot = snapshot
+
+    @on(TextArea.Changed, "#composer")
+    def on_composer_changed(self, _: TextArea.Changed) -> None:
+        self.refresh_commands()
+
+    @on(SlashCommandItem.Picked)
+    def on_slash_command_item_picked(self, message: SlashCommandItem.Picked) -> None:
+        composer = self.composer()
+        composer.load_text(message.command)
+        self.focus_composer()
+        self.refresh_commands(force=True)
 
     @on(events.MouseScrollUp, "#transcript")
     def on_transcript_mouse_scroll_up(self, event: Any) -> None:

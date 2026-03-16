@@ -16,6 +16,8 @@ from faltoobot.chat import (
     Composer,
     EntryBlock,
     LiveMarkdownBlock,
+    SlashCommandItem,
+    slash_suggestions,
     QueuedPrompt,
     QueueItem,
     build_chat_app,
@@ -119,6 +121,10 @@ def queue_labels(app: object) -> list[str]:
         rendered = item.query_one(".queue-text").render()
         labels.append(rendered.plain if isinstance(rendered, Text) else str(rendered))
     return labels
+
+
+def slash_command_texts(app: object) -> list[str]:
+    return [item.command for item in app.query("#commands SlashCommandItem")]  # type: ignore[attr-defined]
 
 
 def selected_queue_index(app: object) -> int | None:
@@ -569,6 +575,58 @@ async def test_textual_app_tab_does_nothing_without_queued_messages(
         await pilot.pause()
         assert isinstance(app.focused, Composer)
         assert app.query_one("#composer", Composer).text == "ab"
+
+
+@pytest.mark.anyio
+async def test_textual_app_shows_slash_commands_after_typing_slash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("/")
+        await pilot.pause()
+
+        assert slash_command_texts(app) == ["/help", "/tree", "/reset", "/exit"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_filters_slash_commands_while_typing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("/", "r", "e")
+        await pilot.pause()
+
+        assert slash_command_texts(app) == ["/reset"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_clicking_slash_command_completes_composer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("/")
+        await pilot.pause()
+
+        app.on_slash_command_item_picked(SlashCommandItem.Picked("/reset"))  # type: ignore[attr-defined]
+        await pilot.pause()
+
+        assert app.query_one("#composer", Composer).text == "/reset"
+        assert slash_command_texts(app) == ["/reset"]
 
 
 @pytest.mark.anyio
