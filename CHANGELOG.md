@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.2.2 — 2026-03-16
+
+### Added
+- WhatsApp now shows the bot as typing while it is processing a reply.
+
 ## 0.2.1 — 2026-03-16
 
 ### Changed
