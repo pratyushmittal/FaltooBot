@@ -85,7 +85,10 @@ def as_session_path(source: str, workspace: Path) -> Path | None:
     else:
         raw = Path(os.path.expanduser(value))
         path = raw if raw.is_absolute() else workspace / raw
-    return path.resolve() if path.exists() else None
+    try:
+        return path.resolve() if path.exists() else None
+    except OSError:
+        return None
 
 
 def is_image_path(path: Path) -> bool:

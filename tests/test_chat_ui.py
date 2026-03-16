@@ -128,6 +128,14 @@ def selected_queue_index(app: object) -> int | None:
     return None
 
 
+def test_paste_image_text_ignores_long_non_path_text(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    text = "a" * 4096
+
+    assert paste_image_text(text, workspace) == text
+
+
 def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
