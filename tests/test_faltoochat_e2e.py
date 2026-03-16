@@ -14,7 +14,7 @@ def config_text(system_prompt: str) -> str:
             "",
             "[openai]",
             'api_key = ""',
-            'model = "gpt-5.2"',
+            'model = "gpt-5.4"',
             'thinking = "none"',
             "",
             "[bot]",

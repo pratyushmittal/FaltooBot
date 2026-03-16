@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
-MODEL_OPTIONS = ("gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
+MODEL_OPTIONS = ("gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_SYSTEM_PROMPT = (
     "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "

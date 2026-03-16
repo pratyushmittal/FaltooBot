@@ -37,7 +37,7 @@ Example `~/.faltoobot/config.toml`:
 ```toml
 [openai]
 api_key = "your_key_here"
-model = "gpt-5.2"
+model = "gpt-5.4"
 thinking = "none"
 fast = false
 

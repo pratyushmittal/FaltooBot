@@ -42,7 +42,7 @@ def config_text(system_prompt: str, thinking: str = "none") -> str:
             "",
             "[openai]",
             'api_key = "test-key"',
-            'model = "gpt-5.2"',
+            'model = "gpt-5.4"',
             f'thinking = "{thinking}"',
             "",
             "[bot]",
@@ -241,14 +241,14 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
 def test_status_text_shows_fast_suffix_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
-    assert status_text(config) == "model: gpt-5.2  thinking: none"
+    assert status_text(config) == "model: gpt-5.4  thinking: none"
 
     config.config_file.write_text(
         config.config_file.read_text(encoding="utf-8").replace("fast = false", "fast = true"),
         encoding="utf-8",
     )
     fast_config = build_config()
-    assert status_text(fast_config) == "model: gpt-5.2 (fast)  thinking: none"
+    assert status_text(fast_config) == "model: gpt-5.4 (fast)  thinking: none"
 
 
 def test_queue_preview_flattens_multiline_content() -> None:
@@ -558,7 +558,7 @@ async def test_textual_app_focuses_composer_and_shows_status(
     async with app.run_test() as pilot:
         await pilot.pause()
         assert isinstance(app.focused, Composer)
-        assert "model: gpt-5.2" in status_plain(app)
+        assert "model: gpt-5.4" in status_plain(app)
         assert "thinking: medium" in status_plain(app)
 
 
