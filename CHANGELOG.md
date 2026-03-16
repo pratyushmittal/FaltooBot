@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.2.3 — 2026-03-16
+
+### Fixed
+- WhatsApp allowlisting now ignores numeric device suffixes in sender IDs, so follow-up messages from the same contact keep matching `allowed_chats`.
+
 ## 0.2.2 — 2026-03-16
 
 ### Added
