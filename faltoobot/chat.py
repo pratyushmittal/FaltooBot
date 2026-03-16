@@ -59,7 +59,7 @@ MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1200
 QUEUE_PREVIEW_CHARS = 75
 QUEUE_SHORTCUTS = (
-    "Tab queue",
+    "Tab queue/input",
     "↑/↓ select",
     "Enter edit",
     "Space pause",
