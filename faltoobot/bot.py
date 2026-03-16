@@ -23,6 +23,7 @@ from faltoobot.store import (
 )
 
 logger = logging.getLogger("faltoobot")
+AUTH_STOP_DELAY = 0.5
 
 
 def configure_logging(log_path: Path) -> None:
@@ -193,6 +194,9 @@ async def wait_for_login(client: NewAClient) -> None:
 
     await client.connect()
     await ready.wait()
+    logger.info("Auth successful. Session saved.")
+    logger.info("Next step: run `faltoobot run`")
+    await asyncio.sleep(AUTH_STOP_DELAY)
     await client.stop()
 
 
