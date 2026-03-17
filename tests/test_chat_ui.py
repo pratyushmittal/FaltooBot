@@ -29,6 +29,7 @@ from faltoobot.chat import (
     paste_image_text,
     queue_preview,
     rich_renderable,
+    visible_content,
     status_text,
 )
 from faltoobot.config import build_config
@@ -441,7 +442,8 @@ async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
     await runtime.close()
 
     assert "hi" in text
-    assert "Planning reply" in text
+    assert "Planning" in text
+    assert "Planning reply" not in text
     assert text.count("shell") == 1
     assert "done" in text
 
@@ -1643,3 +1645,19 @@ async def test_textual_app_restores_saved_queue_as_paused(
 
     payload = json.loads(messages_file.read_text(encoding="utf-8"))
     assert [item["paused"] for item in payload["queued_prompts"]] == [True, True]
+
+
+def test_visible_content_keeps_only_bold_thinking_text() -> None:
+    assert visible_content("thinking", "**Planning** reply\n\nMore detail") == "**Planning**"
+    assert visible_content("thinking", "No bold here") == "No bold here"
+
+
+def test_rich_renderable_hides_non_bold_thinking_details() -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    console.print(rich_renderable("thinking", "**Planning** reply\n\nMore detail"))
+
+    text = output.getvalue()
+    assert "Planning" in text
+    assert "reply" not in text
+    assert "More detail" not in text

@@ -55,6 +55,7 @@ TURN_KIND = {"user": "you", "assistant": "bot"}
 MAX_TOOL_LINES = 8
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 MARKDOWN_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
+BOLD_SPAN_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
 MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1200
 QUEUE_PREVIEW_CHARS = 75
@@ -461,22 +462,33 @@ def history_entries(session: Session) -> list[Entry]:
     return [entry for turn in session.messages for entry in turn_entries(turn)]
 
 
+def visible_content(kind: str, content: str) -> str:
+    if kind != "thinking":
+        return content
+    matches = [match.strip() for match in BOLD_SPAN_RE.findall(content) if match.strip()]
+    if not matches:
+        return content
+    return "\n".join(f"**{match}**" for match in matches)
+
+
 def looks_like_markdown(content: str) -> bool:
     return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
 
 
 def uses_markdown(kind: str, content: str) -> bool:
-    return kind in MARKDOWN_KINDS and (looks_like_markdown(content) or "\n" in content)
+    visible = visible_content(kind, content)
+    return kind in MARKDOWN_KINDS and (looks_like_markdown(visible) or "\n" in visible)
 
 
 def rich_renderable(kind: str, content: str) -> Text | Group:
+    visible = visible_content(kind, content)
     if kind == "banner":
-        return Text(content, style="bold")
+        return Text(visible, style="bold")
     if kind == "meta":
-        return Text(content, style="dim")
+        return Text(visible, style="dim")
     if uses_markdown(kind, content):
-        return Group(Padding(Markdown(content), 0))
-    return Text(content)
+        return Group(Padding(Markdown(visible), 0))
+    return Text(visible)
 
 
 def queue_preview(content: str) -> str:
@@ -1060,7 +1072,7 @@ class EntryBlock(Vertical):
 
     def compose(self) -> ComposeResult:
         kind = self.entry.kind
-        content = self.entry.content
+        content = visible_content(self.entry.kind, self.entry.content)
         if kind in {"banner", "meta"} or not self.uses_markdown():
             yield Static(Text(content), id="body", classes="body")
             return
@@ -1081,9 +1093,9 @@ class EntryBlock(Vertical):
             return False
         self.entry = entry
         if self.uses_markdown():
-            self.query_one("#body", TextualMarkdown).update(entry.content)
+            self.query_one("#body", TextualMarkdown).update(visible_content(entry.kind, entry.content))
             return True
-        self.query_one("#body", Static).update(Text(entry.content))
+        self.query_one("#body", Static).update(Text(visible_content(entry.kind, entry.content)))
         return True
 
 
@@ -1095,13 +1107,13 @@ class LiveMarkdownBlock(Vertical):
         super().__init__(classes=entry_class(entry.kind))
 
     def compose(self) -> ComposeResult:
-        yield Static(Text(self.entry.content), id="body", classes="body")
+        yield Static(Text(visible_content(self.entry.kind, self.entry.content)), id="body", classes="body")
 
     def set_entry(self, entry: Entry) -> bool:
         if entry.kind != self.entry.kind or entry.kind not in {"bot", "thinking"}:
             return False
         self.entry = entry
-        self.query_one("#body", Static).update(Text(entry.content))
+        self.query_one("#body", Static).update(Text(visible_content(entry.kind, entry.content)))
         return True
 
 
