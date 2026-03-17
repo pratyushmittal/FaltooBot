@@ -51,7 +51,7 @@ If `api_key` is left blank, Faltoobot falls back to `OPENAI_API_KEY` from the en
 
 Set `allowed_chats` to your own WhatsApp JID or phone number to keep the bot private. Leave it empty only if you want Faltoobot to reply to anyone who can message that account.
 
-### Pair and run
+### Pair once
 
 Pair the WhatsApp account once:
 
@@ -59,7 +59,34 @@ Pair the WhatsApp account once:
 faltoobot auth
 ```
 
-Then start the bot:
+### Run in background
+
+Install Faltoobot as a background service:
+
+```bash
+faltoobot install
+```
+
+Check whether it is running:
+
+```bash
+faltoobot status
+```
+
+Watch logs live:
+
+```bash
+faltoobot logs -f
+```
+
+Notes:
+- macOS installs a `launchd` agent.
+- Linux installs a `systemd --user` service.
+- If you want the Linux service to stay up after logout, enable lingering for your user.
+
+### Run in foreground
+
+If you want to run it in the current terminal instead:
 
 ```bash
 faltoobot run
