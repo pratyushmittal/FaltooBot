@@ -17,6 +17,9 @@ from faltoobot.chat import (
     EntryBlock,
     LiveMarkdownBlock,
     SlashCommandItem,
+    expand_saved_prompt,
+    prompt_templates,
+    slash_commands,
     slash_query,
     slash_suggestions,
     QueuedPrompt,
@@ -129,6 +132,14 @@ def slash_command_texts(app: object) -> list[str]:
     return [item.command for item in app.query("#commands SlashCommandItem")]  # type: ignore[attr-defined]
 
 
+def write_prompt(tmp_path: Path, name: str, text: str) -> Path:
+    prompts = tmp_path / "home" / ".faltoobot" / "prompts"
+    prompts.mkdir(parents=True, exist_ok=True)
+    path = prompts / f"{name}.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def selected_queue_index(app: object) -> int | None:
     for index, item in enumerate(queue_items(app)):
         if item.has_class("-selected"):  # type: ignore[attr-defined]
@@ -151,6 +162,55 @@ def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
     image.write_bytes(b"png")
 
     assert paste_image_text(str(image), workspace) == image_markdown(image.resolve())
+
+
+def test_prompt_templates_read_description_and_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    write_prompt(
+        tmp_path,
+        "review",
+        "---\ndescription: Review a topic\n---\n# Review\n\nPlease review $1",
+    )
+    config = build_config()
+    templates = prompt_templates(config.root)
+
+    assert [(template.command, template.detail, template.body) for template in templates] == [
+        ("/review", "Review a topic", "# Review\n\nPlease review $1"),
+    ]
+
+
+def test_expand_saved_prompt_supports_positional_arguments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    write_prompt(
+        tmp_path,
+        "review",
+        "Review $1\nAll: $ARGUMENTS\nRest: ${@:2}\nPair: ${@:2:3}",
+    )
+    config = build_config()
+
+    assert expand_saved_prompt(config.root, '/review auth "follow up" final') == (
+        "Review auth\nAll: auth follow up final\nRest: follow up final\nPair: follow up final"
+    )
+
+
+def test_slash_commands_include_saved_prompts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    write_prompt(tmp_path, "review", "# Review\n\nPlease review $1")
+    config = build_config()
+
+    assert slash_commands(config.root) == (
+        ("/help", "show help"),
+        ("/tree", "open messages file"),
+        ("/reset", "start a new session"),
+        ("/exit", "exit chat"),
+        ("/review", "Review"),
+    )
 
 
 def test_fitted_image_size_keeps_aspect_ratio() -> None:
@@ -610,6 +670,40 @@ async def test_textual_app_filters_slash_commands_while_typing(
         await pilot.pause()
 
         assert slash_command_texts(app) == ["/reset"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_shows_saved_prompt_slash_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    write_prompt(tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1")
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("/", "r", "e")
+        await pilot.pause()
+
+        assert slash_command_texts(app) == ["/reset", "/review"]
+
+
+@pytest.mark.anyio
+async def test_runtime_submit_expands_saved_prompt_before_queueing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    write_prompt(tmp_path, "review", "Review $1\nAll: $ARGUMENTS")
+    runtime = build_chat_runtime(config=build_config())
+    seen: list[str] = []
+
+    monkeypatch.setattr(type(runtime), "can_start_prompt_now", lambda self: True)
+    monkeypatch.setattr(type(runtime), "start_prompt_now", lambda self, prompt: seen.append(prompt))
+
+    assert await runtime.submit('/review auth "follow up"') is True
+    assert seen == ["Review auth\nAll: auth follow up"]
 
 
 @pytest.mark.anyio
