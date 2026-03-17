@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.3.0 — 2026-03-17
+
+### Added
+- `faltoobot install` now supports both macOS and Linux, and starts the WhatsApp bot in the background.
+
+### Changed
+- `faltoobot logs` now colorizes log output so errors and warnings are easier to spot.
+- Background installs now run the packaged `faltoobot` entrypoint directly instead of depending on `uv run` from the repo checkout.
+
 ## 0.2.4 — 2026-03-17
 
 ### Changed
