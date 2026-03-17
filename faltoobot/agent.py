@@ -228,6 +228,11 @@ def timeout_seconds(action: dict[str, Any]) -> float:
     return timeout / 1000
 
 
+def tool_error_text(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+
 def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
     max_output_length = shell_output_limit(action)
@@ -235,7 +240,7 @@ def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
         process = subprocess.run(
             ["/bin/bash", "-lc", "\n".join(str(command) for command in action["commands"])],
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout_seconds(action),
             cwd=str(session.workspace),
         )
@@ -249,6 +254,12 @@ def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
             "stdout": clipped_text(exc.stdout),
             "stderr": clipped_text(exc.stderr),
             "outcome": {"type": "timeout"},
+        }
+    except Exception as exc:  # comment: shell tool failures should be returned to the model, not crash the chat.
+        output = {
+            "stdout": "",
+            "stderr": tool_error_text(exc),
+            "outcome": {"type": "error"},
         }
     return {
         "type": "shell_call_output",
@@ -265,7 +276,7 @@ def run_local_shell_call(session: Session, item: dict[str, Any]) -> dict[str, An
         process = subprocess.run(
             [str(part) for part in action["command"]],
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout_seconds(action),
             cwd=action.get("working_directory") or str(session.workspace),
             env={
@@ -285,6 +296,13 @@ def run_local_shell_call(session: Session, item: dict[str, Any]) -> dict[str, An
             "stderr": clipped_text(exc.stderr),
             "exit_code": None,
             "timed_out": True,
+        }
+    except Exception as exc:  # comment: local shell tool failures should be returned to the model, not crash the chat.
+        result = {
+            "stdout": "",
+            "stderr": tool_error_text(exc),
+            "exit_code": None,
+            "timed_out": False,
         }
     return {
         "type": "local_shell_call_output",
