@@ -1295,7 +1295,7 @@ class EntryBlock(Vertical):
     EntryBlock.entry-thinking > .body,
     LiveMarkdownBlock.entry-thinking > .body {
         color: $text-muted;
-        background: $surface-active;
+        background: $surface;
     }
 
     EntryBlock.entry-tool > .body,
