@@ -76,9 +76,7 @@ QUEUE_SHORTCUTS = (
     "Del remove",
     "Shift+↑/↓ move",
 )
-SCROLL_SETTLE_DELAYS = (0.01, 0.05)
-STARTUP_SCROLL_INTERVAL = 0.1
-STARTUP_SCROLL_DURATION = 2.0
+SCROLL_SETTLE_DELAYS = (0.01, 0.05, 0.15)
 
 
 MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))  # type: ignore[assignment]
@@ -1578,8 +1576,7 @@ class FaltooChatApp(App[None]):
         self._queue_selected_snapshot: int | None = None
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
-        self._startup_scroll: Any | None = None
-        self._follow_transcript = False
+        self._follow_transcript = True
 
     def make_live_block(self, entry: Entry) -> LiveMarkdownBlock:
         return LiveMarkdownBlock(entry)
@@ -1623,44 +1620,42 @@ class FaltooChatApp(App[None]):
             return
 
     def scroll_transcript_end(self, *, settle: bool = False) -> None:
-        self._scroll_transcript_end_after_refresh()
-        self.call_after_refresh(self._scroll_transcript_end_after_refresh)
+        try:
+            transcript = self.transcript()
+        except NoMatches:
+            return
+        transcript.scroll_end(animate=False, immediate=True)
+        self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
         if settle:
             for delay in SCROLL_SETTLE_DELAYS:
-                self.set_timer(delay, self._scroll_transcript_end_after_refresh)
+                self.set_timer(delay, lambda: transcript.scroll_end(animate=False, immediate=True))
 
-    def _scroll_transcript_end_after_refresh(self) -> None:
+    def restore_transcript_scroll(self, y: float) -> None:
         try:
-            self.transcript().scroll_end(animate=False, immediate=True)
+            self.transcript().scroll_to(y=y, animate=False, immediate=True)
         except NoMatches:
             return
 
-    def stop_startup_scroll(self) -> None:
-        if self._startup_scroll is None:
-            return
-        self._startup_scroll.stop()
-        self._startup_scroll = None
-
     def stop_following_transcript(self) -> None:
         self._follow_transcript = False
-        self.stop_startup_scroll()
 
+    def update_transcript_follow_from_position(self) -> None:
+        try:
+            self._follow_transcript = self.transcript().is_vertical_scroll_end
+        except NoMatches:
+            return
 
-    def pin_transcript_during_startup(self) -> None:
-        self.scroll_transcript_end(settle=True)
-        self.stop_startup_scroll()
-        self._startup_scroll = self.set_interval(STARTUP_SCROLL_INTERVAL, self.scroll_transcript_end)
-        self.set_timer(STARTUP_SCROLL_DURATION, self.stop_startup_scroll)
+    def track_manual_transcript_scroll(self) -> None:
+        self.call_after_refresh(self.update_transcript_follow_from_position)
 
     async def on_mount(self) -> None:
         self.runtime.set_notifier(self.sync_view)
         await self.runtime.start()
         self.sync_view(force=True)
-        self.pin_transcript_during_startup()
+        self.scroll_transcript_end()
         self.call_after_refresh(self.focus_composer)
 
     async def on_unmount(self) -> None:
-        self.stop_startup_scroll()
         await self.runtime.close()
 
     async def on_composer_submitted(self, message: Composer.Submitted) -> None:
@@ -1764,21 +1759,11 @@ class FaltooChatApp(App[None]):
             return
 
         transcript = self.transcript()
-        at_end = transcript.is_vertical_scroll_end
-        if not at_end:
-            self.stop_startup_scroll()
         previous_scroll = transcript.scroll_y
         had_live = self._stream_block is not None or live is not None
         previous_rendered = tuple((block.entry.kind, block.entry.content) for block in self._blocks)
         rendered = tuple((entry.kind, entry.content) for entry in entries)
         append_only = rendered[: len(self._blocks)] == previous_rendered
-        tail_updated = (
-            len(rendered) == len(previous_rendered)
-            and bool(rendered)
-            and rendered[:-1] == previous_rendered[:-1]
-            and rendered[-1][0] == previous_rendered[-1][0]
-            and rendered[-1][1] != previous_rendered[-1][1]
-        )
 
         if force or not append_only:
             transcript.remove_children()
@@ -1816,14 +1801,10 @@ class FaltooChatApp(App[None]):
             self._stream_block = self.make_live_block(live)
             transcript.mount(self._stream_block)
 
-        should_scroll_end = force or self._follow_transcript or at_end
-        if should_scroll_end:
-            self.scroll_transcript_end(settle=had_live or tail_updated)
+        if self._follow_transcript:
+            self.scroll_transcript_end(settle=had_live)
         else:
-            transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
-            self.call_after_refresh(
-                lambda: transcript.scroll_to(y=previous_scroll, animate=False, immediate=True)
-            )
+            self.restore_transcript_scroll(previous_scroll)
         self._snapshot = snapshot
 
     @on(TextArea.Changed, "#composer")
@@ -1849,11 +1830,16 @@ class FaltooChatApp(App[None]):
     @on(events.MouseScrollUp, "#transcript")
     def on_transcript_mouse_scroll_up(self, event: Any) -> None:
         event.stop()
-        self.stop_following_transcript()
+        self.track_manual_transcript_scroll()
 
-    @on(events.MouseDown, "#transcript")
-    def on_transcript_mouse_down(self, event: Any) -> None:
-        self.stop_following_transcript()
+    @on(events.MouseScrollDown, "#transcript")
+    def on_transcript_mouse_scroll_down(self, event: Any) -> None:
+        event.stop()
+        self.track_manual_transcript_scroll()
+
+    @on(events.MouseUp, "#transcript")
+    def on_transcript_mouse_up(self, _: Any) -> None:
+        self.track_manual_transcript_scroll()
 
     def action_interrupt_or_quit(self) -> None:
         if not self.runtime.interrupt():
