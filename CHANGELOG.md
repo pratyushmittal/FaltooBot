@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.2.4 — 2026-03-17
+
+### Changed
+- Thinking blocks now show only bold summary text when the model includes a highlighted summary.
+
+### Fixed
+- Shell tool output no longer crashes the chat when a command prints non-UTF-8 bytes.
+
 ## 0.2.3 — 2026-03-16
 
 ### Fixed
