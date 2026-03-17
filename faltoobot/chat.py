@@ -559,11 +559,24 @@ def shell_command_summary(command: str) -> str:
         return command
     if not parts:
         return command
+    parts = strip_shell_prefix(parts)
+    if not parts:
+        return command
     if parts[0] == "sed":
         return sed_command_summary(parts) or command
     if parts[0] == "rg":
         return rg_command_summary(parts) or command
     return command
+
+
+
+def strip_shell_prefix(parts: list[str]) -> list[str]:
+    if len(parts) < 4 or parts[0] != "cd":
+        return parts
+    for separator in ("&&", ";"):
+        if separator in parts[2:]:
+            return parts[parts.index(separator) + 1 :]
+    return parts
 
 
 def sed_command_summary(parts: list[str]) -> str | None:

@@ -251,6 +251,35 @@ def test_tool_entry_summarizes_rg_shell_calls() -> None:
 
 
 
+
+def test_tool_entry_summarizes_cd_prefixed_sed_shell_calls() -> None:
+    text = tool_entry(
+        {
+            "type": "shell_call",
+            "action": {"commands": ["cd /tmp && sed -n '1,220p' faltoobot/chat.py"]},
+        }
+    )
+
+    assert text == "shell\nreading faltoobot/chat.py 1 to 220"
+
+
+
+def test_tool_entry_summarizes_cd_prefixed_rg_shell_calls() -> None:
+    text = tool_entry(
+        {
+            "type": "shell_call",
+            "action": {
+                "commands": [
+                    'cd /Users/pratyush/Websites/faltoobot && rg -n "slash|SlashCommand|suggest" faltoobot/chat.py tests/test_chat_ui.py'
+                ]
+            },
+        }
+    )
+
+    assert text == "shell\nsearching for slash|SlashCommand|suggest in faltoobot/chat.py tests/test_chat_ui.py"
+
+
+
 def test_fitted_image_size_keeps_aspect_ratio() -> None:
     assert fitted_image_size(2000, 1000) == (1600, 800)
     assert fitted_image_size(1000, 2000) == (600, 1200)
