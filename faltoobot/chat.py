@@ -76,7 +76,8 @@ QUEUE_SHORTCUTS = (
     "Del remove",
     "Shift+↑/↓ move",
 )
-SCROLL_SETTLE_DELAYS = (0.01, 0.05, 0.15)
+SCROLL_SETTLE_DURATION = 1.0
+SCROLL_SETTLE_INTERVAL = 0.02
 
 
 MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))  # type: ignore[assignment]
@@ -1366,6 +1367,11 @@ class EntryBlock(Vertical):
         self.query_one("#body", Static).update(Text(visible_content(entry.kind, entry.content)))
         return True
 
+    def on_resize(self, _: events.Resize) -> None:
+        app = self.app
+        if getattr(app, "_follow_transcript", False):
+            app.scroll_transcript_end_once()  # type: ignore[attr-defined]
+
 
 class LiveMarkdownBlock(Vertical):
     DEFAULT_CSS = EntryBlock.DEFAULT_CSS
@@ -1383,6 +1389,11 @@ class LiveMarkdownBlock(Vertical):
         self.entry = entry
         self.query_one("#body", Static).update(Text(visible_content(entry.kind, entry.content)))
         return True
+
+    def on_resize(self, _: events.Resize) -> None:
+        app = self.app
+        if getattr(app, "_follow_transcript", False):
+            app.scroll_transcript_end_once()  # type: ignore[attr-defined]
 
 
 class FaltooChatApp(App[None]):
@@ -1577,6 +1588,7 @@ class FaltooChatApp(App[None]):
         self._queue_selected: int | None = None
         self._queue_drag_index: int | None = None
         self._follow_transcript = True
+        self._transcript_settle_task: asyncio.Task[None] | None = None
 
     def make_live_block(self, entry: Entry) -> LiveMarkdownBlock:
         return LiveMarkdownBlock(entry)
@@ -1619,16 +1631,39 @@ class FaltooChatApp(App[None]):
         except (NoMatches, ScreenStackError):
             return
 
-    def scroll_transcript_end(self, *, settle: bool = False) -> None:
+    def cancel_transcript_settle_task(self) -> None:
+        if self._transcript_settle_task is None:
+            return
+        self._transcript_settle_task.cancel()
+        self._transcript_settle_task = None
+
+    async def settle_transcript_end(self) -> None:
+        deadline = time.monotonic() + SCROLL_SETTLE_DURATION
         try:
-            transcript = self.transcript()
+            while time.monotonic() < deadline:
+                await asyncio.sleep(SCROLL_SETTLE_INTERVAL)
+                if not self._follow_transcript:
+                    return
+                self.scroll_transcript_end_once()
+                self.call_after_refresh(self.scroll_transcript_end_once)
+        except asyncio.CancelledError:
+            return
+        finally:
+            if asyncio.current_task() is self._transcript_settle_task:
+                self._transcript_settle_task = None
+
+    def scroll_transcript_end_once(self) -> None:
+        try:
+            self.transcript().scroll_end(animate=False, immediate=True)
         except NoMatches:
             return
-        transcript.scroll_end(animate=False, immediate=True)
-        self.call_after_refresh(lambda: transcript.scroll_end(animate=False, immediate=True))
+
+    def scroll_transcript_end(self, *, settle: bool = False) -> None:
+        self.cancel_transcript_settle_task()
+        self.scroll_transcript_end_once()
+        self.call_after_refresh(self.scroll_transcript_end_once)
         if settle:
-            for delay in SCROLL_SETTLE_DELAYS:
-                self.set_timer(delay, lambda: transcript.scroll_end(animate=False, immediate=True))
+            self._transcript_settle_task = asyncio.create_task(self.settle_transcript_end())
 
     def restore_transcript_scroll(self, y: float) -> None:
         try:
@@ -1638,6 +1673,7 @@ class FaltooChatApp(App[None]):
 
     def stop_following_transcript(self) -> None:
         self._follow_transcript = False
+        self.cancel_transcript_settle_task()
 
     def update_transcript_follow_from_position(self) -> None:
         try:
@@ -1646,7 +1682,8 @@ class FaltooChatApp(App[None]):
             return
 
     def track_manual_transcript_scroll(self) -> None:
-        self.call_after_refresh(self.update_transcript_follow_from_position)
+        self.stop_following_transcript()
+        self.set_timer(0, self.update_transcript_follow_from_position)
 
     async def on_mount(self) -> None:
         self.runtime.set_notifier(self.sync_view)
@@ -1656,6 +1693,7 @@ class FaltooChatApp(App[None]):
         self.call_after_refresh(self.focus_composer)
 
     async def on_unmount(self) -> None:
+        self.cancel_transcript_settle_task()
         await self.runtime.close()
 
     async def on_composer_submitted(self, message: Composer.Submitted) -> None:
@@ -1835,10 +1873,6 @@ class FaltooChatApp(App[None]):
     @on(events.MouseScrollDown, "#transcript")
     def on_transcript_mouse_scroll_down(self, event: Any) -> None:
         event.stop()
-        self.track_manual_transcript_scroll()
-
-    @on(events.MouseUp, "#transcript")
-    def on_transcript_mouse_up(self, _: Any) -> None:
         self.track_manual_transcript_scroll()
 
     def action_interrupt_or_quit(self) -> None:

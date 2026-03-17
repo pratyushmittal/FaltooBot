@@ -1164,11 +1164,17 @@ async def test_textual_app_starts_scrolled_to_bottom_with_long_history(
         assert app.query_one("#transcript").is_vertical_scroll_end
 
 
-@pytest.mark.skip(reason="covered by manual scroll reproduction")
 def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeScrollEvent:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
     async def run() -> None:
         workspace = prepare_home(tmp_path, monkeypatch)
         config = build_config()
@@ -1176,11 +1182,11 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
         for index in range(16):
             session = add_turn(session, "user", f"prompt {index}")
             session = add_turn(session, "assistant", f"reply {index} " * 12)
-    
+
         first_delta = asyncio.Event()
         continue_stream = asyncio.Event()
         release = asyncio.Event()
-    
+
         async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
             await kwargs["on_text_delta"]("partial")
             first_delta.set()
@@ -1193,10 +1199,10 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
                 "usage": None,
                 "instructions": "test instructions",
             }
-    
+
         monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
         app = build_chat_app()
-    
+
         async with app.run_test() as pilot:
             await pilot.pause()
             transcript = app.query_one("#transcript")
@@ -1205,17 +1211,20 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
             await asyncio.wait_for(first_delta.wait(), timeout=3)
             await pilot.pause()
             assert transcript.is_vertical_scroll_end
-    
+
+            event = FakeScrollEvent()
             transcript.scroll_to(y=0, animate=False, immediate=True)
-            app.stop_following_transcript()  # type: ignore[attr-defined]
-            await asyncio.sleep(0.1)
+            app.on_transcript_mouse_scroll_up(event)  # type: ignore[attr-defined]
+            await asyncio.sleep(0.2)
+            await pilot.pause()
+            assert event.stopped
             assert not transcript.is_vertical_scroll_end
-    
+
             continue_stream.set()
             await asyncio.sleep(0.1)
             await pilot.pause()
             assert not transcript.is_vertical_scroll_end
-    
+
             release.set()
             await asyncio.wait_for(app.runtime.wait_until_idle(), timeout=3)
             await asyncio.sleep(0.1)
