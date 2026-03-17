@@ -2,6 +2,19 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.4.0 — 2026-03-17
+
+### Added
+- Terminal chat now supports saved prompt slash commands from `~/.faltoobot/prompts/`, plus `Tab` completion for slash command suggestions.
+
+### Changed
+- Shell tool calls for common `sed` and `rg` commands are summarized in a more readable way, including commands prefixed with `cd ... &&`.
+- README now documents background installs, status checks, and log viewing for the WhatsApp bot service.
+
+### Fixed
+- Pasted screenshot paths with shell-escaped spaces are recognized as images again.
+- Transcript auto-scroll behavior was reworked so streaming replies follow more reliably without forcing the view down after you scroll up.
+
 ## 0.3.0 — 2026-03-17
 
 ### Added
