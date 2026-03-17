@@ -17,6 +17,7 @@ from faltoobot.chat import (
     EntryBlock,
     LiveMarkdownBlock,
     SlashCommandItem,
+    completed_slash_query,
     expand_saved_prompt,
     prompt_templates,
     slash_commands,
@@ -223,6 +224,13 @@ def test_slash_commands_include_saved_prompts(tmp_path: Path, monkeypatch: pytes
         ("/review", "Review"),
     )
 
+
+
+def test_completed_slash_query_extends_common_prefix() -> None:
+    suggestions = (("/reset", "start a new session"), ("/review", "Review"))
+
+    assert completed_slash_query("/r", suggestions) == "/re"
+    assert completed_slash_query("/re", suggestions) == "/reset"
 
 
 def test_tool_entry_summarizes_sed_shell_calls() -> None:
@@ -742,6 +750,32 @@ async def test_textual_app_shows_saved_prompt_slash_commands(
         await pilot.pause()
 
         assert slash_command_texts(app) == ["/reset", "/review"]
+
+
+@pytest.mark.anyio
+async def test_textual_app_tab_completes_slash_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    write_prompt(tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1")
+    app = build_chat_app()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("/", "r")
+        await pilot.pause()
+        assert slash_command_texts(app) == ["/reset", "/review"]
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.query_one("#composer", Composer).text == "/re"
+        assert slash_command_texts(app) == ["/reset", "/review"]
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.query_one("#composer", Composer).text == "/reset"
+        assert slash_command_texts(app) == ["/reset"]
 
 
 @pytest.mark.anyio

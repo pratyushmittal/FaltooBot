@@ -69,7 +69,7 @@ COMMANDS = (
     ("/exit", "exit chat"),
 )
 QUEUE_SHORTCUTS = (
-    "Tab queue/input",
+    "Tab complete/queue",
     "↑/↓ select",
     "Enter edit",
     "Space pause",
@@ -426,6 +426,20 @@ def slash_suggestions(
     if query == "/":
         return commands
     return tuple(item for item in commands if item[0].startswith(query))
+
+
+def completed_slash_query(
+    text: str,
+    suggestions: tuple[tuple[str, str], ...],
+) -> str | None:
+    query = slash_query(text)
+    if query is None or not suggestions:
+        return None
+    names = [command for command, _ in suggestions]
+    prefix = os.path.commonprefix(names)
+    if prefix.startswith(query) and len(prefix) > len(query):
+        return prefix
+    return names[0]
 
 
 def session_name(name: str | None) -> str:
@@ -1878,11 +1892,21 @@ class FaltooChatApp(App[None]):
         self.sync_view()
         return True
 
+    def complete_slash_command(self) -> bool:
+        completed = completed_slash_query(self.composer().text, self._command_snapshot)
+        if completed is None:
+            return False
+        self._dismissed_slash_query = None
+        self.composer().load_text(completed)
+        self.focus_composer()
+        self.refresh_commands(force=True)
+        return True
+
     def handle_composer_key(self, key: str) -> bool:
         if key == "escape":
             return self.dismiss_slash_commands()
         if key == "tab":
-            return self.toggle_queue_focus()
+            return self.complete_slash_command() or self.toggle_queue_focus()
         if self._queue_selected is None:
             return False
         if key == "up":
