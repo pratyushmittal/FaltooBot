@@ -164,6 +164,16 @@ def test_paste_image_text_wraps_local_image_paths(tmp_path: Path) -> None:
     assert paste_image_text(str(image), workspace) == image_markdown(image.resolve())
 
 
+def test_paste_image_text_wraps_shell_escaped_local_image_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image = workspace / "CleanShot 2026-03-17 at 14.17.02@2x.png"
+    Image.new("RGB", (10, 10), color="red").save(image)
+    escaped = str(image).replace(" ", r"\ ")
+
+    assert paste_image_text(escaped, workspace) == image_markdown(image.resolve())
+
+
 def test_prompt_templates_read_description_and_body(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -243,6 +253,31 @@ async def test_input_image_part_resizes_large_local_images(
 
     assert part == {"type": "input_image", "file_id": "file_123", "detail": "auto"}
     assert seen == [("vision", (1600, 1200), "large-1600x1200.png")]
+
+
+@pytest.mark.anyio
+async def test_input_image_part_accepts_shell_escaped_local_image_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = prepare_home(tmp_path, monkeypatch)
+    image = workspace / "CleanShot 2026-03-17 at 14.17.02@2x.png"
+    Image.new("RGB", (10, 10), color="red").save(image)
+    seen: list[tuple[str, str]] = []
+
+    class FakeFiles:
+        async def create(self, *, file: object, purpose: str) -> object:
+            seen.append((purpose, Path(file.name).name))  # type: ignore[attr-defined]
+            return type("Uploaded", (), {"id": "file_123"})()
+
+    class FakeClient:
+        files = FakeFiles()
+
+    escaped = str(image).replace(" ", r"\ ")
+    part = await input_image_part(FakeClient(), workspace, escaped)
+
+    assert part == {"type": "input_image", "file_id": "file_123", "detail": "auto"}
+    assert seen == [("vision", image.name)]
 
 
 @pytest.mark.anyio

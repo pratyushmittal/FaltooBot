@@ -85,6 +85,12 @@ MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))
 
 
 def as_session_path(source: str, workspace: Path) -> Path | None:
+    def existing(path: Path) -> Path | None:
+        try:
+            return path if path.exists() else None
+        except OSError:
+            return None
+
     value = source.strip().strip('"').strip("'")
     if not value:
         return None
@@ -96,10 +102,21 @@ def as_session_path(source: str, workspace: Path) -> Path | None:
     else:
         raw = Path(os.path.expanduser(value))
         path = raw if raw.is_absolute() else workspace / raw
+        if existing(path) is None and "\\" in value:
+            try:
+                parts = shlex.split(value)
+            except ValueError:
+                parts = []
+            if len(parts) == 1:
+                raw = Path(os.path.expanduser(parts[0]))
+                path = raw if raw.is_absolute() else workspace / raw
+    if existing(path) is None:
+        return None
     try:
-        return path.resolve() if path.exists() else None
+        return path.resolve()
     except OSError:
         return None
+
 
 
 def is_image_path(path: Path) -> bool:
