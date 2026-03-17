@@ -3,6 +3,7 @@ import asyncio
 import getpass
 import os
 import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from faltoobot.bot import run_auth, run_bot
 from faltoobot.chat import run_chat
@@ -34,9 +36,17 @@ from faltoobot.store import ensure_sessions_dir
 console = Console()
 
 
-def require_macos() -> None:
-    if sys.platform != "darwin":
-        raise SystemExit("This command currently supports macOS only.")
+LOG_STYLES = {
+    "ERROR": "bold red",
+    "WARNING": "yellow",
+    "INFO": "cyan",
+    "DEBUG": "dim",
+}
+
+
+def require_service_platform() -> None:
+    if sys.platform not in {"darwin", "linux"}:
+        raise SystemExit("This command supports macOS and Linux only.")
 
 
 def project_root() -> Path:
@@ -51,14 +61,36 @@ def service_target() -> str:
     return f"gui/{uid()}/{APP_LABEL}"
 
 
+def linux_service_name() -> str:
+    return "faltoobot.service"
+
+
+def linux_service_file(config: Config) -> Path:
+    return config.home / ".config" / "systemd" / "user" / linux_service_name()
+
+
+def service_file(config: Config) -> Path:
+    if sys.platform == "darwin":
+        return config.launch_agent
+    return linux_service_file(config)
+
+
+def run_entrypoint() -> list[str]:
+    return [sys.executable, "-m", "faltoobot", "run"]
+
+
+def shell_join(parts: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
+
+
 def write_run_script(config: Config) -> None:
-    project_dir = project_root()
+    config.root.mkdir(parents=True, exist_ok=True)
     config.run_script.write_text(
         "\n".join(
             [
-                "#!/bin/zsh",
-                f"cd {project_dir.as_posix()!r}",
-                f"exec {uv_bin()!r} run faltoobot run",
+                "#!/bin/sh",
+                f"cd {shlex.quote(config.root.as_posix())}",
+                f"exec {shell_join(run_entrypoint())}",
                 "",
             ]
         ),
@@ -74,11 +106,40 @@ def write_launch_agent(config: Config) -> None:
         "ProgramArguments": [config.run_script.as_posix()],
         "RunAtLoad": True,
         "KeepAlive": True,
-        "WorkingDirectory": str(project_root()),
+        "WorkingDirectory": str(config.root),
         "StandardOutPath": str(config.log_file),
         "StandardErrorPath": str(config.log_file),
     }
     config.launch_agent.write_bytes(plistlib.dumps(data))
+
+
+def systemd_command(config: Config) -> str:
+    return f"exec {shlex.quote(config.run_script.as_posix())} >> {shlex.quote(config.log_file.as_posix())} 2>&1"
+
+
+def write_systemd_service(config: Config) -> None:
+    unit_file = linux_service_file(config)
+    unit_file.parent.mkdir(parents=True, exist_ok=True)
+    unit_file.write_text(
+        "\n".join(
+            [
+                "[Unit]",
+                "Description=Faltoobot WhatsApp bot",
+                "",
+                "[Service]",
+                "Type=simple",
+                "Environment=PYTHONUNBUFFERED=1",
+                f"ExecStart=/bin/sh -lc {shlex.quote(systemd_command(config))}",
+                "Restart=always",
+                "RestartSec=2",
+                "",
+                "[Install]",
+                "WantedBy=default.target",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def run_launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -87,6 +148,18 @@ def run_launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess
 
 def run_cmd(*args: str, cwd: Path | None = None) -> None:
     subprocess.run(list(args), check=True, text=True, cwd=cwd)
+
+
+def run_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["systemctl", "--user", *args],
+            check=check,
+            text=True,
+            capture_output=True,
+        )
+    except FileNotFoundError as exc:  # comment: systemctl is required for Linux background installs.
+        raise SystemExit("systemctl is required for `faltoobot install` on Linux.") from exc
 
 
 def read_cmd(*args: str, cwd: Path | None = None) -> str:
@@ -102,7 +175,9 @@ def uv_bin() -> str:
 
 
 def has_service(config: Config) -> bool:
-    return sys.platform == "darwin" and config.launch_agent.exists()
+    if sys.platform not in {"darwin", "linux"}:
+        return False
+    return service_file(config).exists()
 
 
 async def run_migrations(config: Config) -> list[str]:
@@ -135,39 +210,74 @@ def update_app(config: Config, migrate_only: bool) -> None:
 
 
 def install_service(config: Config) -> None:
-    require_macos()
+    require_service_platform()
     ensure_config_file()
     config.root.mkdir(parents=True, exist_ok=True)
     write_run_script(config)
-    write_launch_agent(config)
-    run_launchctl("bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False)
-    run_launchctl("bootstrap", f"gui/{uid()}", config.launch_agent.as_posix())
-    run_launchctl("enable", service_target(), check=False)
-    run_launchctl("kickstart", "-k", service_target())
+    if sys.platform == "darwin":
+        write_launch_agent(config)
+        run_launchctl("bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False)
+        run_launchctl("bootstrap", f"gui/{uid()}", config.launch_agent.as_posix())
+        run_launchctl("enable", service_target(), check=False)
+        run_launchctl("kickstart", "-k", service_target())
+    else:
+        write_systemd_service(config)
+        run_systemctl("daemon-reload")
+        run_systemctl("enable", "--now", linux_service_name())
+        run_systemctl("restart", linux_service_name())
     console.print(f"[green]Installed[/] {APP_LABEL}")
+    console.print(f"service: [cyan]{service_file(config)}[/]")
     console.print(f"config: [cyan]{config.config_file}[/]")
     console.print(f"logs: [cyan]{config.log_file}[/]")
 
 
 def uninstall_service(config: Config) -> None:
-    require_macos()
-    run_launchctl("bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False)
-    if config.launch_agent.exists():
-        config.launch_agent.unlink()
+    require_service_platform()
+    if sys.platform == "darwin":
+        run_launchctl("bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False)
+        if config.launch_agent.exists():
+            config.launch_agent.unlink()
+    else:
+        run_systemctl("disable", "--now", linux_service_name(), check=False)
+        unit_file = linux_service_file(config)
+        if unit_file.exists():
+            unit_file.unlink()
+        run_systemctl("daemon-reload", check=False)
     if config.run_script.exists():
         config.run_script.unlink()
     console.print(f"[green]Removed[/] {APP_LABEL}")
 
 
 def service_status(config: Config) -> None:
-    require_macos()
-    result = run_launchctl("print", service_target(), check=False)
-    if result.returncode == 0:
-        console.print(f"[green]{APP_LABEL}: loaded[/]")
-        return
-    console.print(f"[yellow]{APP_LABEL}: not loaded[/]")
-    if config.launch_agent.exists():
-        console.print(f"plist: [cyan]{config.launch_agent}[/]")
+    require_service_platform()
+    if sys.platform == "darwin":
+        result = run_launchctl("print", service_target(), check=False)
+        if result.returncode == 0:
+            console.print(f"[green]{APP_LABEL}: loaded[/]")
+            return
+        console.print(f"[yellow]{APP_LABEL}: not loaded[/]")
+    else:
+        result = run_systemctl("is-active", linux_service_name(), check=False)
+        if result.returncode == 0 and result.stdout.strip() == "active":
+            console.print(f"[green]{linux_service_name()}: active[/]")
+            return
+        console.print(f"[yellow]{linux_service_name()}: inactive[/]")
+    if service_file(config).exists():
+        console.print(f"service: [cyan]{service_file(config)}[/]")
+
+
+def log_style(line: str) -> str:
+    if "Traceback" in line or "Exception" in line:
+        return "bold red"
+    for level, style in LOG_STYLES.items():
+        markers = (f" {level} ", f" {level}]", f"[{level}]", f"] - {level}", f": {level} ")
+        if any(marker in line for marker in markers):
+            return style
+    return ""
+
+
+def render_log_line(line: str) -> Text:
+    return Text(line.rstrip("\n"), style=log_style(line))
 
 
 def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
@@ -176,7 +286,7 @@ def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
         return
     data = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for line in data[-lines:]:
-        console.print(line, markup=False)
+        console.print(render_log_line(line))
     if not follow:
         return
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -184,7 +294,7 @@ def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
         while True:
             line = handle.readline()
             if line:
-                console.out(line)
+                console.print(render_log_line(line))
                 continue
             time.sleep(0.5)
 
@@ -320,9 +430,9 @@ def parse_args() -> argparse.Namespace:
     sub.add_parser("run", help="run the WhatsApp bot in the foreground")
     chat = sub.add_parser("chat", help="start a new CLI chat session")
     chat.add_argument("--name", help="optional session name")
-    sub.add_parser("install", help="install the macOS launchd service")
-    sub.add_parser("uninstall", help="remove the macOS launchd service")
-    sub.add_parser("status", help="show launchd status")
+    sub.add_parser("install", help="install the background service")
+    sub.add_parser("uninstall", help="remove the background service")
+    sub.add_parser("status", help="show background service status")
 
     logs = sub.add_parser("logs", help="show Faltoobot logs")
     logs.add_argument("-f", "--follow", action="store_true", help="follow the log output")
@@ -344,7 +454,7 @@ def show_paths(config: Config) -> None:
     table.add_row("session_db", str(config.session_db))
     table.add_row("sessions", str(config.sessions_dir))
     table.add_row("log", str(config.log_file))
-    table.add_row("launch_agent", str(config.launch_agent))
+    table.add_row("service", str(service_file(config)))
     console.print(table)
 
 
