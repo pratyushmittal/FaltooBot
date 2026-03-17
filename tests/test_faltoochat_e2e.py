@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from faltoobot.chat import build_chat_runtime
+from faltoobot.chat.runtime import build_chat_runtime
 
 
 def config_text(system_prompt: str) -> str:
@@ -76,7 +76,9 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
     assert messages[1]["content"] == "FALTOO_E2E_OK"
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
-    assert "Reply with exactly the requested text when asked to do so." in messages[1].get("instructions", "")
+    assert "Reply with exactly the requested text when asked to do so." in messages[1].get(
+        "instructions", ""
+    )
 
 
 @pytest.mark.anyio
@@ -94,7 +96,9 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     config_path = home / ".faltoobot" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        config_text("If the user asks to run a shell command, use the shell tool and return the command output only."),
+        config_text(
+            "If the user asks to run a shell command, use the shell tool and return the command output only."
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
@@ -134,8 +138,12 @@ async def test_faltoochat_reuses_existing_session_for_workspace(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(workspace)
 
-    first = await run_chat_turn(home, "Reply with exactly FIRST_RUN_OK and nothing else.", name=None)
-    second = await run_chat_turn(home, "Reply with exactly SECOND_RUN_OK and nothing else.", name=None)
+    first = await run_chat_turn(
+        home, "Reply with exactly FIRST_RUN_OK and nothing else.", name=None
+    )
+    second = await run_chat_turn(
+        home, "Reply with exactly SECOND_RUN_OK and nothing else.", name=None
+    )
 
     first_messages = first["messages"]
     second_messages = second["messages"]

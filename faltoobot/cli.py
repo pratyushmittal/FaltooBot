@@ -15,11 +15,11 @@ from rich.table import Table
 from rich.text import Text
 
 from faltoobot.bot import run_auth, run_bot
-from faltoobot.chat import run_chat
+from faltoobot.chat.cli import run_chat
 from faltoobot.config import (
     APP_LABEL,
-    MODEL_OPTIONS,
     DEFAULT_THINKING,
+    MODEL_OPTIONS,
     THINKING_OPTIONS,
     Config,
     build_config,
@@ -31,7 +31,6 @@ from faltoobot.config import (
     render_config,
 )
 from faltoobot.store import ensure_sessions_dir
-
 
 console = Console()
 
@@ -158,7 +157,9 @@ def run_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess
             text=True,
             capture_output=True,
         )
-    except FileNotFoundError as exc:  # comment: systemctl is required for Linux background installs.
+    except (
+        FileNotFoundError
+    ) as exc:  # comment: systemctl is required for Linux background installs.
         raise SystemExit("systemctl is required for `faltoobot install` on Linux.") from exc
 
 
@@ -195,7 +196,7 @@ async def run_migrations(config: Config) -> list[str]:
 def update_app(config: Config, migrate_only: bool) -> None:
     if migrate_only:
         changes = asyncio.run(run_migrations(config))
-        console.print(f"[green]Migrations:[/] {", ".join(changes)}")
+        console.print(f"[green]Migrations:[/] {', '.join(changes)}")
         return
 
     repo = project_root()
@@ -314,7 +315,9 @@ def prompt_text(label: str, current: str, *, secret: bool = False) -> str:
 def prompt_bool(label: str, current: bool) -> bool:
     current_text = "y" if current else "n"
     while True:
-        raw = console.input(f"[bold]{label}[/] [y/n] (blank keeps {current_text}): ").strip().lower()
+        raw = (
+            console.input(f"[bold]{label}[/] [y/n] (blank keeps {current_text}): ").strip().lower()
+        )
         if not raw:
             return current
         if raw in {"y", "yes"}:
@@ -356,7 +359,9 @@ def prompt_thinking(current: str) -> str:
         current_marker = " (current)" if value == current else ""
         console.print(f"  [cyan]{index}.[/] {value}{current_marker}")
     while True:
-        default_choice = str(THINKING_OPTIONS.index(current) + 1) if current in THINKING_OPTIONS else "1"
+        default_choice = (
+            str(THINKING_OPTIONS.index(current) + 1) if current in THINKING_OPTIONS else "1"
+        )
         raw = console.input(f"Select thinking mode [{default_choice}]: ").strip()
         choice = default_choice if not raw else raw
         if choice.isdigit():
@@ -376,11 +381,7 @@ def prompt_allowed_chats(current: list[str]) -> list[str]:
     if raw == "-":
         return []
     return sorted(
-        {
-            normalize_chat(item)
-            for item in [part.strip() for part in raw.split(",")]
-            if item
-        }
+        {normalize_chat(item) for item in [part.strip() for part in raw.split(",")] if item}
     )
 
 

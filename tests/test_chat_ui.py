@@ -12,33 +12,31 @@ from rich.text import Text
 from textual import events
 from textual.widgets import Markdown as TextualMarkdown
 
-from faltoobot.chat import (
-    Composer,
-    EntryBlock,
-    LiveMarkdownBlock,
-    SlashCommandItem,
-    completed_slash_query,
-    expand_saved_prompt,
-    prompt_templates,
-    slash_commands,
-    slash_query,
-    slash_suggestions,
-    QueuedPrompt,
-    QueueItem,
-    build_chat_app,
-    build_chat_runtime,
+from faltoobot.chat.app import build_chat_app
+from faltoobot.chat.entries import queue_preview, rich_renderable, tool_entry, visible_content
+from faltoobot.chat.images import (
     fitted_image_size,
     image_markdown,
     input_image_part,
     paste_image_text,
-    queue_preview,
-    rich_renderable,
-    tool_entry,
-    visible_content,
-    status_text,
+)
+from faltoobot.chat.prompts import (
+    completed_slash_query,
+    expand_saved_prompt,
+    prompt_templates,
+    slash_commands,
+)
+from faltoobot.chat.runtime import build_chat_runtime
+from faltoobot.chat.terminal import status_text
+from faltoobot.chat.widgets import (
+    Composer,
+    EntryBlock,
+    LiveMarkdownBlock,
+    QueueItem,
+    SlashCommandItem,
 )
 from faltoobot.config import build_config
-from faltoobot.store import add_turn, cli_session, existing_cli_session
+from faltoobot.store import QueuedPrompt, add_turn, cli_session, existing_cli_session
 
 
 def config_text(system_prompt: str, thinking: str = "high") -> str:
@@ -211,7 +209,9 @@ def test_expand_saved_prompt_supports_positional_arguments(
     )
 
 
-def test_slash_commands_include_saved_prompts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_slash_commands_include_saved_prompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     prepare_home(tmp_path, monkeypatch)
     write_prompt(tmp_path, "review", "# Review\n\nPlease review $1")
     config = build_config()
@@ -223,7 +223,6 @@ def test_slash_commands_include_saved_prompts(tmp_path: Path, monkeypatch: pytes
         ("/exit", "exit chat"),
         ("/review", "Review"),
     )
-
 
 
 def test_completed_slash_query_extends_common_prefix() -> None:
@@ -241,15 +240,12 @@ def test_tool_entry_summarizes_sed_shell_calls() -> None:
     assert text == "shell\nreading faltoobot/chat.py 1 to 220"
 
 
-
 def test_tool_entry_summarizes_rg_shell_calls() -> None:
     text = tool_entry(
         {"type": "shell_call", "action": {"commands": ["rg -n foobar faltoobot tests"]}}
     )
 
     assert text == "shell\nsearching for foobar in faltoobot tests"
-
-
 
 
 def test_tool_entry_summarizes_cd_prefixed_sed_shell_calls() -> None:
@@ -261,7 +257,6 @@ def test_tool_entry_summarizes_cd_prefixed_sed_shell_calls() -> None:
     )
 
     assert text == "shell\nreading faltoobot/chat.py 1 to 220"
-
 
 
 def test_tool_entry_summarizes_cd_prefixed_rg_shell_calls() -> None:
@@ -276,8 +271,10 @@ def test_tool_entry_summarizes_cd_prefixed_rg_shell_calls() -> None:
         }
     )
 
-    assert text == "shell\nsearching for slash|SlashCommand|suggest in faltoobot/chat.py tests/test_chat_ui.py"
-
+    assert (
+        text
+        == "shell\nsearching for slash|SlashCommand|suggest in faltoobot/chat.py tests/test_chat_ui.py"
+    )
 
 
 def test_fitted_image_size_keeps_aspect_ratio() -> None:
@@ -343,7 +340,7 @@ async def test_textual_app_action_paste_does_not_duplicate_text_paste(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    monkeypatch.setattr("faltoobot.chat.save_clipboard_image", lambda session: None)
+    monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: None)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -362,7 +359,7 @@ async def test_textual_app_action_paste_skips_following_text_event_for_images(
     workspace = prepare_home(tmp_path, monkeypatch)
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
-    monkeypatch.setattr("faltoobot.chat.save_clipboard_image", lambda session: image)
+    monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: image)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -381,7 +378,7 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
     workspace = prepare_home(tmp_path, monkeypatch)
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
-    monkeypatch.setattr("faltoobot.chat.save_clipboard_image", lambda session: image)
+    monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: image)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -391,7 +388,9 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
         assert app.query_one("#composer", Composer).text == image_markdown(image)
 
 
-def test_status_text_shows_fast_suffix_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_text_shows_fast_suffix_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     prepare_home(tmp_path, monkeypatch)
     config = build_config()
     assert status_text(config) == "model: gpt-5.4  thinking: high"
@@ -431,8 +430,8 @@ async def test_chat_submits_markdown_images_as_user_message_items(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.input_image_part", fake_input_image_part)
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.images.input_image_part", fake_input_image_part)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
 
     runtime = build_chat_runtime()
     await runtime.start()
@@ -461,7 +460,9 @@ async def test_tree_opens_current_session_messages_file(
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     opened: list[Path] = []
-    monkeypatch.setattr("faltoobot.chat.open_in_default_editor", lambda path: opened.append(path))
+    monkeypatch.setattr(
+        "faltoobot.chat.runtime.open_in_default_editor", lambda path: opened.append(path)
+    )
 
     runtime = build_chat_runtime()
     await runtime.start()
@@ -521,7 +522,9 @@ async def test_chat_updates_messages_file_after_tool_stream_ends(
             "type": "shell_call_output",
             "call_id": "call_1",
             "status": "completed",
-            "output": [{"stdout": "/tmp", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+            "output": [
+                {"stdout": "/tmp", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}
+            ],
         },
     ]
 
@@ -536,7 +539,7 @@ async def test_chat_updates_messages_file_after_tool_stream_ends(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
 
     runtime = build_chat_runtime()
     await runtime.start()
@@ -584,7 +587,7 @@ async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
 
     runtime = build_chat_runtime()
     await runtime.start()
@@ -648,7 +651,7 @@ async def test_chat_queues_messages_while_reply_is_running(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_reply)
 
     runtime = build_chat_runtime()
     await runtime.start()
@@ -685,7 +688,7 @@ async def test_chat_can_interrupt_inflight_reply(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_reply)
 
     runtime = build_chat_runtime()
     await runtime.start()
@@ -970,7 +973,7 @@ async def test_textual_app_shows_submitted_message_immediately(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1001,7 +1004,7 @@ async def test_textual_app_submits_prompt_and_updates_runtime(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1034,7 +1037,7 @@ async def test_textual_app_scrolls_to_new_submission_with_long_history(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1065,7 +1068,7 @@ async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1094,7 +1097,7 @@ async def test_textual_app_renders_plain_user_and_bot_text(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1200,7 +1203,7 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
                 "instructions": "test instructions",
             }
 
-        monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+        monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
         app = build_chat_app()
 
         async with app.run_test() as pilot:
@@ -1233,6 +1236,7 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
 
     asyncio.run(run())
 
+
 @pytest.mark.anyio
 async def test_textual_app_keeps_final_reply_visible_with_long_history(
     tmp_path: Path,
@@ -1257,7 +1261,7 @@ async def test_textual_app_keeps_final_reply_visible_with_long_history(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1295,7 +1299,7 @@ async def test_textual_app_shows_completed_reply_without_restart(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1418,7 +1422,7 @@ async def test_textual_app_reconciles_partial_bot_stream_with_final_reply(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1450,7 +1454,7 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1491,7 +1495,7 @@ async def test_textual_app_updates_live_markdown_blocks_incrementally(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1525,7 +1529,7 @@ async def test_textual_app_commits_streamed_markdown_as_markdown_block(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1640,7 +1644,7 @@ async def test_textual_app_uses_arrow_navigation_and_enter_for_queue_items(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1732,7 +1736,7 @@ async def test_textual_app_reorders_queue_with_shift_arrows(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1759,7 +1763,7 @@ async def test_textual_app_space_toggles_queue_pause_and_tab_returns_to_composer
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    monkeypatch.setattr("faltoobot.chat.ChatRuntime.ensure_processing", lambda self: None)
+    monkeypatch.setattr("faltoobot.chat.runtime.ChatRuntime.ensure_processing", lambda self: None)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
@@ -1823,7 +1827,7 @@ async def test_textual_app_paused_queue_does_not_auto_submit(
             "instructions": "test instructions",
         }
 
-    monkeypatch.setattr("faltoobot.chat.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
     app = build_chat_app()
 
     async with app.run_test() as pilot:
