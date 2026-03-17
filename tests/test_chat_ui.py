@@ -32,6 +32,7 @@ from faltoobot.chat import (
     paste_image_text,
     queue_preview,
     rich_renderable,
+    tool_entry,
     visible_content,
     status_text,
 )
@@ -221,6 +222,25 @@ def test_slash_commands_include_saved_prompts(tmp_path: Path, monkeypatch: pytes
         ("/exit", "exit chat"),
         ("/review", "Review"),
     )
+
+
+
+def test_tool_entry_summarizes_sed_shell_calls() -> None:
+    text = tool_entry(
+        {"type": "shell_call", "action": {"commands": ["sed -n '1,220p' faltoobot/chat.py"]}}
+    )
+
+    assert text == "shell\nreading faltoobot/chat.py 1 to 220"
+
+
+
+def test_tool_entry_summarizes_rg_shell_calls() -> None:
+    text = tool_entry(
+        {"type": "shell_call", "action": {"commands": ["rg -n foobar faltoobot tests"]}}
+    )
+
+    assert text == "shell\nsearching for foobar in faltoobot tests"
+
 
 
 def test_fitted_image_size_keeps_aspect_ratio() -> None:

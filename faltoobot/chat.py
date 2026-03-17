@@ -502,6 +502,113 @@ def open_in_default_editor(path: Path) -> None:
     subprocess.Popen(command)  # noqa: S603
 
 
+SED_RANGE_RE = re.compile(r"(?P<start>\d+)(?:,(?P<end>\d+))?p$")
+RG_VALUE_FLAGS = frozenset(
+    {
+        "-A",
+        "-B",
+        "-C",
+        "-E",
+        "-M",
+        "-g",
+        "-m",
+        "-t",
+        "-T",
+        "--after-context",
+        "--before-context",
+        "--colors",
+        "--context",
+        "--encoding",
+        "--engine",
+        "--glob",
+        "--iglob",
+        "--max-count",
+        "--max-columns",
+        "--path-separator",
+        "--pre",
+        "--pre-glob",
+        "--regex-size-limit",
+        "--sort",
+        "--sortr",
+        "--type",
+        "--type-add",
+        "--type-clear",
+        "--type-not",
+    }
+)
+
+
+def shell_command_summary(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command
+    if not parts:
+        return command
+    if parts[0] == "sed":
+        return sed_command_summary(parts) or command
+    if parts[0] == "rg":
+        return rg_command_summary(parts) or command
+    return command
+
+
+def sed_command_summary(parts: list[str]) -> str | None:
+    script = None
+    filename = None
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        if part == "--":
+            index += 1
+            break
+        if part.startswith("-"):
+            index += 2 if part in {"-e", "-f"} else 1
+            continue
+        script = part
+        index += 1
+        break
+    if script is None or index >= len(parts):
+        return None
+    filename = parts[index]
+    if not filename:
+        return None
+    if not (match := SED_RANGE_RE.fullmatch(script)):
+        return None
+    start = match.group("start")
+    end = match.group("end") or start
+    return f"reading {filename} {start} to {end}"
+
+
+def rg_command_summary(parts: list[str]) -> str | None:
+    pattern = None
+    locations: list[str] = []
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        if part == "--":
+            index += 1
+            break
+        if part.startswith("-"):
+            if part in RG_VALUE_FLAGS:
+                index += 2
+            else:
+                index += 1
+            continue
+        pattern = part
+        index += 1
+        break
+    if pattern is None:
+        return None
+    while index < len(parts):
+        part = parts[index]
+        if not part.startswith("-"):
+            locations.append(part)
+        index += 1
+    location = " ".join(locations) or "."
+    return f"searching for {pattern} in {location}"
+
+
+
 def tool_lines(item: dict[str, Any]) -> list[str]:
     item_type = item.get("type")
     if not isinstance(item_type, str):
@@ -510,12 +617,12 @@ def tool_lines(item: dict[str, Any]) -> list[str]:
         action = item.get("action")
         commands = action.get("commands") if isinstance(action, dict) else None
         if isinstance(commands, list):
-            return ["shell", *(str(command) for command in commands)]
+            return ["shell", *(shell_command_summary(str(command)) for command in commands)]
     if item_type in {"local_shell_call", "function_shell_call"}:
         action = item.get("action")
         command = action.get("command") if isinstance(action, dict) else None
         if isinstance(command, list):
-            return ["shell", " ".join(str(part) for part in command)]
+            return ["shell", shell_command_summary(" ".join(str(part) for part in command))]
     if item_type == "function_call":
         name = item.get("name")
         arguments = item.get("arguments")
