@@ -20,4 +20,4 @@ repos:
         name: ty
         entry: uv run ty check
         language: system
-        pass_filenames: false
+        types_or: [python, pyi]

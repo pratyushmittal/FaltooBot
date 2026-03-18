@@ -16,6 +16,7 @@ from rich.text import Text
 
 from faltoobot.bot import run_auth, run_bot
 from faltoobot.chat.cli import run_chat
+from faltoobot.macchat.cli import run_macos_chat
 from faltoobot.config import (
     APP_LABEL,
     DEFAULT_THINKING,
@@ -142,7 +143,9 @@ def write_systemd_service(config: Config) -> None:
 
 
 def run_launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["launchctl", *args], check=check, text=True, capture_output=True)
+    return subprocess.run(
+        ["launchctl", *args], check=check, text=True, capture_output=True
+    )
 
 
 def run_cmd(*args: str, cwd: Path | None = None) -> None:
@@ -160,11 +163,15 @@ def run_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess
     except (
         FileNotFoundError
     ) as exc:  # comment: systemctl is required for Linux background installs.
-        raise SystemExit("systemctl is required for `faltoobot install` on Linux.") from exc
+        raise SystemExit(
+            "systemctl is required for `faltoobot install` on Linux."
+        ) from exc
 
 
 def read_cmd(*args: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(list(args), check=True, text=True, cwd=cwd, capture_output=True)
+    result = subprocess.run(
+        list(args), check=True, text=True, cwd=cwd, capture_output=True
+    )
     return result.stdout
 
 
@@ -204,7 +211,9 @@ def update_app(config: Config, migrate_only: bool) -> None:
         raise SystemExit("`faltoobot update` only works from a git clone of the repo.")
     status = read_cmd("git", "status", "--short", cwd=repo).strip()
     if status:
-        raise SystemExit("Commit or stash local changes before running `faltoobot update`.")
+        raise SystemExit(
+            "Commit or stash local changes before running `faltoobot update`."
+        )
     run_cmd("git", "pull", "--ff-only", cwd=repo)
     run_cmd(uv_bin(), "sync", cwd=repo)
     run_cmd(uv_bin(), "run", "faltoobot", "update", "--migrate-only", cwd=repo)
@@ -217,7 +226,9 @@ def install_service(config: Config) -> None:
     write_run_script(config)
     if sys.platform == "darwin":
         write_launch_agent(config)
-        run_launchctl("bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False)
+        run_launchctl(
+            "bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False
+        )
         run_launchctl("bootstrap", f"gui/{uid()}", config.launch_agent.as_posix())
         run_launchctl("enable", service_target(), check=False)
         run_launchctl("kickstart", "-k", service_target())
@@ -235,7 +246,9 @@ def install_service(config: Config) -> None:
 def uninstall_service(config: Config) -> None:
     require_service_platform()
     if sys.platform == "darwin":
-        run_launchctl("bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False)
+        run_launchctl(
+            "bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False
+        )
         if config.launch_agent.exists():
             config.launch_agent.unlink()
     else:
@@ -271,7 +284,13 @@ def log_style(line: str) -> str:
     if "Traceback" in line or "Exception" in line:
         return "bold red"
     for level, style in LOG_STYLES.items():
-        markers = (f" {level} ", f" {level}]", f"[{level}]", f"] - {level}", f": {level} ")
+        markers = (
+            f" {level} ",
+            f" {level}]",
+            f"[{level}]",
+            f"] - {level}",
+            f": {level} ",
+        )
         if any(marker in line for marker in markers):
             return style
     return ""
@@ -301,7 +320,9 @@ def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
 
 
 def prompt_text(label: str, current: str, *, secret: bool = False) -> str:
-    current_text = "[set]" if secret and current else f"[{current}]" if current else "[empty]"
+    current_text = (
+        "[set]" if secret and current else f"[{current}]" if current else "[empty]"
+    )
     raw = (
         getpass.getpass(f"{label} {current_text} (blank keeps current): ")
         if secret
@@ -316,7 +337,9 @@ def prompt_bool(label: str, current: bool) -> bool:
     current_text = "y" if current else "n"
     while True:
         raw = (
-            console.input(f"[bold]{label}[/] [y/n] (blank keeps {current_text}): ").strip().lower()
+            console.input(f"[bold]{label}[/] [y/n] (blank keeps {current_text}): ")
+            .strip()
+            .lower()
         )
         if not raw:
             return current
@@ -337,7 +360,9 @@ def prompt_model(current: str) -> str:
     console.print(f"  [cyan]{custom_index}.[/] custom{custom_marker}")
     while True:
         default_choice = (
-            str(MODEL_OPTIONS.index(current) + 1) if current in MODEL_OPTIONS else str(custom_index)
+            str(MODEL_OPTIONS.index(current) + 1)
+            if current in MODEL_OPTIONS
+            else str(custom_index)
         )
         raw = console.input(f"Select model [{default_choice}]: ").strip()
         if not raw:
@@ -349,7 +374,9 @@ def prompt_model(current: str) -> str:
             if 1 <= index <= len(MODEL_OPTIONS):
                 return MODEL_OPTIONS[index - 1]
             if index == custom_index:
-                return prompt_text("Custom model", current if current not in MODEL_OPTIONS else "")
+                return prompt_text(
+                    "Custom model", current if current not in MODEL_OPTIONS else ""
+                )
         console.print(f"[yellow]Enter a number between 1 and {custom_index}.[/]")
 
 
@@ -360,7 +387,9 @@ def prompt_thinking(current: str) -> str:
         console.print(f"  [cyan]{index}.[/] {value}{current_marker}")
     while True:
         default_choice = (
-            str(THINKING_OPTIONS.index(current) + 1) if current in THINKING_OPTIONS else "1"
+            str(THINKING_OPTIONS.index(current) + 1)
+            if current in THINKING_OPTIONS
+            else "1"
         )
         raw = console.input(f"Select thinking mode [{default_choice}]: ").strip()
         choice = default_choice if not raw else raw
@@ -368,7 +397,9 @@ def prompt_thinking(current: str) -> str:
             index = int(choice)
             if 1 <= index <= len(THINKING_OPTIONS):
                 return THINKING_OPTIONS[index - 1]
-        console.print(f"[yellow]Enter a number between 1 and {len(THINKING_OPTIONS)}.[/]")
+        console.print(
+            f"[yellow]Enter a number between 1 and {len(THINKING_OPTIONS)}.[/]"
+        )
 
 
 def prompt_allowed_chats(current: list[str]) -> list[str]:
@@ -381,7 +412,11 @@ def prompt_allowed_chats(current: list[str]) -> list[str]:
     if raw == "-":
         return []
     return sorted(
-        {normalize_chat(item) for item in [part.strip() for part in raw.split(",")] if item}
+        {
+            normalize_chat(item)
+            for item in [part.strip() for part in raw.split(",")]
+            if item
+        }
     )
 
 
@@ -390,7 +425,9 @@ def configure_app(config: Config) -> None:
     openai = data["openai"]
     bot = data["bot"]
     console.print(f"[bold]Config file:[/] [cyan]{config.config_file}[/]")
-    console.print("Press Enter to keep the current value. Enter '-' to clear text fields.")
+    console.print(
+        "Press Enter to keep the current value. Enter '-' to clear text fields."
+    )
     updated = merge_config(
         {
             "openai": {
@@ -400,7 +437,9 @@ def configure_app(config: Config) -> None:
                     secret=True,
                 ),
                 "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
-                "thinking": prompt_thinking(str(openai.get("thinking") or DEFAULT_THINKING)),
+                "thinking": prompt_thinking(
+                    str(openai.get("thinking") or DEFAULT_THINKING)
+                ),
                 "fast": prompt_bool("OpenAI fast mode", bool(openai.get("fast"))),
             },
             "bot": {
@@ -431,13 +470,19 @@ def parse_args() -> argparse.Namespace:
     sub.add_parser("run", help="run the WhatsApp bot in the foreground")
     chat = sub.add_parser("chat", help="start a new CLI chat session")
     chat.add_argument("--name", help="optional session name")
+    macchat = sub.add_parser("macchat", help="start the native macOS chat app")
+    macchat.add_argument("--name", help="optional session name")
     sub.add_parser("install", help="install the background service")
     sub.add_parser("uninstall", help="remove the background service")
     sub.add_parser("status", help="show background service status")
 
     logs = sub.add_parser("logs", help="show Faltoobot logs")
-    logs.add_argument("-f", "--follow", action="store_true", help="follow the log output")
-    logs.add_argument("-n", "--lines", type=int, default=100, help="number of lines to show")
+    logs.add_argument(
+        "-f", "--follow", action="store_true", help="follow the log output"
+    )
+    logs.add_argument(
+        "-n", "--lines", type=int, default=100, help="number of lines to show"
+    )
 
     update = sub.add_parser("update", help="pull the latest code and run migrations")
     update.add_argument("--migrate-only", action="store_true", help=argparse.SUPPRESS)
@@ -459,38 +504,41 @@ def show_paths(config: Config) -> None:
     console.print(table)
 
 
+def handle_async_command(args: argparse.Namespace, config: Config) -> bool:
+    command = args.command
+    if command == "auth":
+        asyncio.run(run_auth(config))
+        return True
+    if command == "run":
+        asyncio.run(run_bot(config))
+        return True
+    if command == "chat":
+        asyncio.run(run_chat(config, name=args.name))
+        return True
+    return False
+
+
+def handle_command(args: argparse.Namespace, config: Config) -> None:
+    if handle_async_command(args, config):
+        return
+    actions = {
+        "configure": lambda: (ensure_config_file(), configure_app(config)),
+        "install": lambda: install_service(config),
+        "logs": lambda: tail_file(
+            config.log_file, lines=args.lines, follow=args.follow
+        ),
+        "macchat": lambda: run_macos_chat(config, name=args.name),
+        "paths": lambda: (ensure_config_file(), show_paths(config)),
+        "status": lambda: service_status(config),
+        "uninstall": lambda: uninstall_service(config),
+        "update": lambda: update_app(config, migrate_only=args.migrate_only),
+    }
+    action = actions.get(args.command)
+    if action is None:  # guard for unexpected parser changes
+        raise SystemExit(f"unknown command: {args.command}")
+    action()
+
+
 def main() -> None:
     args = parse_args()
-    config = build_config()
-    if args.command == "auth":
-        asyncio.run(run_auth(config))
-        return
-    if args.command == "configure":
-        ensure_config_file()
-        configure_app(config)
-        return
-    if args.command == "run":
-        asyncio.run(run_bot(config))
-        return
-    if args.command == "chat":
-        asyncio.run(run_chat(config, name=args.name))
-        return
-    if args.command == "update":
-        update_app(config, migrate_only=args.migrate_only)
-        return
-    if args.command == "install":
-        install_service(config)
-        return
-    if args.command == "uninstall":
-        uninstall_service(config)
-        return
-    if args.command == "status":
-        service_status(config)
-        return
-    if args.command == "logs":
-        tail_file(config.log_file, lines=args.lines, follow=args.follow)
-        return
-    if args.command == "paths":
-        ensure_config_file()
-        show_paths(config)
-        return
+    handle_command(args, build_config())
