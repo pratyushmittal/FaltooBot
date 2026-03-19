@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict, Unpack
 from uuid import uuid4
 
 SessionKind = Literal["cli", "whatsapp"]
@@ -42,6 +42,16 @@ class Session:
     queued_prompts: tuple[QueuedPrompt, ...]
 
 
+class TurnOptions(TypedDict, total=False):
+    items: list[dict[str, Any]] | tuple[dict[str, Any], ...]
+    usage: dict[str, Any]
+    instructions: str
+
+
+class AssistantTurnOptions(TurnOptions, total=False):
+    created_at: str
+
+
 def ensure_sessions_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -63,7 +73,9 @@ def session_payload(session: Session) -> dict[str, Any]:
         "chat_key": session.chat_key,
         "workspace": str(session.workspace),
         "processed_message_ids": list(session.processed_message_ids),
-        "queued_prompts": [queued_prompt_payload(prompt) for prompt in session.queued_prompts],
+        "queued_prompts": [
+            queued_prompt_payload(prompt) for prompt in session.queued_prompts
+        ],
         "messages": [turn_payload(turn) for turn in session.messages],
     }
 
@@ -95,7 +107,9 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
 
 def build_session(root: Path, payload: dict[str, Any]) -> Session:
@@ -112,7 +126,9 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
             else (),
             usage=item.get("usage") if isinstance(item.get("usage"), dict) else None,
             instructions=(
-                item.get("instructions") if isinstance(item.get("instructions"), str) else None
+                item.get("instructions")
+                if isinstance(item.get("instructions"), str)
+                else None
             ),
         )
         for item in raw_messages
@@ -138,10 +154,14 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
         id=str(payload.get("id") or root.name),
         name=str(payload.get("name") or root.name),
         kind="cli" if payload.get("kind") == "cli" else "whatsapp",
-        chat_key=payload.get("chat_key") if isinstance(payload.get("chat_key"), str) else None,
+        chat_key=payload.get("chat_key")
+        if isinstance(payload.get("chat_key"), str)
+        else None,
         root=root,
         messages_file=root / MESSAGES_FILE,
-        workspace=Path(workspace) if isinstance(workspace, str) else root / WORKSPACE_DIR,
+        workspace=Path(workspace)
+        if isinstance(workspace, str)
+        else root / WORKSPACE_DIR,
         processed_message_ids=processed,
         messages=messages,
         queued_prompts=queued_prompts,
@@ -265,19 +285,21 @@ def last_instructions(session: Session) -> str | None:
 def assistant_turn(
     session: Session,
     content: str,
-    items: list[dict[str, Any]] | None = None,
-    usage: dict[str, Any] | None = None,
-    instructions: str | None = None,
-    created_at: str | None = None,
+    **kwargs: Unpack[AssistantTurnOptions],
 ) -> Turn:
+    items = kwargs.get("items")
+    instructions = kwargs.get("instructions")
+    usage = kwargs.get("usage")
     next_instructions = instructions if isinstance(instructions, str) else None
     if next_instructions == last_instructions(session):
         next_instructions = None
     return Turn(
         role="assistant",
         content=content,
-        created_at=created_at or now(),
-        items=tuple(item for item in (items or []) if isinstance(item, dict)),
+        created_at=kwargs.get("created_at") or now(),
+        items=tuple(item for item in items if isinstance(item, dict))
+        if isinstance(items, (list, tuple))
+        else (),
         usage=usage if isinstance(usage, dict) else None,
         instructions=next_instructions,
     )
@@ -287,18 +309,21 @@ def add_turn(
     session: Session,
     role: Role,
     content: str,
-    items: list[dict[str, Any]] | None = None,
-    usage: dict[str, Any] | None = None,
-    instructions: str | None = None,
+    **kwargs: Unpack[TurnOptions],
 ) -> Session:
+    items = kwargs.get("items")
+    usage = kwargs.get("usage")
+    instructions = kwargs.get("instructions")
     turn = (
-        assistant_turn(session, content, items, usage, instructions)
+        assistant_turn(session, content, **kwargs)
         if role == "assistant"
         else Turn(
             role=role,
             content=content,
             created_at=now(),
-            items=tuple(item for item in (items or []) if isinstance(item, dict)),
+            items=tuple(item for item in items if isinstance(item, dict))
+            if isinstance(items, (list, tuple))
+            else (),
             usage=usage if isinstance(usage, dict) else None,
             instructions=instructions if isinstance(instructions, str) else None,
         )
@@ -314,15 +339,21 @@ def sync_assistant_turn(
     instructions: str | None = None,
 ) -> Session:
     last = session.messages[-1] if session.messages else None
-    base = replace(session, messages=session.messages[:-1]) if last and last.role == "assistant" else session
-    turn = assistant_turn(
-        base,
-        content,
-        items,
-        usage,
-        instructions,
-        last.created_at if last and last.role == "assistant" else None,
+    base = (
+        replace(session, messages=session.messages[:-1])
+        if last and last.role == "assistant"
+        else session
     )
+    kwargs: AssistantTurnOptions = {}
+    if items is not None:
+        kwargs["items"] = items
+    if usage is not None:
+        kwargs["usage"] = usage
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    if last and last.role == "assistant":
+        kwargs["created_at"] = last.created_at
+    turn = assistant_turn(base, content, **kwargs)
     return save_session(replace(session, messages=(*base.messages, turn)))
 
 
