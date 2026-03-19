@@ -34,6 +34,16 @@ def _channel_value(value: str) -> int:
 
 
 def terminal_background_dark(timeout: float = 0.1) -> bool | None:
+    """Detect whether the current terminal background is dark.
+
+    Sends OSC 11 to ask the terminal for its background color, parses the
+    returned RGB value, and converts it to a simple brightness score.
+
+    Returns:
+        True: Background looks dark.
+        False: Background looks light.
+        None: Detection is unavailable, unsupported, or timed out.
+    """
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return None
     fd = sys.stdin.fileno()

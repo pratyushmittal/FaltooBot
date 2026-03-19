@@ -12,12 +12,17 @@ from textual.widgets import Static, TextArea
 
 from faltoobot.config import Config
 
-from .entries import Entry
 from .prompts import completed_slash_query, slash_query, slash_suggestions
 from .runtime import build_chat_runtime
 from .state import QueueState, SlashState, TranscriptState
 from .terminal import input_hint
-from .widgets import Composer, EntryBlock, LiveMarkdownBlock, QueueItem, SlashCommandItem
+from .widgets import (
+    Composer,
+    EntryBlock,
+    LiveMarkdownBlock,
+    QueueItem,
+    SlashCommandItem,
+)
 
 SCROLL_SETTLE_DURATION = 1.0
 SCROLL_SETTLE_INTERVAL = 0.02
@@ -64,7 +69,11 @@ class FaltooChatApp(App[None]):
         max-height: 8;
         layout: vertical;
         background: $background;
-        border: none;
+        border: round $primary;
+        border-bottom: none;
+        border-title-align: left;
+        border-title-color: $primary;
+        border-title-background: $background;
         padding: 0;
     }
 
@@ -72,8 +81,12 @@ class FaltooChatApp(App[None]):
         height: auto;
         layout: vertical;
         background: $background;
-        border: none;
-        padding: 0 0 1 0;
+        border: round $primary;
+        border-bottom: none;
+        border-title-align: left;
+        border-title-color: $primary;
+        border-title-background: $background;
+        padding: 0 0 0 0;
     }
 
     .slash-command-item {
@@ -86,7 +99,7 @@ class FaltooChatApp(App[None]):
     }
 
     .slash-command-name {
-        width: 10;
+        width: 20;
         text-style: bold;
         color: $accent;
     }
@@ -209,9 +222,6 @@ class FaltooChatApp(App[None]):
         self.queue_state = QueueState()
         self.slash_state = SlashState()
 
-    def make_live_block(self, entry: Entry) -> LiveMarkdownBlock:
-        return LiveMarkdownBlock(entry)
-
     @property
     def follow_transcript(self) -> bool:
         return self.transcript_state.follow
@@ -221,8 +231,12 @@ class FaltooChatApp(App[None]):
             yield VerticalScroll(id="transcript")
             with Center():
                 with Vertical(id="footer"):
-                    yield Vertical(id="queue")
-                    yield Vertical(id="commands")
+                    queue = Vertical(id="queue")
+                    queue.border_title = "Queue"
+                    yield queue
+                    commands = Vertical(id="commands")
+                    commands.border_title = "Commands"
+                    yield commands
                     yield Composer(
                         id="composer",
                         text="",
@@ -286,7 +300,9 @@ class FaltooChatApp(App[None]):
         self.scroll_transcript_end_once()
         self.call_after_refresh(self.scroll_transcript_end_once)
         if settle:
-            self.transcript_state.settle_task = asyncio.create_task(self.settle_transcript_end())
+            self.transcript_state.settle_task = asyncio.create_task(
+                self.settle_transcript_end()
+            )
 
     def restore_transcript_scroll(self, y: float) -> None:
         try:
@@ -381,14 +397,18 @@ class FaltooChatApp(App[None]):
         queued = self.runtime.queued_prompts()
         if not queued:
             self.queue_state.selected = None
-        elif self.queue_state.selected is not None and self.queue_state.selected >= len(queued):
+        elif self.queue_state.selected is not None and self.queue_state.selected >= len(
+            queued
+        ):
             self.queue_state.selected = len(queued) - 1
 
     def refresh_queue(self, *, force: bool = False) -> bool:
         queued = self.runtime.queued_prompt_items()
         queue_snapshot = tuple((prompt.content, prompt.paused) for prompt in queued)
         self.normalize_queue_selection()
-        selection_changed = self.queue_state.selected != self.queue_state.selected_snapshot
+        selection_changed = (
+            self.queue_state.selected != self.queue_state.selected_snapshot
+        )
         layout_changed = queue_snapshot != self.queue_state.snapshot
         if not force and not layout_changed and not selection_changed:
             return False
@@ -426,7 +446,8 @@ class FaltooChatApp(App[None]):
         previous_scroll = transcript.scroll_y
         had_live = self.transcript_state.stream_block is not None or live is not None
         previous_rendered = tuple(
-            (block.entry.kind, block.entry.content) for block in self.transcript_state.blocks
+            (block.entry.kind, block.entry.content)
+            for block in self.transcript_state.blocks
         )
         rendered = tuple((entry.kind, entry.content) for entry in entries)
         append_only = rendered[: len(self.transcript_state.blocks)] == previous_rendered
@@ -450,7 +471,10 @@ class FaltooChatApp(App[None]):
                 final_index = len(self.transcript_state.blocks)
                 if final_index < len(entries):
                     final_entry = entries[final_index]
-                    if self.transcript_state.stream_block.entry.kind == final_entry.kind:
+                    if (
+                        self.transcript_state.stream_block.entry.kind
+                        == final_entry.kind
+                    ):
                         committed = EntryBlock(final_entry)
                         self.transcript_state.stream_block.remove()
                         transcript.mount(committed)
@@ -460,11 +484,11 @@ class FaltooChatApp(App[None]):
                     self.transcript_state.stream_block.remove()
                     self.transcript_state.stream_block = None
         elif self.transcript_state.stream_block is None:
-            self.transcript_state.stream_block = self.make_live_block(live)
+            self.transcript_state.stream_block = LiveMarkdownBlock(live)
             transcript.mount(self.transcript_state.stream_block)
         elif not self.transcript_state.stream_block.set_entry(live):
             self.transcript_state.stream_block.remove()
-            self.transcript_state.stream_block = self.make_live_block(live)
+            self.transcript_state.stream_block = LiveMarkdownBlock(live)
             transcript.mount(self.transcript_state.stream_block)
 
         if self.transcript_state.follow:
@@ -548,13 +572,17 @@ class FaltooChatApp(App[None]):
         total = len(self.runtime.pending_prompts)
         if not total:
             return True
-        self.queue_state.selected = None if self.queue_state.selected is not None else total - 1
+        self.queue_state.selected = (
+            None if self.queue_state.selected is not None else total - 1
+        )
         self.focus_composer()
         self.sync_view()
         return True
 
     def complete_slash_command(self) -> bool:
-        completed = completed_slash_query(self.composer().text, self.slash_state.snapshot)
+        completed = completed_slash_query(
+            self.composer().text, self.slash_state.snapshot
+        )
         if completed is None:
             return False
         self.slash_state.dismissed_query = None
@@ -593,28 +621,9 @@ class FaltooChatApp(App[None]):
 
     @on(QueueItem.Picked)
     def on_queue_item_picked(self, message: QueueItem.Picked) -> None:
-        if self.queue_state.drag_index is not None and self.queue_state.drag_index != message.index:
-            return
         self.queue_state.selected = message.index
         self.focus_composer()
         self.sync_view()
-
-    @on(QueueItem.DragStart)
-    def on_queue_item_drag_start(self, message: QueueItem.DragStart) -> None:
-        self.queue_state.drag_index = message.index
-        self.queue_state.selected = message.index
-        self.focus_composer()
-        self.sync_view()
-
-    @on(QueueItem.DragFinish)
-    def on_queue_item_drag_finish(self, message: QueueItem.DragFinish) -> None:
-        if self.queue_state.drag_index is None:
-            return
-        source = self.queue_state.drag_index
-        self.queue_state.drag_index = None
-        if source == message.index:
-            return
-        self.move_queue(source, message.index)
 
     def action_edit_selected_queue(self) -> None:
         if self.queue_state.selected is not None:
@@ -644,12 +653,3 @@ class FaltooChatApp(App[None]):
             return
         if self.queue_state.selected < len(self.runtime.pending_prompts) - 1:
             self.move_queue(self.queue_state.selected, self.queue_state.selected + 1)
-
-
-def build_chat_app(
-    config: Config | None = None,
-    name: str | None = None,
-    client: AsyncOpenAI | None = None,
-    terminal_dark: bool | None = None,
-) -> FaltooChatApp:
-    return FaltooChatApp(config=config, name=name, client=client, terminal_dark=terminal_dark)

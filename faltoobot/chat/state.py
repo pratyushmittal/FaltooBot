@@ -14,7 +14,6 @@ class QueueState:
     snapshot: tuple[tuple[str, bool], ...] = ()
     selected_snapshot: int | None = None
     selected: int | None = None
-    drag_index: int | None = None
 
 
 @dataclass(slots=True)

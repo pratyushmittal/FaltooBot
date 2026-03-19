@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import events
 from textual.widgets import Markdown as TextualMarkdown
 
-from faltoobot.chat.app import build_chat_app
+from faltoobot.chat.app import FaltooChatApp
 from faltoobot.chat.entries import queue_preview, rich_renderable, tool_entry, visible_content
 from faltoobot.chat.images import (
     fitted_image_size,
@@ -341,7 +341,7 @@ async def test_textual_app_action_paste_does_not_duplicate_text_paste(
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: None)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -360,7 +360,7 @@ async def test_textual_app_action_paste_skips_following_text_event_for_images(
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
     monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: image)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -379,7 +379,7 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
     monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: image)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -710,7 +710,7 @@ async def test_textual_app_focuses_composer_and_shows_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch, thinking="medium")
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -725,7 +725,7 @@ async def test_textual_app_tab_does_nothing_without_queued_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -741,7 +741,7 @@ async def test_textual_app_shows_slash_commands_after_typing_slash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -757,7 +757,7 @@ async def test_textual_app_filters_slash_commands_while_typing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -774,7 +774,7 @@ async def test_textual_app_shows_saved_prompt_slash_commands(
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     write_prompt(tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1")
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -791,7 +791,7 @@ async def test_textual_app_tab_completes_slash_commands(
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     write_prompt(tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1")
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -833,7 +833,7 @@ async def test_textual_app_clicking_slash_command_completes_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -853,7 +853,7 @@ async def test_textual_app_escape_hides_slash_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -941,7 +941,7 @@ async def test_textual_app_stays_responsive_while_shell_tool_runs(
         }
 
     monkeypatch.setattr("faltoobot.agent.run_shell_call", slow_shell_call)
-    app = build_chat_app(client=FakeClient())
+    app = FaltooChatApp(client=FakeClient())
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -974,7 +974,7 @@ async def test_textual_app_shows_submitted_message_immediately(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1005,7 +1005,7 @@ async def test_textual_app_submits_prompt_and_updates_runtime(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1038,7 +1038,7 @@ async def test_textual_app_scrolls_to_new_submission_with_long_history(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1069,7 +1069,7 @@ async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1098,7 +1098,7 @@ async def test_textual_app_renders_plain_user_and_bot_text(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1136,7 +1136,7 @@ async def test_textual_app_starts_with_saved_tool_text_containing_markup_chars(
         ],
     )
 
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1158,7 +1158,7 @@ async def test_textual_app_starts_scrolled_to_bottom_with_long_history(
         session = add_turn(session, "user", f"prompt {index}")
         session = add_turn(session, "assistant", f"reply {index} " * 12)
 
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1204,7 +1204,7 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
             }
 
         monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-        app = build_chat_app()
+        app = FaltooChatApp()
 
         async with app.run_test() as pilot:
             await pilot.pause()
@@ -1262,7 +1262,7 @@ async def test_textual_app_keeps_final_reply_visible_with_long_history(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1300,7 +1300,7 @@ async def test_textual_app_shows_completed_reply_without_restart(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1395,7 +1395,7 @@ async def test_textual_app_shows_tool_details_while_streaming(
         def __init__(self) -> None:
             self.responses = FakeResponses()
 
-    app = build_chat_app(client=FakeClient())
+    app = FaltooChatApp(client=FakeClient())
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1423,7 +1423,7 @@ async def test_textual_app_reconciles_partial_bot_stream_with_final_reply(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1455,7 +1455,7 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1496,7 +1496,7 @@ async def test_textual_app_updates_live_markdown_blocks_incrementally(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1530,7 +1530,7 @@ async def test_textual_app_commits_streamed_markdown_as_markdown_block(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1550,7 +1550,7 @@ async def test_textual_app_shift_enter_keeps_multiline_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1565,7 +1565,7 @@ async def test_textual_app_up_keeps_multiline_cursor_in_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1590,7 +1590,7 @@ async def test_textual_app_routes_queue_keys_from_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1612,7 +1612,7 @@ async def test_textual_app_enter_edits_clicked_queue_item(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1645,7 +1645,7 @@ async def test_textual_app_uses_arrow_navigation_and_enter_for_queue_items(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1677,7 +1677,7 @@ async def test_textual_app_moves_queue_selection_without_rebuilding_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1701,7 +1701,7 @@ async def test_textual_app_tab_moves_between_queue_and_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1737,7 +1737,7 @@ async def test_textual_app_reorders_queue_with_shift_arrows(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1764,7 +1764,7 @@ async def test_textual_app_space_toggles_queue_pause_and_tab_returns_to_composer
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
     monkeypatch.setattr("faltoobot.chat.runtime.ChatRuntime.ensure_processing", lambda self: None)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1790,7 +1790,7 @@ async def test_textual_app_delete_removes_selected_queue_item(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1828,7 +1828,7 @@ async def test_textual_app_paused_queue_does_not_auto_submit(
         }
 
     monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
-    app = build_chat_app()
+    app = FaltooChatApp()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1868,7 +1868,7 @@ async def test_textual_app_restores_saved_queue_as_paused(
     payload = json.loads(messages_file.read_text(encoding="utf-8"))
     assert [item["content"] for item in payload["queued_prompts"]] == ["one", "two"]
 
-    app = build_chat_app()
+    app = FaltooChatApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         assert queue_texts(app) == ["one", "two"]

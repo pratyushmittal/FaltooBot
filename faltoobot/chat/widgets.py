@@ -102,16 +102,6 @@ class QueueItem(Horizontal):
             self.index = index
             super().__init__()
 
-    class DragStart(Message):
-        def __init__(self, index: int) -> None:
-            self.index = index
-            super().__init__()
-
-    class DragFinish(Message):
-        def __init__(self, index: int) -> None:
-            self.index = index
-            super().__init__()
-
     def __init__(self, index: int, prompt: QueuedPrompt) -> None:
         self.index = index
         self.content = queue_preview(prompt.content)
@@ -129,14 +119,6 @@ class QueueItem(Horizontal):
             Text(f"{self.marker()} {self.content}", overflow="ellipsis", no_wrap=True),
             classes="queue-text",
         )
-
-    def on_mouse_down(self, event: Any) -> None:
-        event.stop()
-        self.post_message(self.DragStart(self.index))
-
-    def on_mouse_up(self, event: Any) -> None:
-        event.stop()
-        self.post_message(self.DragFinish(self.index))
 
     def on_click(self, event: Any) -> None:
         event.stop()

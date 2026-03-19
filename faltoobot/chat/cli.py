@@ -2,12 +2,12 @@ import argparse
 
 from faltoobot.config import Config
 
-from .app import build_chat_app
+from .app import FaltooChatApp
 from .terminal import terminal_background_dark
 
 
 async def run_chat(config: Config | None = None, name: str | None = None) -> None:
-    await build_chat_app(
+    await FaltooChatApp(
         config=config, name=name, terminal_dark=terminal_background_dark()
     ).run_async()
 
@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        build_chat_app(name=args.name, terminal_dark=terminal_background_dark()).run()
+        FaltooChatApp(name=args.name, terminal_dark=terminal_background_dark()).run()
     except KeyboardInterrupt:
         return 130
     return 0
