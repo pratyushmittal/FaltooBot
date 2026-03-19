@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 from faltoobot.config import Config
 from faltoobot.store import Session
 
-COMPACT_THRESHOLD = 100_000
+COMPACT_THRESHOLD = 210_000
 DEFAULT_TIMEOUT_MS = 60_000
 MAX_SHELL_OUTPUT = 12_000
 FRONTMATTER_PARTS = 2
