@@ -29,6 +29,6 @@ repos:
         types_or: [python, pyi]
       - id: pytest
         name: pytest
-        entry: uv run pytest
+        entry: uv run pytest -n auto
         language: system
         pass_filenames: false

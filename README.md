@@ -121,6 +121,14 @@ In terminal chat:
 
 `faltoochat` also supports image input. Paste an image file path, paste markdown like `![alt](path)`, or use `Ctrl+V` to attach the current macOS clipboard image.
 
+### Tests
+
+Run the test suite (parallel):
+
+```bash
+uv run pytest -n auto
+```
+
 ### Update
 
 ```bash
