@@ -1,13 +1,13 @@
 from pathlib import Path
 
 from faltoobot.agent import run_shell_call
-from faltoobot.store import create_cli_session
+from faltoobot.store import create_session
 
 
 def test_run_shell_call_preserves_requested_max_output_length(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(tmp_path / "sessions", "CLI shell test", workspace=workspace)
+    session = create_session(tmp_path / "sessions", "CLI shell test", kind="cli", workspace=workspace)
     output = run_shell_call(
         session,
         {
@@ -28,7 +28,7 @@ def test_run_shell_call_preserves_requested_max_output_length(tmp_path: Path) ->
 def test_run_shell_call_replaces_invalid_utf8_bytes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(tmp_path / "sessions", "CLI shell test", workspace=workspace)
+    session = create_session(tmp_path / "sessions", "CLI shell test", kind="cli", workspace=workspace)
     output = run_shell_call(
         session,
         {

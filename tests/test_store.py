@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from faltoobot.store import add_turn, create_cli_session, session_items, sync_assistant_turn
+from faltoobot.store import add_turn, create_session, session_items, sync_assistant_turn
 
 
 def test_add_turn_omits_duplicate_assistant_instructions(tmp_path: Path) -> None:
     sessions_dir = tmp_path / "sessions"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(sessions_dir, "CLI test", workspace)
+    session = create_session(sessions_dir, "CLI test", kind="cli", workspace=workspace)
 
     session = add_turn(session, "assistant", "first", instructions="same")
     session = add_turn(session, "assistant", "second", instructions="same")
@@ -22,7 +22,7 @@ def test_session_items_preserve_user_message_items(tmp_path: Path) -> None:
     sessions_dir = tmp_path / "sessions"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(sessions_dir, "CLI test", workspace)
+    session = create_session(sessions_dir, "CLI test", kind="cli", workspace=workspace)
 
     session = add_turn(
         session,
@@ -56,7 +56,7 @@ def test_sync_assistant_turn_replaces_in_progress_assistant_turn(tmp_path: Path)
     sessions_dir = tmp_path / "sessions"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(sessions_dir, "CLI test", workspace)
+    session = create_session(sessions_dir, "CLI test", kind="cli", workspace=workspace)
     session = add_turn(session, "user", "hi")
 
     session = sync_assistant_turn(
@@ -93,7 +93,7 @@ def test_session_items_append_assistant_text_when_items_have_only_tools(tmp_path
     sessions_dir = tmp_path / "sessions"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(sessions_dir, "CLI test", workspace)
+    session = create_session(sessions_dir, "CLI test", kind="cli", workspace=workspace)
 
     session = add_turn(
         session,
@@ -112,7 +112,7 @@ def test_session_items_do_not_duplicate_existing_assistant_message_item(tmp_path
     sessions_dir = tmp_path / "sessions"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = create_cli_session(sessions_dir, "CLI test", workspace)
+    session = create_session(sessions_dir, "CLI test", kind="cli", workspace=workspace)
 
     session = add_turn(
         session,

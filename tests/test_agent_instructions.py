@@ -5,7 +5,7 @@ import pytest
 
 from faltoobot.agent import reasoning_config, reply, request_args, stream_reply, system_instructions
 from faltoobot.config import build_config
-from faltoobot.store import create_cli_session
+from faltoobot.store import create_session
 
 
 class FakeResponse:
@@ -267,7 +267,7 @@ async def test_reply_includes_global_home_and_session_agents_in_instructions(
     (workspace / "AGENTS.md").write_text("Session rules.", encoding="utf-8")
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeClient()
 
     result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
@@ -294,7 +294,7 @@ def test_request_args_use_default_tier_when_fast_mode_is_disabled(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
 
     assert request_args(config, session, [], "Test instructions")["service_tier"] == "default"
 
@@ -331,7 +331,7 @@ def test_request_args_use_priority_tier_when_fast_mode_is_enabled(
     )
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
 
     assert request_args(config, session, [], "Test instructions")["service_tier"] == "priority"
 
@@ -360,7 +360,7 @@ async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeClient()
     deltas: list[str] = []
     reasoning_deltas: list[str] = []
@@ -396,7 +396,7 @@ async def test_reply_keeps_intermediate_tool_call_items(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeLoopClient()
 
     result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
@@ -419,7 +419,7 @@ async def test_reply_uses_message_output_text_when_sdk_output_text_is_empty(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeWebSearchClient()
 
     result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
@@ -442,7 +442,7 @@ async def test_reply_strips_parsed_arguments_from_replayed_tool_items(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeSanitizeClient()
 
     result = await reply(
@@ -478,7 +478,7 @@ async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeLoopStreamClient()
     snapshots: list[tuple[str, list[str]]] = []
 
@@ -510,7 +510,7 @@ async def test_stream_reply_uses_message_output_text_when_sdk_output_text_is_emp
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", workspace)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
     client = FakeWebSearchStreamClient()
     snapshots: list[tuple[str, list[str]]] = []
 
@@ -534,7 +534,7 @@ def test_instruction_parts_deduplicate_same_agents_path(tmp_path: Path, monkeypa
     (home / "AGENTS.md").write_text("Home rules.", encoding="utf-8")
 
     config = build_config()
-    session = create_cli_session(config.sessions_dir, "CLI test", home)
+    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=home)
 
     instructions = system_instructions(config, session)
 

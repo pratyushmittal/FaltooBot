@@ -7,6 +7,9 @@ from uuid import uuid4
 
 SessionKind = Literal["cli", "whatsapp"]
 Role = Literal["user", "assistant"]
+MESSAGES_FILE = "messages.json"
+WORKSPACE_DIR = "workspace"
+INDEX_FILE = "index.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,20 +51,8 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def session_root(sessions_dir: Path, session_id: str) -> Path:
-    return ensure_sessions_dir(sessions_dir) / session_id
-
-
 def session_name(kind: SessionKind, value: str) -> str:
     return f"CLI {value}" if kind == "cli" else f"WhatsApp {value}"
-
-
-def messages_path(root: Path) -> Path:
-    return root / "messages.json"
-
-
-def workspace_path(root: Path) -> Path:
-    return root / "workspace"
 
 
 def session_payload(session: Session) -> dict[str, Any]:
@@ -114,9 +105,15 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
             role=item["role"],
             content=item["content"],
             created_at=item["created_at"],
-            items=tuple(entry for entry in item_items(item) if isinstance(entry, dict)),
-            usage=item_usage(item),
-            instructions=item_instructions(item),
+            items=tuple(
+                entry for entry in item.get("items", []) if isinstance(entry, dict)
+            )
+            if isinstance(item.get("items"), list)
+            else (),
+            usage=item.get("usage") if isinstance(item.get("usage"), dict) else None,
+            instructions=(
+                item.get("instructions") if isinstance(item.get("instructions"), str) else None
+            ),
         )
         for item in raw_messages
         if isinstance(raw_messages, list)
@@ -136,41 +133,23 @@ def build_session(root: Path, payload: dict[str, Any]) -> Session:
         for item in payload.get("queued_prompts", [])
         if isinstance(item, dict) and isinstance(item.get("content"), str)
     )
+    workspace = payload.get("workspace")
     return Session(
         id=str(payload.get("id") or root.name),
         name=str(payload.get("name") or root.name),
         kind="cli" if payload.get("kind") == "cli" else "whatsapp",
         chat_key=payload.get("chat_key") if isinstance(payload.get("chat_key"), str) else None,
         root=root,
-        messages_file=messages_path(root),
-        workspace=Path(payload["workspace"])
-        if isinstance(payload.get("workspace"), str)
-        else workspace_path(root),
+        messages_file=root / MESSAGES_FILE,
+        workspace=Path(workspace) if isinstance(workspace, str) else root / WORKSPACE_DIR,
         processed_message_ids=processed,
         messages=messages,
         queued_prompts=queued_prompts,
     )
 
 
-def item_items(item: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_items = item.get("items")
-    if not isinstance(raw_items, list):
-        return []
-    return [entry for entry in raw_items if isinstance(entry, dict)]
-
-
-def item_usage(item: dict[str, Any]) -> dict[str, Any] | None:
-    usage = item.get("usage")
-    return usage if isinstance(usage, dict) else None
-
-
-def item_instructions(item: dict[str, Any]) -> str | None:
-    instructions = item.get("instructions")
-    return instructions if isinstance(instructions, str) else None
-
-
 def load_session(root: Path) -> Session:
-    session = build_session(root, read_json(messages_path(root)))
+    session = build_session(root, read_json(root / MESSAGES_FILE))
     session.workspace.mkdir(parents=True, exist_ok=True)
     return session
 
@@ -182,33 +161,18 @@ def save_session(session: Session) -> Session:
     return session
 
 
-def index_path(sessions_dir: Path) -> Path:
-    return ensure_sessions_dir(sessions_dir) / "index.json"
-
-
-def load_index(sessions_dir: Path) -> dict[str, str]:
-    return {
-        key: value
-        for key, value in read_json(index_path(sessions_dir)).items()
-        if isinstance(key, str) and isinstance(value, str)
-    }
-
-
-def save_index(sessions_dir: Path, index: dict[str, str]) -> None:
-    write_json(index_path(sessions_dir), index)
-
-
 def indexed_session(sessions_dir: Path, key: str) -> Session | None:
-    session_id = load_index(sessions_dir).get(key)
+    index_path = ensure_sessions_dir(sessions_dir) / INDEX_FILE
+    index = {
+        entry_key: value
+        for entry_key, value in read_json(index_path).items()
+        if isinstance(entry_key, str) and isinstance(value, str)
+    }
+    session_id = index.get(key)
     if not session_id:
         return None
-    root = session_root(sessions_dir, session_id)
-    return load_session(root) if messages_path(root).exists() else None
-
-
-def save_indexed_session(sessions_dir: Path, key: str, session: Session) -> Session:
-    save_index(sessions_dir, {**load_index(sessions_dir), key: session.id})
-    return session
+    root = ensure_sessions_dir(sessions_dir) / session_id
+    return load_session(root) if (root / MESSAGES_FILE).exists() else None
 
 
 def create_session(
@@ -218,15 +182,15 @@ def create_session(
     chat_key: str | None = None,
     workspace: Path | None = None,
 ) -> Session:
-    root = session_root(sessions_dir, str(uuid4()))
+    root = ensure_sessions_dir(sessions_dir) / str(uuid4())
     session = Session(
         id=root.name,
         name=name,
         kind=kind,
         chat_key=chat_key,
         root=root,
-        messages_file=messages_path(root),
-        workspace=workspace or workspace_path(root),
+        messages_file=root / MESSAGES_FILE,
+        workspace=workspace or root / WORKSPACE_DIR,
         processed_message_ids=(),
         messages=(),
         queued_prompts=(),
@@ -234,20 +198,20 @@ def create_session(
     return save_session(session)
 
 
-def create_cli_session(sessions_dir: Path, name: str, workspace: Path) -> Session:
-    return create_session(sessions_dir, name=name, kind="cli", workspace=workspace)
-
-
 def cli_session_key(workspace: Path) -> str:
     return f"cli:{workspace.resolve()}"
 
 
 def cli_session(sessions_dir: Path, name: str, workspace: Path) -> Session:
-    return save_indexed_session(
-        sessions_dir,
-        cli_session_key(workspace),
-        create_cli_session(sessions_dir, name, workspace),
-    )
+    session = create_session(sessions_dir, name=name, kind="cli", workspace=workspace)
+    index_path = ensure_sessions_dir(sessions_dir) / INDEX_FILE
+    index = {
+        entry_key: value
+        for entry_key, value in read_json(index_path).items()
+        if isinstance(entry_key, str) and isinstance(value, str)
+    }
+    write_json(index_path, {**index, cli_session_key(workspace): session.id})
+    return session
 
 
 def existing_cli_session(sessions_dir: Path, workspace: Path) -> Session | None:
@@ -263,7 +227,14 @@ def whatsapp_session(sessions_dir: Path, chat_key: str) -> Session:
         kind="whatsapp",
         chat_key=chat_key,
     )
-    return save_indexed_session(sessions_dir, chat_key, session)
+    index_path = ensure_sessions_dir(sessions_dir) / INDEX_FILE
+    index = {
+        entry_key: value
+        for entry_key, value in read_json(index_path).items()
+        if isinstance(entry_key, str) and isinstance(value, str)
+    }
+    write_json(index_path, {**index, chat_key: session.id})
+    return session
 
 
 def session_items(session: Session) -> list[dict[str, Any]]:
