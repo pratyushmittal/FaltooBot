@@ -10,7 +10,7 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Static, TextArea
 
-from faltoobot.config import Config
+from faltoobot.config import Config, build_config
 
 from .prompts import completed_slash_query, slash_query, slash_suggestions
 from .runtime import build_chat_runtime
@@ -215,12 +215,24 @@ class FaltooChatApp(App[None]):
         terminal_dark: bool | None = None,
     ) -> None:
         super().__init__()
-        if terminal_dark is not None:
+        chat_config = config or build_config()
+        self.theme_file = chat_config.root / "chat-theme.txt"
+        if self.theme_file.exists():
+            theme = self.theme_file.read_text(encoding="utf-8").strip()
+            if theme in self.available_themes:
+                self.theme = theme
+        elif terminal_dark is not None:
             self.theme = "textual-dark" if terminal_dark else "textual-light"
-        self.runtime = build_chat_runtime(config=config, name=name, client=client)
+        self.runtime = build_chat_runtime(config=chat_config, name=name, client=client)
         self.transcript_state = TranscriptState()
         self.queue_state = QueueState()
         self.slash_state = SlashState()
+
+    def watch_theme(self, theme_name: str) -> None:
+        if theme_name not in self.available_themes:
+            return
+        self.theme_file.parent.mkdir(parents=True, exist_ok=True)
+        self.theme_file.write_text(f"{theme_name}\n", encoding="utf-8")
 
     @property
     def follow_transcript(self) -> bool:
