@@ -85,7 +85,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+def _write_json_atomic(path: Path, payload: dict[str, Any] | MessagesJson) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
     temp.write_text(
@@ -136,11 +136,12 @@ def get_session_id(
 
     with _locked_session(session_id):
         payload = _read_json(path)
+        saved_workspace = payload.get("workspace")
         messages_json = _basic_messages_json(
             session_id,
             kind=kind,
-            workspace=Path(payload.get("workspace"))
-            if isinstance(payload.get("workspace"), str) and workspace is None
+            workspace=Path(saved_workspace)
+            if isinstance(saved_workspace, str) and workspace is None
             else target_workspace,
             current=payload,
         )
