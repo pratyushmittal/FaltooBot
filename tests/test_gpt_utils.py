@@ -254,7 +254,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         )
     ]
 
-    assert [item.type for item in items] == [
+    assert [getattr(item, "type", "response") for item in items] == [
         "response.reasoning_text.delta",
         "response.reasoning_text.done",
         "response.output_text.delta",
@@ -263,11 +263,13 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "response.function_call_arguments.delta",
         "response.function_call_arguments.done",
         "response.output_item.done",
+        "response",
         "function_call_output",
         "response.output_text.delta",
         "response.output_text.done",
+        "response",
     ]
-    assert items[8].output == "hello Faltoobot"
+    assert items[9].output == "hello Faltoobot"
     assert client.responses.calls[0]["context_management"] == [
         {"type": "compaction", "compact_threshold": 210_000}
     ]
@@ -321,6 +323,9 @@ async def test_get_streaming_reply_yields_all_stream_events(
         )
     ]
 
-    assert len(items) == 1
-    assert items[0].type == "response.output_item.done"
+    assert [getattr(item, "type", "response") for item in items] == [
+        "response.output_item.done",
+        "response",
+    ]
+    assert isinstance(items[1], FakeResponse)
     assert client.closed is True

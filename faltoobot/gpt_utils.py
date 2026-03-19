@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 from openai import AsyncOpenAI
 from openai.types.responses import (
     FunctionToolParam,
+    Response,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
     ResponsesServerEvent,
@@ -16,7 +17,7 @@ COMPACT_THRESHOLD = 210_000
 
 Tool: TypeAlias = Callable[..., str] | Callable[..., Awaitable[str]]
 StreamingReplyItem: TypeAlias = (
-    ResponsesServerEvent | ResponseFunctionToolCallOutputItem
+    ResponsesServerEvent | Response | ResponseFunctionToolCallOutputItem
 )
 
 
@@ -203,6 +204,7 @@ async def get_streaming_reply(
             async for event in stream:
                 yield event
             response = await stream.get_final_response()
+            yield response
 
         response_output = getattr(response, "output", [])
         current_input.extend(response_output)
