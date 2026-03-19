@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import signal
 from collections import defaultdict
@@ -12,22 +13,21 @@ from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 from openai import AsyncOpenAI
 
-from faltoobot.agent import reply
 from faltoobot.audio import AudioError, audio_message, audio_prompt
 from faltoobot.config import Config, build_config, normalize_chat
-from faltoobot.store import (
-    Session,
-    add_turn,
-    reserve_message,
-    reset_session,
-    session_items,
-    whatsapp_session,
+from faltoobot.sessions import (
+    MessagesJson,
+    get_answer,
+    get_messages,
+    get_session_id,
+    set_messages,
 )
 
 logger = logging.getLogger("faltoobot")
 AUTH_STOP_DELAY = 0.5
 TYPING_REFRESH_SECONDS = 4.0
 MIN_ALLOWLIST_DIGITS = 8
+CHAT_SESSIONS_FILE = "whatsapp-sessions.json"
 
 
 def configure_logging(log_path: Path) -> None:
@@ -99,7 +99,52 @@ class ProcessMessageOptions(TypedDict):
     config: Config
     openai_client: AsyncOpenAI
     chat_locks: dict[str, asyncio.Lock]
-    session_index_lock: asyncio.Lock
+
+
+def _chat_sessions_path(config: Config) -> Path:
+    return config.root / CHAT_SESSIONS_FILE
+
+
+def _read_chat_sessions(config: Config) -> dict[str, str]:
+    path = _chat_sessions_path(config)
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        key: value
+        for key, value in payload.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+
+
+def _write_chat_sessions(config: Config, payload: dict[str, str]) -> None:
+    path = _chat_sessions_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f"{path.name}.tmp")
+    temp.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    temp.replace(path)
+
+
+def _chat_session_id(config: Config, chat_jid: str) -> str:
+    key = normalize_chat(chat_jid)
+    payload = _read_chat_sessions(config)
+    if key in payload:
+        return get_session_id(kind="whatsapp", session_id=payload[key])
+    session_id = get_session_id(kind="whatsapp")
+    _write_chat_sessions(config, {**payload, key: session_id})
+    return session_id
+
+
+def _replace_chat_session(config: Config, chat_jid: str, message_ids: list[str]) -> str:
+    session_id = get_session_id(kind="whatsapp")
+    messages_json = get_messages(session_id)
+    messages_json["message_ids"] = list(message_ids)
+    set_messages(session_id, messages_json)
+    payload = _read_chat_sessions(config)
+    _write_chat_sessions(config, {**payload, normalize_chat(chat_jid): session_id})
+    return session_id
 
 
 def help_text(config: Config) -> str:
@@ -164,39 +209,70 @@ async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
         await client.send_message(chat, chunk)
 
 
+def _message_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        str(part.get("text") or "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "output_text"
+    ).strip()
+
+
+def _latest_assistant_text(messages_json: MessagesJson | dict[str, Any]) -> str:
+    raw_messages = messages_json.get("messages", [])
+    if not isinstance(raw_messages, list):
+        return ""
+    for raw_item in reversed(raw_messages):
+        if not isinstance(raw_item, dict):
+            continue
+        item: dict[str, Any] = raw_item
+        if item.get("type") != "message":
+            continue
+        if item.get("role") != "assistant":
+            continue
+        if text := _message_text_content(item.get("content")):
+            return text
+    return ""
+
+
+def _reserve_message_id(session_id: str, message_id: str) -> bool:
+    messages_json = get_messages(session_id)
+    if message_id in messages_json["message_ids"]:
+        return False
+    messages_json["message_ids"].append(message_id)
+    set_messages(session_id, messages_json)
+    return True
+
+
 async def handle_reset(
-    client: NewAClient, event: MessageEv, session: Session
-) -> Session:
-    reset = reset_session(session)
-    await client.reply_message("Memory cleared for this chat.", event)
-    return reset
-
-
-async def handle_prompt(  # noqa: PLR0913
     client: NewAClient,
     event: MessageEv,
     config: Config,
-    session: Session,
-    openai_client: AsyncOpenAI,
+    chat_jid: str,
+    session_id: str,
+) -> None:
+    messages_json = get_messages(session_id)
+    _replace_chat_session(config, chat_jid, messages_json["message_ids"])
+    await client.reply_message("Memory cleared for this chat.", event)
+
+
+async def handle_prompt(
+    client: NewAClient,
+    event: MessageEv,
+    config: Config,
+    session_id: str,
     prompt: str,
-) -> Session:
-    session = add_turn(session, "user", prompt)
-    result = await reply(
-        openai_client,
-        config,
-        session,
-        session_items(session),
-    )
-    answer = result["text"]
-    session = add_turn(
-        session,
-        "assistant",
-        answer,
-        items=result["output_items"],
-        instructions=result["instructions"],
-    )
-    await send_text(client, event, answer)
-    return session
+) -> None:
+    if not prompt:
+        await client.reply_message(help_text(config), event)
+        return
+    messages_json = await get_answer(session_id=session_id, question=prompt)
+    answer = _latest_assistant_text(messages_json)
+    if answer:
+        await send_text(client, event, answer)
 
 
 async def process_message(
@@ -207,7 +283,6 @@ async def process_message(
     config = kwargs["config"]
     openai_client = kwargs["openai_client"]
     chat_locks = kwargs["chat_locks"]
-    session_index_lock = kwargs["session_index_lock"]
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     sender_jid = Jid2String(source.Sender)
@@ -227,10 +302,8 @@ async def process_message(
     if not text and audio is None:
         return
     async with chat_locks[chat_jid]:
-        async with session_index_lock:
-            session = whatsapp_session(config.sessions_dir, chat_jid)
-        session, is_new = reserve_message(session, event.Info.ID)
-        if not is_new:
+        session_id = _chat_session_id(config, chat_jid)
+        if not _reserve_message_id(session_id, event.Info.ID):
             logger.info(
                 "Skipping duplicate message %s from %s", event.Info.ID, chat_jid
             )
@@ -245,7 +318,7 @@ async def process_message(
             await client.reply_message(help_text(config), event)
             return
         if text == "/reset":
-            await handle_reset(client, event, session)
+            await handle_reset(client, event, config, chat_jid, session_id)
             return
         typing_stop = asyncio.Event()
         typing_task = asyncio.create_task(
@@ -260,7 +333,7 @@ async def process_message(
                 model=config.openai_transcription_model,
                 normalization_model=config.openai_model,
             )
-            await handle_prompt(client, event, config, session, openai_client, prompt)
+            await handle_prompt(client, event, config, session_id, prompt)
         except AudioError as exc:
             logger.info("Failed to transcribe audio %s: %s", event.Info.ID, exc)
             await client.reply_message(str(exc), event)
@@ -312,7 +385,6 @@ async def run_bot(config: Config | None = None) -> None:
     openai_client = AsyncOpenAI(api_key=config.openai_api_key)
     client = NewAClient(str(config.session_db))
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-    session_index_lock = asyncio.Lock()
     tasks: set[asyncio.Task[Any]] = set()
 
     async def stop() -> None:
@@ -338,7 +410,6 @@ async def run_bot(config: Config | None = None) -> None:
                 config=config,
                 openai_client=openai_client,
                 chat_locks=chat_locks,
-                session_index_lock=session_index_lock,
             )
         )
         tasks.add(task)

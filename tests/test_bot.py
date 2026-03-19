@@ -2,20 +2,26 @@ import asyncio
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import MessageEv
 from neonize.proto import Neonize_pb2
-from neonize.utils.jid import Jid2String
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
+from neonize.utils.jid import Jid2String
 
 from faltoobot import audio, bot
-from faltoobot.bot import keep_chat_typing, source_chat_ids
+from faltoobot.bot import (
+    _chat_session_id,
+    _latest_assistant_text,
+    _replace_chat_session,
+    keep_chat_typing,
+    source_chat_ids,
+)
 from faltoobot.config import Config
-from faltoobot.store import whatsapp_session
+from faltoobot.sessions import get_messages
 
 
 def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
@@ -170,8 +176,10 @@ def test_source_chat_ids_strip_device_suffixes() -> None:
 async def test_process_message_transcribes_voice_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
     client = FakePresenceClient()
+    prompts: list[str] = []
 
     async def fake_transcribe_audio(
         openai_client: object,
@@ -187,16 +195,21 @@ async def test_process_message_transcribes_voice_notes(
         assert model == "gpt-4o-transcribe"
         return "Call mom at 6"
 
-    async def fake_reply(*args: object, **kwargs: object) -> dict[str, object]:
+    async def fake_get_answer(session_id: str, question: str, **_: object) -> dict[str, Any]:
+        prompts.append(question)
         return {
-            "text": "Done",
-            "output_items": [],
-            "usage": None,
-            "instructions": "sys",
+            "messages": [
+                {"type": "message", "role": "user", "content": question},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Done"}],
+                },
+            ]
         }
 
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
-    monkeypatch.setattr(bot, "reply", fake_reply)
+    monkeypatch.setattr(bot, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=7)
     await bot.process_message(
@@ -205,15 +218,13 @@ async def test_process_message_transcribes_voice_notes(
         config=config,
         openai_client=object(),
         chat_locks=defaultdict(asyncio.Lock),
-        session_index_lock=asyncio.Lock(),
     )
 
-    session = whatsapp_session(
-        config.sessions_dir, Jid2String(event.Info.MessageSource.Chat)
-    )
+    session_id = _chat_session_id(config, Jid2String(event.Info.MessageSource.Chat))
     assert client.downloads == 1
     assert client.replies == ["Done"]
-    assert [turn.content for turn in session.messages] == ["Call mom at 6", "Done"]
+    assert prompts == ["Call mom at 6"]
+    assert get_messages(session_id)["message_ids"] == [event.Info.ID]
 
 
 @pytest.mark.anyio
@@ -221,13 +232,14 @@ async def test_process_message_rejects_long_voice_notes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
     client = FakePresenceClient()
 
-    async def fake_reply(*args: object, **kwargs: object) -> dict[str, object]:
-        raise AssertionError("reply should not run for oversized voice notes")
+    async def fake_get_answer(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("get_answer should not run for oversized voice notes")
 
-    monkeypatch.setattr(bot, "reply", fake_reply)
+    monkeypatch.setattr(bot, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=audio.DEFAULT_AUDIO_MAX_SECONDS + 1)
     await bot.process_message(
@@ -236,17 +248,14 @@ async def test_process_message_rejects_long_voice_notes(
         config=config,
         openai_client=object(),
         chat_locks=defaultdict(asyncio.Lock),
-        session_index_lock=asyncio.Lock(),
     )
 
-    session = whatsapp_session(
-        config.sessions_dir, Jid2String(event.Info.MessageSource.Chat)
-    )
+    session_id = _chat_session_id(config, Jid2String(event.Info.MessageSource.Chat))
     assert client.downloads == 0
     assert client.replies == [
         f"Voice note is too long. Keep it under {audio.DEFAULT_AUDIO_MAX_SECONDS} seconds."
     ]
-    assert session.messages == ()
+    assert get_messages(session_id)["message_ids"] == [event.Info.ID]
 
 
 @pytest.mark.anyio
@@ -282,3 +291,48 @@ async def test_audio_prompt_normalizes_urdu_script() -> None:
 
     assert transcript == "hello duniya"
     assert calls == ["transcribe", "normalize"]
+
+
+def test_latest_assistant_text_reads_sessions_messages() -> None:
+    messages_json = {
+        "messages": [
+            {"type": "message", "role": "user", "content": "hi"},
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}],
+            },
+        ]
+    }
+
+    assert _latest_assistant_text(messages_json) == "hello"
+
+
+def test_replace_chat_session_creates_new_session_for_reset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    config = make_config(tmp_path, allowed_chats=set())
+    config.root.mkdir(parents=True, exist_ok=True)
+    first = _chat_session_id(config, "8960294979@s.whatsapp.net")
+    original = get_messages(first)
+    original["messages"].append({"type": "message", "role": "user", "content": "hi"})
+    original["message_ids"] = ["msg-1"]
+    from faltoobot.sessions import set_messages
+
+    set_messages(first, original)
+
+    second = _replace_chat_session(
+        config,
+        "8960294979@s.whatsapp.net",
+        ["msg-1"],
+    )
+
+    assert second != first
+    assert get_messages(first)["messages"] == [
+        {"type": "message", "role": "user", "content": "hi"}
+    ]
+    assert get_messages(second)["messages"] == []
+    assert get_messages(second)["message_ids"] == ["msg-1"]
