@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 0.5.0 — 2026-03-19
+
+### Added
+- Native macOS desktop chat app, available via `faltoobot macchat` and `faltoomacchat`.
+
+### Changed
+- Terminal chat queue and slash-command panels are clearer, with titled bordered sections and more room for command names.
+- Queue reordering in terminal chat is now keyboard-only via `Shift+↑` and `Shift+↓`.
+
 ## 0.4.0 — 2026-03-17
 
 ### Added

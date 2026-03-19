@@ -10,3 +10,4 @@ Infra:
 Tests:
 - Keep tests small.
 - E2E tests instead of unit tests.
+- Fix things only after you are able to reproduce the problem. We don't want band-aids all over the code.
