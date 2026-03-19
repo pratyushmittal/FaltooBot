@@ -134,7 +134,7 @@ class FaltooChatApp(App[None]):
 
     #footer {
         width: 1fr;
-        max-width: 120;
+        max-width: 80;
         height: auto;
         layout: vertical;
     }
@@ -339,6 +339,10 @@ class FaltooChatApp(App[None]):
         composer = self.composer()
         composer.load_text("")
         self.transcript_state.follow = True
+        if message.paused:
+            self.runtime.queue_prompt(message.value, paused=True)
+            self.sync_view()
+            return
         if not await self.runtime.submit(message.value):
             self.runtime.pending_prompts.clear()
             self.runtime.interrupt()
@@ -389,7 +393,6 @@ class FaltooChatApp(App[None]):
                 self.runtime.config,
                 replying=self.runtime.current_reply_task is not None,
                 queued=len(self.runtime.pending_prompts),
-                queue_selected=self.queue_state.selected is not None,
             )
         )
 

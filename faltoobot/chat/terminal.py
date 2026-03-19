@@ -10,14 +10,7 @@ from pathlib import Path
 
 from faltoobot.config import Config
 
-QUEUE_SHORTCUTS = (
-    "Tab complete/queue",
-    "↑/↓ select",
-    "Enter edit",
-    "Space pause",
-    "Del remove",
-    "Shift+↑/↓ move",
-)
+
 
 
 def status_text(config: Config) -> str:
@@ -81,17 +74,12 @@ def input_hint(
     *,
     replying: bool = False,
     queued: int = 0,
-    queue_selected: bool = False,
 ) -> str:
     parts = [status_text(config)]
     if replying:
         parts.append("replying")
     if queued:
         parts.append(f"queued {queued}")
-    if queued or queue_selected:
-        parts.extend(QUEUE_SHORTCUTS)
-    parts.append("Ctrl+V paste/image")
-    parts.append("Ctrl+C interrupt")
     return "  ".join(parts)
 
 

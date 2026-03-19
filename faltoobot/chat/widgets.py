@@ -4,6 +4,7 @@ from typing import Any
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.message import Message
@@ -20,9 +21,26 @@ MarkdownFence.highlight = classmethod(lambda cls, code, language: Content(code))
 
 
 class Composer(TextArea):
+    BINDINGS = [
+        Binding("enter", "composer_enter", "Send / edit queue item", priority=True),
+        Binding("ctrl+enter", "queue_paused", "Queue paused", priority=True),
+        Binding("shift+enter,ctrl+j", "newline", "New line", priority=True),
+        Binding("tab", "composer_tab", "Complete / select queue", priority=True),
+        Binding("escape", "composer_escape", "Dismiss commands", priority=True),
+        Binding("up", "composer_up", "Cursor up / queue previous", priority=True),
+        Binding("down", "composer_down", "Cursor down / queue next", priority=True),
+        Binding("backspace", "composer_backspace", "Backspace / remove queue item", priority=True),
+        Binding("delete", "composer_delete", "Delete / remove queue item", priority=True),
+        Binding("space", "composer_space", "Space / toggle queue pause", priority=True),
+        Binding("shift+up", "composer_shift_up", "Select up / move queue item", priority=True),
+        Binding("shift+down", "composer_shift_down", "Select down / move queue item", priority=True),
+    ]
+    BINDING_GROUP_TITLE = "Chat"
+
     class Submitted(Message):
-        def __init__(self, value: str) -> None:
+        def __init__(self, value: str, *, paused: bool = False) -> None:
             self.value = value
+            self.paused = paused
             super().__init__()
 
     def workspace(self) -> Path:
@@ -34,6 +52,13 @@ class Composer(TextArea):
         if result := self._replace_via_keyboard(value, *self.selection):
             self.move_cursor(result.end_location)
             self.focus()
+
+    def handle_app_key(self, key: str) -> bool:
+        handler = getattr(self.app, "handle_composer_key", None)
+        return bool(callable(handler) and handler(key))
+
+    def submit(self, *, paused: bool = False) -> None:
+        self.post_message(self.Submitted(self.text, paused=paused))
 
     async def _on_paste(self, event: events.Paste) -> None:
         if self.read_only:
@@ -54,26 +79,59 @@ class Composer(TextArea):
             self._skip_next_paste = True
             self.insert_text(image_markdown(path))
 
-    def on_key(self, event: Any) -> None:
-        handler = getattr(self.app, "handle_composer_key", None)
-        if callable(handler) and handler(event.key):
-            event.prevent_default()
-            event.stop()
+    def action_composer_enter(self) -> None:
+        if self.handle_app_key("enter"):
             return
-        if event.key == "enter":
-            event.prevent_default()
-            event.stop()
-            self.post_message(self.Submitted(self.text))
+        self.submit()
+
+    def action_queue_paused(self) -> None:
+        self.submit(paused=True)
+
+    def action_newline(self) -> None:
+        self.insert("\n")
+
+    def action_composer_tab(self) -> None:
+        if self.handle_app_key("tab"):
             return
-        if event.key == "tab":
-            event.prevent_default()
-            event.stop()
-            self.insert("\t")
+        self.insert("\t")
+
+    def action_composer_escape(self) -> None:
+        self.handle_app_key("escape")
+
+    def action_composer_up(self) -> None:
+        if self.handle_app_key("up"):
             return
-        if event.key in {"shift+enter", "ctrl+j"}:
-            event.prevent_default()
-            event.stop()
-            self.insert("\n")
+        self.action_cursor_up()
+
+    def action_composer_down(self) -> None:
+        if self.handle_app_key("down"):
+            return
+        self.action_cursor_down()
+
+    def action_composer_backspace(self) -> None:
+        if self.handle_app_key("backspace"):
+            return
+        self.action_delete_left()
+
+    def action_composer_delete(self) -> None:
+        if self.handle_app_key("delete"):
+            return
+        self.action_delete_right()
+
+    def action_composer_space(self) -> None:
+        if self.handle_app_key("space"):
+            return
+        self.insert(" ")
+
+    def action_composer_shift_up(self) -> None:
+        if self.handle_app_key("shift+up"):
+            return
+        self.action_cursor_up(True)
+
+    def action_composer_shift_down(self) -> None:
+        if self.handle_app_key("shift+down"):
+            return
+        self.action_cursor_down(True)
 
 
 class SlashCommandItem(Horizontal):

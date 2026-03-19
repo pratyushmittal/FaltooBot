@@ -117,20 +117,34 @@ class ChatRuntime:
         if self.client and self.own_client:
             await self.client.close()
 
+    def queued_prompt_text(self, prompt: str) -> str | None:
+        text = prompt.strip()
+        if not text:
+            return None
+        return expand_saved_prompt(self.config.root, text) or text
+
     async def submit(self, prompt: str) -> bool:
         text = prompt.strip()
         if not text:
             return True
         if (command_result := await self.handle_command(text)) is not None:
             return command_result
-        text = expand_saved_prompt(self.config.root, text) or text
-        if self.can_start_prompt_now():
-            self.start_prompt_now(text)
+        queued = self.queued_prompt_text(text)
+        if queued is None:
             return True
-        self.enqueue_prompt(text)
+        if self.can_start_prompt_now():
+            self.start_prompt_now(queued)
+            return True
+        self.enqueue_prompt(queued)
         self.notify()
         self.ensure_processing()
         return True
+
+    def queue_prompt(self, prompt: str, *, paused: bool = False) -> None:
+        if (queued := self.queued_prompt_text(prompt)) is None:
+            return
+        self.enqueue_prompt(queued, paused=paused)
+        self.notify()
 
     def slash_commands(self) -> tuple[tuple[str, str], ...]:
         return slash_commands(self.config.root)
@@ -141,8 +155,8 @@ class ChatRuntime:
     def queued_prompt_items(self) -> tuple[QueuedPrompt, ...]:
         return tuple(self.pending_prompts)
 
-    def enqueue_prompt(self, prompt: str) -> None:
-        self.pending_prompts.append(QueuedPrompt(prompt))
+    def enqueue_prompt(self, prompt: str, *, paused: bool = False) -> None:
+        self.pending_prompts.append(QueuedPrompt(prompt, paused))
         self.save_queue()
 
     def pop_next_prompt(self) -> str | None:

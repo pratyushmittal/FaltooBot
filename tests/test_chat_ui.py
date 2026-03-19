@@ -720,6 +720,39 @@ async def test_textual_app_focuses_composer_and_shows_status(
 
 
 @pytest.mark.anyio
+async def test_textual_app_exposes_custom_composer_bindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = FaltooChatApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        active = app.active_bindings  # type: ignore[attr-defined]
+        assert active["ctrl+enter"].binding.description == "Queue paused"
+        assert active["shift+enter"].binding.description == "New line"
+        assert active["ctrl+j"].binding.description == "New line"
+        assert active["tab"].binding.description == "Complete / select queue"
+        assert active["space"].binding.description == "Space / toggle queue pause"
+        assert active["shift+up"].binding.description == "Select up / move queue item"
+
+
+@pytest.mark.anyio
+async def test_textual_app_composer_matches_transcript_width(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    app = FaltooChatApp()
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        footer = app.query_one("#footer")
+        assert footer.size.width == transcript_blocks(app)[0].size.width
+
+
+@pytest.mark.anyio
 async def test_textual_app_tab_does_nothing_without_queued_messages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1542,6 +1575,38 @@ async def test_textual_app_commits_streamed_markdown_as_markdown_block(
         bot_blocks = [block for block in transcript_blocks(app) if block.entry.kind == "bot"]
         assert bot_blocks
         assert isinstance(bot_blocks[-1].query_one("#body"), TextualMarkdown)
+
+
+@pytest.mark.anyio
+async def test_textual_app_ctrl_enter_queues_paused_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_home(tmp_path, monkeypatch)
+    prompts: list[str] = []
+
+    async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        prompts.append(args[2].messages[-1].content)
+        return {
+            "text": "done",
+            "output_items": [],
+            "usage": None,
+            "instructions": "test instructions",
+        }
+
+    monkeypatch.setattr("faltoobot.chat.runtime.stream_reply", fake_stream_reply)
+    app = FaltooChatApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h", "i", "ctrl+enter")
+        await pilot.pause()
+        composer = app.query_one("#composer", Composer)
+        assert composer.text == ""
+        assert prompts == []
+        assert queue_texts(app) == ["hi"]
+        assert queue_paused(app) == [True]
+        assert queue_labels(app) == ["□ hi"]
 
 
 @pytest.mark.anyio
