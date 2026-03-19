@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from faltoobot.chat.app import build_chat_app
+from faltoobot.chat.app import FaltooChatApp
 from faltoobot.config import build_config
 
 
@@ -36,10 +36,10 @@ def test_chat_theme_is_persisted_and_restored(tmp_path: Path, monkeypatch) -> No
     write_config(home)
     monkeypatch.setenv("HOME", str(home))
 
-    first_app = build_chat_app(config=build_config(), terminal_dark=False)
+    first_app = FaltooChatApp(config=build_config(), terminal_dark=False)
     first_app.theme = "dracula"
 
-    second_app = build_chat_app(config=build_config(), terminal_dark=False)
+    second_app = FaltooChatApp(config=build_config(), terminal_dark=False)
 
     assert (home / ".faltoobot" / "chat-theme.txt").read_text(encoding="utf-8").strip() == "dracula"
     assert second_app.theme == "dracula"

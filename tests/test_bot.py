@@ -8,6 +8,7 @@ from neonize.proto import Neonize_pb2
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
 
 from faltoobot import audio, bot
+from faltoobot.bot import keep_chat_typing, source_chat_ids
 from faltoobot.config import Config
 from faltoobot.store import whatsapp_session
 
@@ -40,10 +41,12 @@ def jid(user: str, server: str) -> Neonize_pb2.JID:
     return Neonize_pb2.JID(User=user, Server=server)
 
 
-def fake_event(*, message_id: str = "msg-1", text: str = "", audio_seconds: int = 0) -> SimpleNamespace:
+def fake_event(
+    *, message_id: str = "msg-1", text: str = "", audio_seconds: int = 0
+) -> SimpleNamespace:
     source = Neonize_pb2.MessageSource(
-        Chat=jid("918960294979", "s.whatsapp.net"),
-        Sender=jid("918960294979", "s.whatsapp.net"),
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
     )
     message = Message(conversation=text)
     if audio_seconds:
@@ -85,35 +88,35 @@ class FakePresenceClient:
 
 def test_source_chat_ids_include_alt_phone_identity() -> None:
     source = Neonize_pb2.MessageSource(
-        Chat=jid("56002716151848", "lid"),
-        Sender=jid("56002716151848", "lid"),
-        SenderAlt=jid("8960294979", "s.whatsapp.net"),
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
     )
 
     assert bot.source_chat_ids(source) == {
-        "56002716151848@lid",
-        "8960294979@s.whatsapp.net",
+        "15555555555555@lid",
+        "15555550123@s.whatsapp.net",
     }
 
 
 def test_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
     source = Neonize_pb2.MessageSource(
-        Chat=jid("56002716151848", "lid"),
-        Sender=jid("56002716151848", "lid"),
-        SenderAlt=jid("8960294979", "s.whatsapp.net"),
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
     )
-    config = make_config(tmp_path, allowed_chats={"8960294979@s.whatsapp.net"})
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
     assert bot.is_allowed_chat(config, source) is True
 
 
 def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
     source = Neonize_pb2.MessageSource(
-        Chat=jid("56002716151848", "lid"),
-        Sender=jid("56002716151848", "lid"),
-        SenderAlt=jid("918960294979", "s.whatsapp.net"),
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
     )
-    config = make_config(tmp_path, allowed_chats={"8960294979@s.whatsapp.net"})
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
     assert bot.is_allowed_chat(config, source) is True
 
@@ -123,7 +126,7 @@ def test_keep_chat_typing_sends_composing_then_paused() -> None:
         client = FakePresenceClient()
         stop = asyncio.Event()
         task = asyncio.create_task(
-            bot.keep_chat_typing(client, jid("918960294979", "s.whatsapp.net"), stop)
+            keep_chat_typing(client, jid("15555550123", "s.whatsapp.net"), stop)
         )
 
         await asyncio.sleep(0)
@@ -139,14 +142,14 @@ def test_keep_chat_typing_sends_composing_then_paused() -> None:
 
 def test_source_chat_ids_strip_device_suffixes() -> None:
     source = Neonize_pb2.MessageSource(
-        Chat=jid("56002716151848", "lid"),
-        Sender=jid("56002716151848:4", "lid"),
-        SenderAlt=jid("918960294979:4", "s.whatsapp.net"),
+        Chat=jid("55555555555555", "lid"),
+        Sender=jid("55555555555555:4", "lid"),
+        SenderAlt=jid("15555550123:4", "s.whatsapp.net"),
     )
 
-    assert bot.source_chat_ids(source) == {
-        "56002716151848@lid",
-        "918960294979@s.whatsapp.net",
+    assert source_chat_ids(source) == {
+        "55555555555555@lid",
+        "15555550123@s.whatsapp.net",
     }
 
 
