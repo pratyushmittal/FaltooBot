@@ -6,3 +6,4 @@ __pycache__/
 .faltoobot/
 .ruff_cache/
 .pytest_cache/
+.envrc
