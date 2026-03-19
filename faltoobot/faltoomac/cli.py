@@ -10,7 +10,7 @@ def run_macos_chat(config: Config | None = None, name: str | None = None) -> Non
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="faltoomacchat")
+    parser = argparse.ArgumentParser(prog="faltoomac")
     parser.add_argument("--name", help="optional session name")
     return parser.parse_args()
 

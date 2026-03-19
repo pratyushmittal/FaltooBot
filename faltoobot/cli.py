@@ -15,8 +15,6 @@ from rich.table import Table
 from rich.text import Text
 
 from faltoobot.bot import run_auth, run_bot
-from faltoobot.chat.cli import run_chat
-from faltoobot.macchat.cli import run_macos_chat
 from faltoobot.config import (
     APP_LABEL,
     DEFAULT_THINKING,
@@ -468,10 +466,6 @@ def parse_args() -> argparse.Namespace:
     sub.add_parser("auth", help="authenticate the WhatsApp session")
     sub.add_parser("configure", help="create or update the config file interactively")
     sub.add_parser("run", help="run the WhatsApp bot in the foreground")
-    chat = sub.add_parser("chat", help="start a new CLI chat session")
-    chat.add_argument("--name", help="optional session name")
-    macchat = sub.add_parser("macchat", help="start the native macOS chat app")
-    macchat.add_argument("--name", help="optional session name")
     sub.add_parser("install", help="install the background service")
     sub.add_parser("uninstall", help="remove the background service")
     sub.add_parser("status", help="show background service status")
@@ -512,9 +506,6 @@ def handle_async_command(args: argparse.Namespace, config: Config) -> bool:
     if command == "run":
         asyncio.run(run_bot(config))
         return True
-    if command == "chat":
-        asyncio.run(run_chat(config, name=args.name))
-        return True
     return False
 
 
@@ -527,7 +518,6 @@ def handle_command(args: argparse.Namespace, config: Config) -> None:
         "logs": lambda: tail_file(
             config.log_file, lines=args.lines, follow=args.follow
         ),
-        "macchat": lambda: run_macos_chat(config, name=args.name),
         "paths": lambda: (ensure_config_file(), show_paths(config)),
         "status": lambda: service_status(config),
         "uninstall": lambda: uninstall_service(config),

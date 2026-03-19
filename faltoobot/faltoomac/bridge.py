@@ -35,7 +35,7 @@ class RuntimeBridge:
         self.name = name
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(
-            target=self.run_loop, name="macchat-runtime", daemon=True
+            target=self.run_loop, name="faltoomac-runtime", daemon=True
         )
         self.ready = threading.Event()
         self.runtime: ChatRuntime | None = None

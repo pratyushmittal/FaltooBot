@@ -1,6 +1,6 @@
-from faltoobot.macchat.app import edit_menu_items, should_submit_for_selector
 from faltoobot.chat.entries import Entry
-from faltoobot.macchat.formatting import (
+from faltoobot.faltoomac.app import edit_menu_items, should_submit_for_selector
+from faltoobot.faltoomac.formatting import (
     entry_text,
     queue_text,
     status_line,
