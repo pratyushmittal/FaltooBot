@@ -45,13 +45,13 @@ class ChatRuntime:
     name: str | None = None
     client: AsyncOpenAI | None = None
     session: Session | None = None
-    own_client: bool = False
     pending_prompts: list[QueuedPrompt] = field(default_factory=list)
     processing_task: asyncio.Task[None] | None = None
     current_reply_task: asyncio.Task[ReplyResult] | None = None
     entries: list[Entry] = field(default_factory=list)
     live_entry: Entry | None = None
     notify: Callable[[], None] = field(default=lambda: None, repr=False)
+    own_client: bool = False
 
     def require_session(self) -> Session:
         if self.session is None:

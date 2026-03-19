@@ -23,7 +23,9 @@ def make_config(tmp_path: Path) -> Config:
         openai_model="gpt-5.4",
         openai_thinking="high",
         openai_fast=False,
+        openai_transcription_model="gpt-4o-transcribe",
         system_prompt="",
+        transcription_prompt="",
         allow_groups=False,
         allowed_chats=set(),
     )
@@ -99,3 +101,36 @@ def test_render_log_line_uses_level_colors() -> None:
         == "yellow"
     )
     assert cli.render_log_line("Traceback (most recent call last):").style == "bold red"
+
+
+def test_render_config_includes_transcription_model() -> None:
+    text = cli.render_config(
+        {
+            "openai": {
+                "api_key": "",
+                "model": "gpt-5.4",
+                "thinking": "high",
+                "fast": False,
+                "transcription_model": "gpt-4o-mini-transcribe",
+            },
+            "bot": {
+                "allow_groups": False,
+                "allowed_chats": [],
+                "system_prompt": "",
+                "transcription_prompt": "",
+            },
+        }
+    )
+
+    assert 'transcription_model = "gpt-4o-mini-transcribe"' in text
+
+
+def test_merge_config_clamps_invalid_transcription_model() -> None:
+    merged = cli.merge_config(
+        {
+            "openai": {"transcription_model": "bad-model"},
+            "bot": {},
+        }
+    )
+
+    assert merged["openai"]["transcription_model"] == "gpt-4o-transcribe"

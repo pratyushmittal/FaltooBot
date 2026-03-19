@@ -7,11 +7,17 @@ from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
 MODEL_OPTIONS = ("gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
+TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
 DEFAULT_SYSTEM_PROMPT = (
     "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "
     "Keep replies practical and readable on mobile."
+)
+DEFAULT_TRANSCRIPTION_PROMPT = (
+    "Transcribe clearly and faithfully. Output English script only. Never output Urdu script. "
+    "For Hindi, Urdu, and Hinglish speech, use phonetic transliteration in English letters "
+    "instead of native script."
 )
 
 
@@ -29,7 +35,9 @@ class Config:
     openai_model: str
     openai_thinking: str
     openai_fast: bool
+    openai_transcription_model: str
     system_prompt: str
+    transcription_prompt: str
     allow_groups: bool
     allowed_chats: set[str]
 
@@ -45,11 +53,13 @@ def default_config() -> dict[str, dict[str, Any]]:
             "model": MODEL_OPTIONS[0],
             "thinking": DEFAULT_THINKING,
             "fast": False,
+            "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
         "bot": {
             "allow_groups": False,
             "allowed_chats": [],
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
+            "transcription_prompt": DEFAULT_TRANSCRIPTION_PROMPT,
         },
     }
 
@@ -64,6 +74,11 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "model": as_str(openai.get("model"), defaults["openai"]["model"]),
             "thinking": as_str(openai.get("thinking"), defaults["openai"]["thinking"]),
             "fast": as_bool(openai.get("fast"), defaults["openai"]["fast"]),
+            "transcription_model": as_choice(
+                openai.get("transcription_model"),
+                defaults["openai"]["transcription_model"],
+                TRANSCRIPTION_MODEL_OPTIONS,
+            ),
         },
         "bot": {
             "allow_groups": as_bool(
@@ -72,6 +87,10 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
             "system_prompt": as_str(
                 bot.get("system_prompt"), defaults["bot"]["system_prompt"]
+            ),
+            "transcription_prompt": as_str(
+                bot.get("transcription_prompt"),
+                defaults["bot"]["transcription_prompt"],
             ),
         },
     }
@@ -117,11 +136,13 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"model = {quote(str(openai['model']))}",
             f"thinking = {quote(str(openai['thinking']))}",
             f"fast = {str(bool(openai['fast'])).lower()}",
+            f"transcription_model = {quote(str(openai['transcription_model']))}",
             "",
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
             f"allowed_chats = [{allowed}]",
             f"system_prompt = {quote(str(bot['system_prompt']))}",
+            f"transcription_prompt = {quote(str(bot['transcription_prompt']))}",
             "",
         ]
     )
@@ -149,6 +170,11 @@ def as_str(value: Any, default: str) -> str:
 
 def as_bool(value: Any, default: bool) -> bool:
     return value if isinstance(value, bool) else default
+
+
+def as_choice(value: Any, default: str, options: tuple[str, ...]) -> str:
+    selected = as_str(value, default)
+    return selected if selected in options else default
 
 
 def as_int(value: Any, default: int, minimum: int) -> int:
@@ -198,7 +224,16 @@ def build_config() -> Config:
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
         openai_thinking=as_str(openai.get("thinking"), DEFAULT_THINKING),
         openai_fast=as_bool(openai.get("fast"), False),
+        openai_transcription_model=as_choice(
+            openai.get("transcription_model"),
+            TRANSCRIPTION_MODEL_OPTIONS[1],
+            TRANSCRIPTION_MODEL_OPTIONS,
+        ),
         system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
+        transcription_prompt=as_str(
+            bot.get("transcription_prompt"),
+            DEFAULT_TRANSCRIPTION_PROMPT,
+        ),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),
     )

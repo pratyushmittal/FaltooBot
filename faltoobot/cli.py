@@ -20,6 +20,7 @@ from faltoobot.config import (
     DEFAULT_THINKING,
     MODEL_OPTIONS,
     THINKING_OPTIONS,
+    TRANSCRIPTION_MODEL_OPTIONS,
     Config,
     build_config,
     ensure_config_file,
@@ -348,34 +349,55 @@ def prompt_bool(label: str, current: bool) -> bool:
         console.print("[yellow]Enter y or n.[/]")
 
 
-def prompt_model(current: str) -> str:
-    console.print("[bold]OpenAI model[/]")
-    for index, model in enumerate(MODEL_OPTIONS, start=1):
-        current_marker = " (current)" if model == current else ""
-        console.print(f"  [cyan]{index}.[/] {model}{current_marker}")
-    custom_index = len(MODEL_OPTIONS) + 1
-    custom_marker = " (current)" if current and current not in MODEL_OPTIONS else ""
-    console.print(f"  [cyan]{custom_index}.[/] custom{custom_marker}")
+def prompt_choice(
+    label: str,
+    current: str,
+    options: tuple[str, ...],
+    *,
+    allow_custom: bool = True,
+) -> str:
+    console.print(f"[bold]{label}[/]")
+    for index, option in enumerate(options, start=1):
+        current_marker = " (current)" if option == current else ""
+        console.print(f"  [cyan]{index}.[/] {option}{current_marker}")
+    custom_index = len(options) + 1
+    if allow_custom:
+        custom_marker = " (current)" if current and current not in options else ""
+        console.print(f"  [cyan]{custom_index}.[/] custom{custom_marker}")
     while True:
         default_choice = (
-            str(MODEL_OPTIONS.index(current) + 1)
-            if current in MODEL_OPTIONS
-            else str(custom_index)
+            str(options.index(current) + 1)
+            if current in options
+            else ("1" if not allow_custom else str(custom_index))
         )
-        raw = console.input(f"Select model [{default_choice}]: ").strip()
-        if not raw:
-            choice = default_choice
-        else:
-            choice = raw
+        choice = (
+            console.input(f"Select {label.lower()} [{default_choice}]: ").strip()
+            or default_choice
+        )
         if choice.isdigit():
             index = int(choice)
-            if 1 <= index <= len(MODEL_OPTIONS):
-                return MODEL_OPTIONS[index - 1]
-            if index == custom_index:
+            if 1 <= index <= len(options):
+                return options[index - 1]
+            if allow_custom and index == custom_index:
                 return prompt_text(
-                    "Custom model", current if current not in MODEL_OPTIONS else ""
+                    f"Custom {label.lower()}",
+                    current if current not in options else "",
                 )
-        console.print(f"[yellow]Enter a number between 1 and {custom_index}.[/]")
+        limit = custom_index if allow_custom else len(options)
+        console.print(f"[yellow]Enter a number between 1 and {limit}.[/]")
+
+
+def prompt_model(current: str) -> str:
+    return prompt_choice("OpenAI model", current, MODEL_OPTIONS)
+
+
+def prompt_transcription_model(current: str) -> str:
+    return prompt_choice(
+        "Transcription model",
+        current,
+        TRANSCRIPTION_MODEL_OPTIONS,
+        allow_custom=False,
+    )
 
 
 def prompt_thinking(current: str) -> str:
@@ -439,6 +461,9 @@ def configure_app(config: Config) -> None:
                     str(openai.get("thinking") or DEFAULT_THINKING)
                 ),
                 "fast": prompt_bool("OpenAI fast mode", bool(openai.get("fast"))),
+                "transcription_model": prompt_transcription_model(
+                    str(openai.get("transcription_model") or TRANSCRIPTION_MODEL_OPTIONS[1])
+                ),
             },
             "bot": {
                 "allow_groups": prompt_bool(
@@ -451,6 +476,10 @@ def configure_app(config: Config) -> None:
                 "system_prompt": prompt_text(
                     "System prompt",
                     str(bot.get("system_prompt") or ""),
+                ),
+                "transcription_prompt": prompt_text(
+                    "Transcription prompt",
+                    str(bot.get("transcription_prompt") or ""),
                 ),
             },
         }

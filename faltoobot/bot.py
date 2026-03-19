@@ -13,6 +13,7 @@ from neonize.utils.jid import Jid2String
 from openai import AsyncOpenAI
 
 from faltoobot.agent import reply
+from faltoobot.audio import AudioError, audio_message, audio_prompt
 from faltoobot.config import Config, build_config, normalize_chat
 from faltoobot.store import (
     Session,
@@ -42,7 +43,9 @@ def configure_logging(log_path: Path) -> None:
 
 def message_text(event: MessageEv) -> str:
     message = event.Message
-    text = message.conversation or message.extendedTextMessage.text
+    text = message.conversation
+    if not text and message.HasField("extendedTextMessage"):
+        text = message.extendedTextMessage.text
     return text.strip()
 
 
@@ -146,7 +149,7 @@ async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -
         await send_chat_state(client, chat, ChatPresence.CHAT_PRESENCE_COMPOSING)
         try:
             await asyncio.wait_for(stop.wait(), timeout=TYPING_REFRESH_SECONDS)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
     await send_chat_state(client, chat, ChatPresence.CHAT_PRESENCE_PAUSED)
 
@@ -169,17 +172,14 @@ async def handle_reset(
     return reset
 
 
-async def handle_prompt(
+async def handle_prompt(  # noqa: PLR0913
     client: NewAClient,
     event: MessageEv,
     config: Config,
     session: Session,
     openai_client: AsyncOpenAI,
+    prompt: str,
 ) -> Session:
-    prompt = message_text(event)
-    if not prompt:
-        await client.reply_message(help_text(config), event)
-        return session
     session = add_turn(session, "user", prompt)
     result = await reply(
         openai_client,
@@ -223,7 +223,8 @@ async def process_message(
         )
         return
     text = message_text(event)
-    if not text:
+    audio = audio_message(event)
+    if not text and audio is None:
         return
     async with chat_locks[chat_jid]:
         async with session_index_lock:
@@ -234,7 +235,12 @@ async def process_message(
                 "Skipping duplicate message %s from %s", event.Info.ID, chat_jid
             )
             return
-        logger.info("Received message from %s in %s: %s", sender_jid, chat_jid, text)
+        logger.info(
+            "Received message from %s in %s: %s",
+            sender_jid,
+            chat_jid,
+            text or f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>",
+        )
         if text == "/help":
             await client.reply_message(help_text(config), event)
             return
@@ -246,10 +252,19 @@ async def process_message(
             keep_chat_typing(client, source.Chat, typing_stop)
         )
         try:
-            await handle_prompt(client, event, config, session, openai_client)
-        except (
-            Exception
-        ) as exc:  # comment: this guard keeps the bot alive if one model call fails.
+            prompt = text or await audio_prompt(
+                client,
+                event,
+                openai_client,
+                transcription_prompt=config.transcription_prompt,
+                model=config.openai_transcription_model,
+                normalization_model=config.openai_model,
+            )
+            await handle_prompt(client, event, config, session, openai_client, prompt)
+        except AudioError as exc:
+            logger.info("Failed to transcribe audio %s: %s", event.Info.ID, exc)
+            await client.reply_message(str(exc), event)
+        except Exception as exc:  # comment: this guard keeps the bot alive if one model call fails.
             logger.exception("Failed to handle message %s", event.Info.ID)
             await client.reply_message(f"Sorry, that failed: {exc}", event)
         finally:
