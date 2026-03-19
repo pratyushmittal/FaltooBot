@@ -2,10 +2,15 @@ import asyncio
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from neonize.aioze.client import NewAClient
+from neonize.aioze.events import MessageEv
 from neonize.proto import Neonize_pb2
+from neonize.utils.jid import Jid2String
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
+from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 
 from faltoobot import audio, bot
 from faltoobot.bot import keep_chat_typing, source_chat_ids
@@ -43,7 +48,7 @@ def jid(user: str, server: str) -> Neonize_pb2.JID:
 
 def fake_event(
     *, message_id: str = "msg-1", text: str = "", audio_seconds: int = 0
-) -> SimpleNamespace:
+) -> MessageEv:
     source = Neonize_pb2.MessageSource(
         Chat=jid("15555555555555", "lid"),
         Sender=jid("15555555555555", "lid"),
@@ -53,9 +58,12 @@ def fake_event(
         message.audioMessage.CopyFrom(
             AudioMessage(mimetype="audio/ogg", seconds=audio_seconds, PTT=True)
         )
-    return SimpleNamespace(
-        Message=message,
-        Info=SimpleNamespace(MessageSource=source, ID=message_id),
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
     )
 
 
@@ -68,7 +76,10 @@ class FakePresenceClient:
         self.downloads = 0
 
     async def send_chat_presence(
-        self, jid: Neonize_pb2.JID, state: object, media: object
+        self,
+        jid: Neonize_pb2.JID,
+        state: ChatPresence,
+        media: ChatPresenceMedia,
     ) -> str:
         self.calls.append((state.name, media.name))
         return "ok"
@@ -126,7 +137,9 @@ def test_keep_chat_typing_sends_composing_then_paused() -> None:
         client = FakePresenceClient()
         stop = asyncio.Event()
         task = asyncio.create_task(
-            keep_chat_typing(client, jid("15555550123", "s.whatsapp.net"), stop)
+            keep_chat_typing(
+                cast(NewAClient, client), jid("15555550123", "s.whatsapp.net"), stop
+            )
         )
 
         await asyncio.sleep(0)
@@ -185,16 +198,19 @@ async def test_process_message_transcribes_voice_notes(
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
     monkeypatch.setattr(bot, "reply", fake_reply)
 
+    event = fake_event(audio_seconds=7)
     await bot.process_message(
-        client,
-        fake_event(audio_seconds=7),
+        cast(NewAClient, client),
+        event,
         config=config,
         openai_client=object(),
         chat_locks=defaultdict(asyncio.Lock),
         session_index_lock=asyncio.Lock(),
     )
 
-    session = whatsapp_session(config.sessions_dir, "918960294979@s.whatsapp.net")
+    session = whatsapp_session(
+        config.sessions_dir, Jid2String(event.Info.MessageSource.Chat)
+    )
     assert client.downloads == 1
     assert client.replies == ["Done"]
     assert [turn.content for turn in session.messages] == ["Call mom at 6", "Done"]
@@ -213,16 +229,19 @@ async def test_process_message_rejects_long_voice_notes(
 
     monkeypatch.setattr(bot, "reply", fake_reply)
 
+    event = fake_event(audio_seconds=audio.DEFAULT_AUDIO_MAX_SECONDS + 1)
     await bot.process_message(
-        client,
-        fake_event(audio_seconds=audio.DEFAULT_AUDIO_MAX_SECONDS + 1),
+        cast(NewAClient, client),
+        event,
         config=config,
         openai_client=object(),
         chat_locks=defaultdict(asyncio.Lock),
         session_index_lock=asyncio.Lock(),
     )
 
-    session = whatsapp_session(config.sessions_dir, "918960294979@s.whatsapp.net")
+    session = whatsapp_session(
+        config.sessions_dir, Jid2String(event.Info.MessageSource.Chat)
+    )
     assert client.downloads == 0
     assert client.replies == [
         f"Voice note is too long. Keep it under {audio.DEFAULT_AUDIO_MAX_SECONDS} seconds."
