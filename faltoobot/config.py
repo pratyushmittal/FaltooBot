@@ -66,9 +66,13 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "fast": as_bool(openai.get("fast"), defaults["openai"]["fast"]),
         },
         "bot": {
-            "allow_groups": as_bool(bot.get("allow_groups"), defaults["bot"]["allow_groups"]),
+            "allow_groups": as_bool(
+                bot.get("allow_groups"), defaults["bot"]["allow_groups"]
+            ),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
-            "system_prompt": as_str(bot.get("system_prompt"), defaults["bot"]["system_prompt"]),
+            "system_prompt": as_str(
+                bot.get("system_prompt"), defaults["bot"]["system_prompt"]
+            ),
         },
     }
 
@@ -100,7 +104,9 @@ def quote(value: str) -> str:
 def render_config(data: dict[str, dict[str, Any]]) -> str:
     bot = data["bot"]
     openai = data["openai"]
-    allowed_chats = bot["allowed_chats"] if isinstance(bot["allowed_chats"], list) else []
+    allowed_chats = (
+        bot["allowed_chats"] if isinstance(bot["allowed_chats"], list) else []
+    )
     allowed = ", ".join(quote(chat) for chat in allowed_chats if isinstance(chat, str))
     return "\n".join(
         [
@@ -186,7 +192,9 @@ def build_config() -> Config:
         session_db=root / "session.db",
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",
-        openai_api_key=as_str(openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")),
+        openai_api_key=as_str(
+            openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")
+        ),
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
         openai_thinking=as_str(openai.get("thinking"), DEFAULT_THINKING),
         openai_fast=as_bool(openai.get("fast"), False),

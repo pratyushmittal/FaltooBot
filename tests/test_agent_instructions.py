@@ -3,7 +3,13 @@ from typing import Any
 
 import pytest
 
-from faltoobot.agent import reasoning_config, reply, request_args, stream_reply, system_instructions
+from faltoobot.agent import (
+    reasoning_config,
+    reply,
+    request_args,
+    stream_reply,
+    system_instructions,
+)
 from faltoobot.config import build_config
 from faltoobot.store import create_session
 
@@ -267,10 +273,14 @@ async def test_reply_includes_global_home_and_session_agents_in_instructions(
     (workspace / "AGENTS.md").write_text("Session rules.", encoding="utf-8")
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeClient()
 
-    result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
+    result = await reply(
+        client, config, session, [{"type": "message", "role": "user", "content": "hi"}]
+    )  # type: ignore[arg-type]
 
     assert result["text"] == "ok"
     instructions = client.responses.calls[0]["instructions"]
@@ -294,9 +304,14 @@ def test_request_args_use_default_tier_when_fast_mode_is_disabled(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
 
-    assert request_args(config, session, [], "Test instructions")["service_tier"] == "default"
+    assert (
+        request_args(config, session, [], "Test instructions")["service_tier"]
+        == "default"
+    )
 
 
 def test_request_args_use_priority_tier_when_fast_mode_is_enabled(
@@ -331,12 +346,19 @@ def test_request_args_use_priority_tier_when_fast_mode_is_enabled(
     )
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
 
-    assert request_args(config, session, [], "Test instructions")["service_tier"] == "priority"
+    assert (
+        request_args(config, session, [], "Test instructions")["service_tier"]
+        == "priority"
+    )
 
 
-def test_reasoning_config_enables_auto_summaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reasoning_config_enables_auto_summaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     root = home / ".faltoobot"
     root.mkdir(parents=True, exist_ok=True)
@@ -351,7 +373,9 @@ def test_reasoning_config_enables_auto_summaries(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.anyio
-async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stream_reply_emits_text_deltas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -360,7 +384,9 @@ async def test_stream_reply_emits_text_deltas(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeClient()
     deltas: list[str] = []
     reasoning_deltas: list[str] = []
@@ -396,14 +422,20 @@ async def test_reply_keeps_intermediate_tool_call_items(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeLoopClient()
 
-    result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
+    result = await reply(
+        client, config, session, [{"type": "message", "role": "user", "content": "hi"}]
+    )  # type: ignore[arg-type]
 
     assert result["text"] == "done"
     assert any(item.get("type") == "shell_call" for item in result["output_items"])
-    assert any(item.get("type") == "shell_call_output" for item in result["output_items"])
+    assert any(
+        item.get("type") == "shell_call_output" for item in result["output_items"]
+    )
 
 
 @pytest.mark.anyio
@@ -419,10 +451,14 @@ async def test_reply_uses_message_output_text_when_sdk_output_text_is_empty(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeWebSearchClient()
 
-    result = await reply(client, config, session, [{"type": "message", "role": "user", "content": "hi"}])  # type: ignore[arg-type]
+    result = await reply(
+        client, config, session, [{"type": "message", "role": "user", "content": "hi"}]
+    )  # type: ignore[arg-type]
 
     assert result["text"] == "search-backed answer"
     assert any(item.get("type") == "web_search_call" for item in result["output_items"])
@@ -442,7 +478,9 @@ async def test_reply_strips_parsed_arguments_from_replayed_tool_items(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeSanitizeClient()
 
     result = await reply(
@@ -465,6 +503,7 @@ async def test_reply_strips_parsed_arguments_from_replayed_tool_items(
     assert sent_item["arguments"] == '{"action":"list"}'
     assert "parsed_arguments" not in sent_item
 
+
 @pytest.mark.anyio
 async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
     tmp_path: Path,
@@ -478,7 +517,9 @@ async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeLoopStreamClient()
     snapshots: list[tuple[str, list[str]]] = []
 
@@ -487,7 +528,9 @@ async def test_stream_reply_emits_stream_end_snapshots_for_tool_steps(
         config,
         session,
         [{"type": "message", "role": "user", "content": "hi"}],  # type: ignore[arg-type]
-        on_stream_end=lambda items, text: snapshots.append((text, [item["type"] for item in items])),
+        on_stream_end=lambda items, text: snapshots.append(
+            (text, [item["type"] for item in items])
+        ),
     )
 
     assert snapshots == [
@@ -510,7 +553,9 @@ async def test_stream_reply_uses_message_output_text_when_sdk_output_text_is_emp
     monkeypatch.setenv("HOME", str(home))
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=workspace)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=workspace
+    )
     client = FakeWebSearchStreamClient()
     snapshots: list[tuple[str, list[str]]] = []
 
@@ -519,14 +564,18 @@ async def test_stream_reply_uses_message_output_text_when_sdk_output_text_is_emp
         config,
         session,
         [{"type": "message", "role": "user", "content": "hi"}],  # type: ignore[arg-type]
-        on_stream_end=lambda items, text: snapshots.append((text, [item["type"] for item in items])),
+        on_stream_end=lambda items, text: snapshots.append(
+            (text, [item["type"] for item in items])
+        ),
     )
 
     assert snapshots == [("search-backed answer", ["web_search_call", "message"])]
     assert result["text"] == "search-backed answer"
 
 
-def test_instruction_parts_deduplicate_same_agents_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_instruction_parts_deduplicate_same_agents_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     root = home / ".faltoobot"
     root.mkdir(parents=True, exist_ok=True)
@@ -534,7 +583,9 @@ def test_instruction_parts_deduplicate_same_agents_path(tmp_path: Path, monkeypa
     (home / "AGENTS.md").write_text("Home rules.", encoding="utf-8")
 
     config = build_config()
-    session = create_session(config.sessions_dir, "CLI test", kind="cli", workspace=home)
+    session = create_session(
+        config.sessions_dir, "CLI test", kind="cli", workspace=home
+    )
 
     instructions = system_instructions(config, session)
 

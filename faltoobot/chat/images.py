@@ -22,33 +22,32 @@ MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1200
 
 
-def as_session_path(source: str, workspace: Path) -> Path | None:
-    def existing(path: Path) -> Path | None:
-        try:
-            return path if path.exists() else None
-        except OSError:
-            return None
+def existing_path(path: Path) -> Path | None:
+    try:
+        return path if path.exists() else None
+    except OSError:
+        return None
 
-    value = source.strip().strip('"').strip("'")
-    if not value:
+
+def workspace_path(value: str, workspace: Path) -> Path:
+    raw = Path(os.path.expanduser(value))
+    return raw if raw.is_absolute() else workspace / raw
+
+
+def shell_escaped_path(value: str, workspace: Path) -> Path | None:
+    if "\\" not in value:
         return None
-    parsed = urlparse(value)
-    if parsed.scheme == "file":
-        path = Path(unquote(parsed.path))
-    elif parsed.scheme:
+    try:
+        parts = shlex.split(value)
+    except ValueError:
         return None
-    else:
-        raw = Path(os.path.expanduser(value))
-        path = raw if raw.is_absolute() else workspace / raw
-        if existing(path) is None and "\\" in value:
-            try:
-                parts = shlex.split(value)
-            except ValueError:
-                parts = []
-            if len(parts) == 1:
-                raw = Path(os.path.expanduser(parts[0]))
-                path = raw if raw.is_absolute() else workspace / raw
-    if existing(path) is None:
+    if len(parts) != 1:
+        return None
+    return workspace_path(parts[0], workspace)
+
+
+def resolved_existing_path(path: Path) -> Path | None:
+    if existing_path(path) is None:
         return None
     try:
         return path.resolve()
@@ -56,10 +55,29 @@ def as_session_path(source: str, workspace: Path) -> Path | None:
         return None
 
 
+def as_session_path(source: str, workspace: Path) -> Path | None:
+    value = source.strip().strip('"').strip("'")
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme == "file":
+        return resolved_existing_path(Path(unquote(parsed.path)))
+    if parsed.scheme:
+        return None
+    path = workspace_path(value, workspace)
+    if (
+        existing_path(path) is None
+        and (escaped := shell_escaped_path(value, workspace)) is not None
+    ):
+        path = escaped
+    return resolved_existing_path(path)
+
+
 def is_image_path(path: Path) -> bool:
     mime_type, _ = mimetypes.guess_type(path.name)
     return path.is_file() and (
-        (mime_type or "").startswith("image/") or path.suffix.lower() in IMAGE_EXTENSIONS
+        (mime_type or "").startswith("image/")
+        or path.suffix.lower() in IMAGE_EXTENSIONS
     )
 
 
@@ -69,7 +87,8 @@ def is_image_url(source: str) -> bool:
         return True
     parsed = urlparse(value)
     return (
-        parsed.scheme in {"http", "https"} and Path(parsed.path).suffix.lower() in IMAGE_EXTENSIONS
+        parsed.scheme in {"http", "https"}
+        and Path(parsed.path).suffix.lower() in IMAGE_EXTENSIONS
     )
 
 
@@ -103,7 +122,9 @@ def image_label(source: str, alt: str, workspace: Path) -> str:
 
 def display_prompt(prompt: str, workspace: Path) -> str:
     text = MARKDOWN_IMAGE_RE.sub(
-        lambda match: f"[image: {image_label(match.group('src'), match.group('alt'), workspace)}]",
+        lambda match: (
+            f"[image: {image_label(match.group('src'), match.group('alt'), workspace)}]"
+        ),
         prompt,
     ).strip()
     return text or "[image]"
@@ -170,7 +191,9 @@ def resized_image_upload(path: Path) -> BytesIO | None:
     return buffer
 
 
-async def input_image_part(client: AsyncOpenAI, workspace: Path, source: str) -> dict[str, Any]:
+async def input_image_part(
+    client: AsyncOpenAI, workspace: Path, source: str
+) -> dict[str, Any]:
     value = source.strip()
     if is_image_url(value):
         return {"type": "input_image", "image_url": value, "detail": "auto"}

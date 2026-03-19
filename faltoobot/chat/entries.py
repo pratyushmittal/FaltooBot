@@ -17,6 +17,8 @@ MAX_TOOL_LINES = 8
 BOLD_SPAN_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
 QUEUE_PREVIEW_CHARS = 75
 SED_RANGE_RE = re.compile(r"(?P<start>\d+)(?:,(?P<end>\d+))?p$")
+MIN_CD_PREFIX_PARTS = 4
+
 RG_VALUE_FLAGS = frozenset(
     {
         "-A",
@@ -84,7 +86,7 @@ def shell_command_summary(command: str) -> str:
 
 
 def strip_shell_prefix(parts: list[str]) -> list[str]:
-    if len(parts) < 4 or parts[0] != "cd":
+    if len(parts) < MIN_CD_PREFIX_PARTS or parts[0] != "cd":
         return parts
     for separator in ("&&", ";"):
         if separator in parts[2:]:
@@ -148,47 +150,76 @@ def rg_command_summary(parts: list[str]) -> str | None:
     return f"searching for {pattern} in {location}"
 
 
-def tool_lines(item: dict[str, Any]) -> list[str]:
-    item_type = item.get("type")
-    if not isinstance(item_type, str):
-        return []
+def shell_tool_lines(item: dict[str, Any], item_type: str) -> list[str] | None:
+    action = item.get("action")
     if item_type == "shell_call":
-        action = item.get("action")
         commands = action.get("commands") if isinstance(action, dict) else None
         if isinstance(commands, list):
-            return ["shell", *(shell_command_summary(str(command)) for command in commands)]
-    if item_type in {"local_shell_call", "function_shell_call"}:
-        action = item.get("action")
-        command = action.get("command") if isinstance(action, dict) else None
-        if isinstance(command, list):
-            return ["shell", shell_command_summary(" ".join(str(part) for part in command))]
-    if item_type == "function_call":
-        name = item.get("name")
-        arguments = item.get("arguments")
-        if isinstance(name, str):
-            lines = [name]
-            if isinstance(arguments, str) and arguments.strip():
-                try:
-                    payload = json.dumps(json.loads(arguments), ensure_ascii=False, indent=2)
-                except json.JSONDecodeError:
-                    payload = arguments
-                lines.extend(payload.splitlines())
-            return lines
-    if item_type in {
+            return [
+                "shell",
+                *(shell_command_summary(str(command)) for command in commands),
+            ]
+        return None
+    if item_type not in {"local_shell_call", "function_shell_call"}:
+        return None
+    command = action.get("command") if isinstance(action, dict) else None
+    if not isinstance(command, list):
+        return None
+    return ["shell", shell_command_summary(" ".join(str(part) for part in command))]
+
+
+def function_tool_lines(item: dict[str, Any], item_type: str) -> list[str] | None:
+    if item_type != "function_call":
+        return None
+    name = item.get("name")
+    arguments = item.get("arguments")
+    if not isinstance(name, str):
+        return None
+    lines = [name]
+    if isinstance(arguments, str) and arguments.strip():
+        try:
+            payload = json.dumps(json.loads(arguments), ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            payload = arguments
+        lines.extend(payload.splitlines())
+    return lines
+
+
+def search_tool_lines(item: dict[str, Any], item_type: str) -> list[str] | None:
+    if item_type not in {
         "web_search_call",
         "function_web_search",
         "tool_search_call",
         "file_search_call",
     }:
-        action = item.get("action")
-        query = action.get("query") if isinstance(action, dict) else item.get("query")
-        if isinstance(query, str) and query.strip():
-            return ["web search", query]
-        return ["web search"]
-    if item_type.endswith("_call") and not item_type.endswith("_output"):
-        details = item.get("name") or item.get("call_id") or item.get("id")
-        label = item_type.replace("_", " ")
-        return [label, str(details)] if details else [label]
+        return None
+    action = item.get("action")
+    query = action.get("query") if isinstance(action, dict) else item.get("query")
+    if isinstance(query, str) and query.strip():
+        return ["web search", query]
+    return ["web search"]
+
+
+def generic_tool_lines(item: dict[str, Any], item_type: str) -> list[str] | None:
+    if not item_type.endswith("_call") or item_type.endswith("_output"):
+        return None
+    details = item.get("name") or item.get("call_id") or item.get("id")
+    label = item_type.replace("_", " ")
+    return [label, str(details)] if details else [label]
+
+
+def tool_lines(item: dict[str, Any]) -> list[str]:
+    item_type = item.get("type")
+    if not isinstance(item_type, str):
+        return []
+    for lines in (
+        shell_tool_lines(item, item_type),
+        function_tool_lines(item, item_type),
+        search_tool_lines(item, item_type),
+        generic_tool_lines(item, item_type),
+    ):
+        if lines is not None:
+            return lines
     return []
 
 
@@ -232,7 +263,11 @@ def item_key(item: dict[str, Any]) -> str | None:
 def turn_entries(turn: Turn) -> list[Entry]:
     return [
         *(entry for item in turn.items for entry in item_entries(item)),
-        *([Entry(TURN_KIND.get(turn.role, "bot"), turn.content)] if turn.content else []),
+        *(
+            [Entry(TURN_KIND.get(turn.role, "bot"), turn.content)]
+            if turn.content
+            else []
+        ),
     ]
 
 
@@ -243,14 +278,19 @@ def history_entries(session: Session) -> list[Entry]:
 def visible_content(kind: str, content: str) -> str:
     if kind != "thinking":
         return content
-    matches = [match.strip() for match in BOLD_SPAN_RE.findall(content) if match.strip()]
+    matches = [
+        match.strip() for match in BOLD_SPAN_RE.findall(content) if match.strip()
+    ]
     if not matches:
         return content
     return "\n".join(f"**{match}**" for match in matches)
 
 
 def looks_like_markdown(content: str) -> bool:
-    return any(token in content for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. "))
+    return any(
+        token in content
+        for token in ("**", "__", "`", "[", "](", "\n#", "\n-", "\n1. ")
+    )
 
 
 def uses_markdown(kind: str, content: str) -> bool:

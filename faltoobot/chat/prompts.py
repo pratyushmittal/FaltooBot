@@ -13,6 +13,8 @@ COMMANDS = (
 )
 PROMPT_ARG_RE = re.compile(r"\$(\d+)\b")
 PROMPT_RANGE_RE = re.compile(r"\$\{@:(?P<start>\d+)(?::(?P<end>\d+))?\}")
+FRONTMATTER_PARTS = 2
+QUOTED_TEXT_MIN_LENGTH = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +39,7 @@ def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     if not text.startswith("---\n"):
         return {}, text
     parts = text.split("\n---\n", 1)
-    if len(parts) != 2:
+    if len(parts) != FRONTMATTER_PARTS:
         return {}, text
     meta = {}
     for line in parts[0].splitlines()[1:]:
@@ -45,7 +47,11 @@ def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
         if not sep:
             continue
         cleaned = value.strip()
-        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        if (
+            len(cleaned) >= QUOTED_TEXT_MIN_LENGTH
+            and cleaned[0] == cleaned[-1]
+            and cleaned[0] in {'"', "'"}
+        ):
             cleaned = cleaned[1:-1]
         meta[key.strip()] = cleaned
     return meta, parts[1]
@@ -80,7 +86,9 @@ def prompt_templates(root: Path) -> tuple[PromptTemplate, ...]:
         body = body.strip()
         if not body:
             continue
-        templates.append(PromptTemplate(command, prompt_detail(path.stem, body, meta), body))
+        templates.append(
+            PromptTemplate(command, prompt_detail(path.stem, body, meta), body)
+        )
     return tuple(templates)
 
 
@@ -113,7 +121,11 @@ def expand_prompt_body(body: str, args: list[str]) -> str:
     expanded = body.replace("$ARGUMENTS", all_args).replace("$@", all_args)
     expanded = PROMPT_RANGE_RE.sub(replace_range, expanded)
     return PROMPT_ARG_RE.sub(
-        lambda match: args[index] if (index := int(match.group(1)) - 1) in range(len(args)) else "",
+        lambda match: (
+            args[index]
+            if (index := int(match.group(1)) - 1) in range(len(args))
+            else ""
+        ),
         expanded,
     ).strip()
 

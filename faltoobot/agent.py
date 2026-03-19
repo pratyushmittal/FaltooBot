@@ -5,7 +5,7 @@ import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, Unpack
 
 from openai import AsyncOpenAI
 
@@ -15,6 +15,7 @@ from faltoobot.store import Session
 COMPACT_THRESHOLD = 100_000
 DEFAULT_TIMEOUT_MS = 60_000
 MAX_SHELL_OUTPUT = 12_000
+FRONTMATTER_PARTS = 2
 
 
 class Skill(TypedDict):
@@ -35,6 +36,20 @@ class ReplyResult(TypedDict):
     output_items: list[dict[str, Any]]
     usage: dict[str, Any] | None
     instructions: str
+
+
+class ResolveReplyOptions(TypedDict, total=False):
+    instructions: str
+    request: Callable[[list[Any]], Any]
+    on_stream_end: Callable[[list[dict[str, Any]], str], Any]
+
+
+class StreamReplyOptions(TypedDict, total=False):
+    on_text_delta: Callable[[str], Any]
+    on_reasoning_delta: Callable[[str], Any]
+    on_reasoning_done: Callable[[], Any]
+    on_output_item: Callable[[dict[str, Any]], Any]
+    on_stream_end: Callable[[list[dict[str, Any]], str], Any]
 
 
 def agents_file(path: Path) -> Path:
@@ -96,7 +111,7 @@ def skill_meta(path: Path) -> Skill | None:
     description = ""
     if text.startswith("---\n"):
         parts = text.split("\n---\n", 1)
-        if len(parts) == 2:
+        if len(parts) == FRONTMATTER_PARTS:
             for line in parts[0].splitlines()[1:]:
                 if line.startswith("name:"):
                     name = line.split(":", 1)[1].strip() or name
@@ -162,7 +177,10 @@ def sanitize_input(value: Any) -> Any:
 
 
 def normalized_items(items: list[Any]) -> list[Any]:
-    return [sanitize_input(item.to_dict() if hasattr(item, "to_dict") else item) for item in items]
+    return [
+        sanitize_input(item.to_dict() if hasattr(item, "to_dict") else item)
+        for item in items
+    ]
 
 
 def dict_item(value: Any) -> dict[str, Any] | None:
@@ -195,7 +213,9 @@ def output_text_from_items(items: list[Any]) -> str:
     return "".join(texts)
 
 
-def response_text(response: Any, response_outputs: list[dict[str, Any]] | None = None) -> str:
+def response_text(
+    response: Any, response_outputs: list[dict[str, Any]] | None = None
+) -> str:
     text = getattr(response, "output_text", "")
     if isinstance(text, str) and text.strip():
         return text.strip()
@@ -232,13 +252,16 @@ def tool_error_text(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-
 def run_shell_call(session: Session, item: dict[str, Any]) -> dict[str, Any]:
     action = item["action"]
     max_output_length = shell_output_limit(action)
     try:
         process = subprocess.run(
-            ["/bin/bash", "-lc", "\n".join(str(command) for command in action["commands"])],
+            [
+                "/bin/bash",
+                "-lc",
+                "\n".join(str(command) for command in action["commands"]),
+            ],
             capture_output=True,
             text=False,
             timeout=timeout_seconds(action),
@@ -341,7 +364,9 @@ def needs_tool_output(item: dict[str, Any]) -> bool:
             return False
 
 
-def tool_output(config: Config, session: Session, item: dict[str, Any]) -> dict[str, Any] | None:
+def tool_output(
+    config: Config, session: Session, item: dict[str, Any]
+) -> dict[str, Any] | None:
     match item.get("type"), item.get("name"):
         case "shell_call", _:
             return run_shell_call(session, item)
@@ -363,7 +388,9 @@ async def collect_tool_outputs(
         for item in items
         if isinstance(item, dict) and needs_tool_output(item)
     ]
-    return [output for output in await asyncio.gather(*tasks) if isinstance(output, dict)]
+    return [
+        output for output in await asyncio.gather(*tasks) if isinstance(output, dict)
+    ]
 
 
 def request_args(
@@ -381,7 +408,9 @@ def request_args(
         "store": False,
         "parallel_tool_calls": True,
         "include": ["reasoning.encrypted_content", "web_search_call.action.sources"],
-        "context_management": [{"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}],
+        "context_management": [
+            {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
+        ],
         "tools": tools(),  # type: ignore[arg-type]
     }
 
@@ -409,7 +438,9 @@ async def emit_text_delta(callback: Callable[[str], Any] | None, delta: str) -> 
         await result
 
 
-async def emit_item(callback: Callable[[dict[str, Any]], Any] | None, item: dict[str, Any]) -> None:
+async def emit_item(
+    callback: Callable[[dict[str, Any]], Any] | None, item: dict[str, Any]
+) -> None:
     if not callback:
         return
     result = callback(item)
@@ -429,15 +460,18 @@ async def resolve_reply(
     config: Config,
     session: Session,
     messages: list[Any],
-    instructions: str,
-    request: Callable[[list[Any]], Any],
-    on_stream_end: Callable[[list[dict[str, Any]], str], Any] | None = None,
+    **kwargs: Unpack[ResolveReplyOptions],
 ) -> ReplyResult:
+    instructions = kwargs["instructions"]
+    request = kwargs["request"]
+    on_stream_end = kwargs.get("on_stream_end")
     items = list(messages)
     outputs: list[dict[str, Any]] = []
     while True:
         response = await request(items)
-        response_outputs = [item for item in normalized_items(response.output) if isinstance(item, dict)]
+        response_outputs = [
+            item for item in normalized_items(response.output) if isinstance(item, dict)
+        ]
         outputs.extend(response_outputs)
         items = compacted_items([*items, *response_outputs])
         next_items = await collect_tool_outputs(config, session, response_outputs)
@@ -463,8 +497,10 @@ async def reply(
         config,
         session,
         messages,
-        instructions,
-        lambda items: openai_client.responses.create(**request_args(config, session, items, instructions)),
+        instructions=instructions,
+        request=lambda items: openai_client.responses.create(
+            **request_args(config, session, items, instructions)
+        ),
     )
 
 
@@ -473,13 +509,13 @@ async def stream_reply(
     config: Config,
     session: Session,
     messages: list[Any],
-    on_text_delta: Callable[[str], Any] | None = None,
-    on_reasoning_delta: Callable[[str], Any] | None = None,
-    on_reasoning_done: Callable[[], Any] | None = None,
-    on_output_item: Callable[[dict[str, Any]], Any] | None = None,
-    on_stream_end: Callable[[list[dict[str, Any]], str], Any] | None = None,
+    **kwargs: Unpack[StreamReplyOptions],
 ) -> ReplyResult:
     instructions = system_instructions(config, session)
+    on_text_delta = kwargs.get("on_text_delta")
+    on_reasoning_delta = kwargs.get("on_reasoning_delta")
+    on_reasoning_done = kwargs.get("on_reasoning_done")
+    on_output_item = kwargs.get("on_output_item")
 
     async def stream_request(items: list[Any]) -> Any:
         async with openai_client.responses.stream(
@@ -488,13 +524,18 @@ async def stream_reply(
             async for event in stream:
                 event_type = getattr(event, "type", None)
                 if event_type == "response.output_item.done":
-                    item = dict_item(getattr(event, "item", None).to_dict() if hasattr(getattr(event, "item", None), "to_dict") else getattr(event, "item", None))
+                    raw_item = getattr(event, "item", None)
+                    item = dict_item(
+                        raw_item.to_dict() if hasattr(raw_item, "to_dict") else raw_item
+                    )
                     if item is not None:
                         await emit_item(on_output_item, item)
                 elif event_type == "response.output_text.delta":
                     await emit_text_delta(on_text_delta, getattr(event, "delta", ""))
                 elif event_type == "response.reasoning_summary_text.delta":
-                    await emit_text_delta(on_reasoning_delta, getattr(event, "delta", ""))
+                    await emit_text_delta(
+                        on_reasoning_delta, getattr(event, "delta", "")
+                    )
                 elif event_type == "response.reasoning_summary_text.done":
                     await emit_event(on_reasoning_done)
             return await stream.get_final_response()
@@ -503,7 +544,7 @@ async def stream_reply(
         config,
         session,
         messages,
-        instructions,
-        stream_request,
-        on_stream_end=on_stream_end,
+        instructions=instructions,
+        request=stream_request,
+        on_stream_end=kwargs.get("on_stream_end"),
     )

@@ -4,7 +4,7 @@ import signal
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
@@ -26,6 +26,7 @@ from faltoobot.store import (
 logger = logging.getLogger("faltoobot")
 AUTH_STOP_DELAY = 0.5
 TYPING_REFRESH_SECONDS = 4.0
+MIN_ALLOWLIST_DIGITS = 8
 
 
 def configure_logging(log_path: Path) -> None:
@@ -59,14 +60,14 @@ def phone_digits(value: str) -> str:
     return value.split("@", 1)[0]
 
 
-
 def phone_id_matches(left: str, right: str) -> bool:
     left_digits = phone_digits(left)
     right_digits = phone_digits(right)
-    if min(len(left_digits), len(right_digits)) < 8:  # comment: short suffixes are too loose for allowlists.
+    if (
+        min(len(left_digits), len(right_digits)) < MIN_ALLOWLIST_DIGITS
+    ):  # comment: short suffixes are too loose for allowlists.
         return False
     return left_digits.endswith(right_digits) or right_digits.endswith(left_digits)
-
 
 
 def is_allowed_chat(config: Config, source: Any) -> bool:
@@ -75,7 +76,11 @@ def is_allowed_chat(config: Config, source: Any) -> bool:
     ids = source_chat_ids(source)
     if not ids.isdisjoint(config.allowed_chats):
         return True
-    return any(phone_id_matches(allowed, seen) for allowed in config.allowed_chats for seen in ids)
+    return any(
+        phone_id_matches(allowed, seen)
+        for allowed in config.allowed_chats
+        for seen in ids
+    )
 
 
 def should_skip(event: MessageEv, config: Config) -> bool:
@@ -85,6 +90,13 @@ def should_skip(event: MessageEv, config: Config) -> bool:
     if source.IsGroup and not config.allow_groups:
         return True
     return False
+
+
+class ProcessMessageOptions(TypedDict):
+    config: Config
+    openai_client: AsyncOpenAI
+    chat_locks: dict[str, asyncio.Lock]
+    session_index_lock: asyncio.Lock
 
 
 def help_text(config: Config) -> str:
@@ -149,7 +161,9 @@ async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
         await client.send_message(chat, chunk)
 
 
-async def handle_reset(client: NewAClient, event: MessageEv, session: Session) -> Session:
+async def handle_reset(
+    client: NewAClient, event: MessageEv, session: Session
+) -> Session:
     reset = reset_session(session)
     await client.reply_message("Memory cleared for this chat.", event)
     return reset
@@ -188,11 +202,12 @@ async def handle_prompt(
 async def process_message(
     client: NewAClient,
     event: MessageEv,
-    config: Config,
-    openai_client: AsyncOpenAI,
-    chat_locks: dict[str, asyncio.Lock],
-    session_index_lock: asyncio.Lock,
+    **kwargs: Unpack[ProcessMessageOptions],
 ) -> None:
+    config = kwargs["config"]
+    openai_client = kwargs["openai_client"]
+    chat_locks = kwargs["chat_locks"]
+    session_index_lock = kwargs["session_index_lock"]
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     sender_jid = Jid2String(source.Sender)
@@ -215,7 +230,9 @@ async def process_message(
             session = whatsapp_session(config.sessions_dir, chat_jid)
         session, is_new = reserve_message(session, event.Info.ID)
         if not is_new:
-            logger.info("Skipping duplicate message %s from %s", event.Info.ID, chat_jid)
+            logger.info(
+                "Skipping duplicate message %s from %s", event.Info.ID, chat_jid
+            )
             return
         logger.info("Received message from %s in %s: %s", sender_jid, chat_jid, text)
         if text == "/help":
@@ -225,10 +242,14 @@ async def process_message(
             await handle_reset(client, event, session)
             return
         typing_stop = asyncio.Event()
-        typing_task = asyncio.create_task(keep_chat_typing(client, source.Chat, typing_stop))
+        typing_task = asyncio.create_task(
+            keep_chat_typing(client, source.Chat, typing_stop)
+        )
         try:
             await handle_prompt(client, event, config, session, openai_client)
-        except Exception as exc:  # comment: this guard keeps the bot alive if one model call fails.
+        except (
+            Exception
+        ) as exc:  # comment: this guard keeps the bot alive if one model call fails.
             logger.exception("Failed to handle message %s", event.Info.ID)
             await client.reply_message(f"Sorry, that failed: {exc}", event)
         finally:
@@ -299,10 +320,10 @@ async def run_bot(config: Config | None = None) -> None:
             process_message(
                 current_client,
                 event,
-                config,
-                openai_client,
-                chat_locks,
-                session_index_lock,
+                config=config,
+                openai_client=openai_client,
+                chat_locks=chat_locks,
+                session_index_lock=session_index_lock,
             )
         )
         tasks.add(task)

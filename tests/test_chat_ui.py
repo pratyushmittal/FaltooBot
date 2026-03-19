@@ -13,7 +13,12 @@ from textual import events
 from textual.widgets import Markdown as TextualMarkdown
 
 from faltoobot.chat.app import FaltooChatApp
-from faltoobot.chat.entries import queue_preview, rich_renderable, tool_entry, visible_content
+from faltoobot.chat.entries import (
+    queue_preview,
+    rich_renderable,
+    tool_entry,
+    visible_content,
+)
 from faltoobot.chat.images import (
     fitted_image_size,
     image_markdown,
@@ -37,6 +42,8 @@ from faltoobot.chat.widgets import (
 )
 from faltoobot.config import build_config
 from faltoobot.store import QueuedPrompt, add_turn, cli_session, existing_cli_session
+
+RESPONSIVE_INPUT_MAX_SECONDS = 0.45
 
 
 def config_text(system_prompt: str, thinking: str = "high") -> str:
@@ -66,7 +73,9 @@ def prepare_home(
     workspace.mkdir()
     config_dir = home / ".faltoobot"
     config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "config.toml").write_text(config_text("Test prompt.", thinking), encoding="utf-8")
+    (config_dir / "config.toml").write_text(
+        config_text("Test prompt.", thinking), encoding="utf-8"
+    )
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(workspace)
     return workspace
@@ -91,7 +100,9 @@ def entry_tuples(runtime: object) -> list[tuple[str, str]]:
 
 def transcript_blocks(app: object) -> list[EntryBlock]:
     return [
-        block for block in app.query_one("#transcript").children if isinstance(block, EntryBlock)
+        block
+        for block in app.query_one("#transcript").children
+        if isinstance(block, EntryBlock)
     ]  # type: ignore[attr-defined]
 
 
@@ -187,7 +198,9 @@ def test_prompt_templates_read_description_and_body(
     config = build_config()
     templates = prompt_templates(config.root)
 
-    assert [(template.command, template.detail, template.body) for template in templates] == [
+    assert [
+        (template.command, template.detail, template.body) for template in templates
+    ] == [
         ("/review", "Review a topic", "# Review\n\nPlease review $1"),
     ]
 
@@ -234,7 +247,10 @@ def test_completed_slash_query_extends_common_prefix() -> None:
 
 def test_tool_entry_summarizes_sed_shell_calls() -> None:
     text = tool_entry(
-        {"type": "shell_call", "action": {"commands": ["sed -n '1,220p' faltoobot/chat.py"]}}
+        {
+            "type": "shell_call",
+            "action": {"commands": ["sed -n '1,220p' faltoobot/chat.py"]},
+        }
     )
 
     assert text == "shell\nreading faltoobot/chat.py 1 to 220"
@@ -340,7 +356,9 @@ async def test_textual_app_action_paste_does_not_duplicate_text_paste(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: None)
+    monkeypatch.setattr(
+        "faltoobot.chat.widgets.save_clipboard_image", lambda session: None
+    )
     app = FaltooChatApp()
 
     async with app.run_test() as pilot:
@@ -359,7 +377,9 @@ async def test_textual_app_action_paste_skips_following_text_event_for_images(
     workspace = prepare_home(tmp_path, monkeypatch)
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
-    monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: image)
+    monkeypatch.setattr(
+        "faltoobot.chat.widgets.save_clipboard_image", lambda session: image
+    )
     app = FaltooChatApp()
 
     async with app.run_test() as pilot:
@@ -378,7 +398,9 @@ async def test_textual_app_ctrl_v_inserts_clipboard_image_markdown(
     workspace = prepare_home(tmp_path, monkeypatch)
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
-    monkeypatch.setattr("faltoobot.chat.widgets.save_clipboard_image", lambda session: image)
+    monkeypatch.setattr(
+        "faltoobot.chat.widgets.save_clipboard_image", lambda session: image
+    )
     app = FaltooChatApp()
 
     async with app.run_test() as pilot:
@@ -396,7 +418,9 @@ def test_status_text_shows_fast_suffix_when_enabled(
     assert status_text(config) == "model: gpt-5.4  thinking: high"
 
     config.config_file.write_text(
-        config.config_file.read_text(encoding="utf-8").replace("fast = false", "fast = true"),
+        config.config_file.read_text(encoding="utf-8").replace(
+            "fast = false", "fast = true"
+        ),
         encoding="utf-8",
     )
     fast_config = build_config()
@@ -404,7 +428,10 @@ def test_status_text_shows_fast_suffix_when_enabled(
 
 
 def test_queue_preview_flattens_multiline_content() -> None:
-    assert queue_preview("first line\nsecond line\n\nthird") == "first line second line third"
+    assert (
+        queue_preview("first line\nsecond line\n\nthird")
+        == "first line second line third"
+    )
     assert queue_preview("x" * 80) == "x" * 75
 
 
@@ -418,7 +445,9 @@ async def test_chat_submits_markdown_images_as_user_message_items(
     image.write_bytes(b"png")
     seen: list[dict[str, object]] = []
 
-    async def fake_input_image_part(*args: object, **kwargs: object) -> dict[str, object]:
+    async def fake_input_image_part(
+        *args: object, **kwargs: object
+    ) -> dict[str, object]:
         return {"type": "input_image", "file_id": "file_123", "detail": "auto"}
 
     async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
@@ -461,7 +490,8 @@ async def test_tree_opens_current_session_messages_file(
     prepare_home(tmp_path, monkeypatch)
     opened: list[Path] = []
     monkeypatch.setattr(
-        "faltoobot.chat.runtime.open_in_default_editor", lambda path: opened.append(path)
+        "faltoobot.chat.runtime.open_in_default_editor",
+        lambda path: opened.append(path),
     )
 
     runtime = build_chat_runtime()
@@ -488,7 +518,11 @@ async def test_chat_replays_existing_session_messages_on_start(
         "assistant",
         "world",
         items=[
-            {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
+            {
+                "type": "shell_call",
+                "call_id": "call_1",
+                "action": {"commands": ["pwd"]},
+            },
             {
                 "type": "reasoning",
                 "summary": [{"type": "summary_text", "text": "Checking context."}],
@@ -523,7 +557,11 @@ async def test_chat_updates_messages_file_after_tool_stream_ends(
             "call_id": "call_1",
             "status": "completed",
             "output": [
-                {"stdout": "/tmp", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}
+                {
+                    "stdout": "/tmp",
+                    "stderr": "",
+                    "outcome": {"type": "exit", "exit_code": 0},
+                }
             ],
         },
     ]
@@ -581,7 +619,11 @@ async def test_chat_shows_thinking_tool_and_bot_for_live_reply(
                     "type": "reasoning",
                     "summary": [{"type": "summary_text", "text": "Planning reply"}],
                 },
-                {"type": "shell_call", "call_id": "call_1", "action": {"commands": ["pwd"]}},
+                {
+                    "type": "shell_call",
+                    "call_id": "call_1",
+                    "action": {"commands": ["pwd"]},
+                },
             ],
             "usage": None,
             "instructions": "test instructions",
@@ -806,7 +848,9 @@ async def test_textual_app_shows_saved_prompt_slash_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    write_prompt(tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1")
+    write_prompt(
+        tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1"
+    )
     app = FaltooChatApp()
 
     async with app.run_test() as pilot:
@@ -823,7 +867,9 @@ async def test_textual_app_tab_completes_slash_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    write_prompt(tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1")
+    write_prompt(
+        tmp_path, "review", "---\ndescription: Review a topic\n---\nPlease review $1"
+    )
     app = FaltooChatApp()
 
     async with app.run_test() as pilot:
@@ -854,7 +900,9 @@ async def test_runtime_submit_expands_saved_prompt_before_queueing(
     seen: list[str] = []
 
     monkeypatch.setattr(type(runtime), "can_start_prompt_now", lambda self: True)
-    monkeypatch.setattr(type(runtime), "start_prompt_now", lambda self, prompt: seen.append(prompt))
+    monkeypatch.setattr(
+        type(runtime), "start_prompt_now", lambda self, prompt: seen.append(prompt)
+    )
 
     assert await runtime.submit('/review auth "follow up"') is True
     assert seen == ["Review auth\nAll: auth follow up"]
@@ -904,7 +952,7 @@ async def test_textual_app_escape_hides_slash_commands(
 
 
 @pytest.mark.anyio
-async def test_textual_app_stays_responsive_while_shell_tool_runs(
+async def test_textual_app_stays_responsive_while_shell_tool_runs(  # noqa: C901
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -924,7 +972,9 @@ async def test_textual_app_stays_responsive_while_shell_tool_runs(
         async def __aenter__(self) -> "FakeStreamManager":
             return self
 
-        async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+        async def __aexit__(
+            self, exc_type: object, exc: object, exc_tb: object
+        ) -> None:
             return None
 
         def __aiter__(self) -> "FakeStreamManager":
@@ -969,7 +1019,11 @@ async def test_textual_app_stays_responsive_while_shell_tool_runs(
             "call_id": "call_1",
             "status": "completed",
             "output": [
-                {"stdout": "/tmp", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}
+                {
+                    "stdout": "/tmp",
+                    "stderr": "",
+                    "outcome": {"type": "exit", "exit_code": 0},
+                }
             ],
         }
 
@@ -980,9 +1034,11 @@ async def test_textual_app_stays_responsive_while_shell_tool_runs(
         await pilot.pause()
         started_at = time.perf_counter()
         await pilot.press("h", "i", "enter")
-        assert await asyncio.wait_for(asyncio.to_thread(shell_started.wait, 1.0), timeout=1.2)
+        assert await asyncio.wait_for(
+            asyncio.to_thread(shell_started.wait, 1.0), timeout=1.2
+        )
         assert app.runtime.current_reply_task is not None
-        assert time.perf_counter() - started_at < 0.45
+        assert time.perf_counter() - started_at < RESPONSIVE_INPUT_MAX_SECONDS
         await pilot.press("x")
         await pilot.pause()
         assert app.query_one("#composer", Composer).text == "x"
@@ -1080,7 +1136,9 @@ async def test_textual_app_scrolls_to_new_submission_with_long_history(
         await pilot.pause()
         await asyncio.sleep(0.1)
         assert app.query_one("#transcript").is_vertical_scroll_end
-        you_block = [block for block in transcript_blocks(app) if block.entry.kind == "you"][-1]
+        you_block = [
+            block for block in transcript_blocks(app) if block.entry.kind == "you"
+        ][-1]
         assert "push" in block_plain(you_block)
 
 
@@ -1108,7 +1166,9 @@ async def test_textual_app_shows_user_prompt_and_stays_scrolled_to_bottom(
         await pilot.pause()
         await pilot.press("p", "u", "s", "h", "enter")
         await pilot.pause()
-        you_block = [block for block in transcript_blocks(app) if block.entry.kind == "you"][-1]
+        you_block = [
+            block for block in transcript_blocks(app) if block.entry.kind == "you"
+        ][-1]
         assert "push" in block_plain(you_block)
         assert app.query_one("#transcript").is_vertical_scroll_end
         release.set()
@@ -1141,7 +1201,9 @@ async def test_textual_app_renders_plain_user_and_bot_text(
         blocks = transcript_blocks(app)
         you_block = next(block for block in blocks if block.entry.kind == "you")
         bot_block = next(
-            block for block in blocks if block.entry.kind == "bot" and block.entry.content == "pong"
+            block
+            for block in blocks
+            if block.entry.kind == "bot" and block.entry.content == "pong"
         )
         assert "ping" in block_plain(you_block)
         assert "pong" in block_plain(bot_block)
@@ -1223,7 +1285,9 @@ def test_textual_app_does_not_pull_transcript_down_after_user_scrolls_up(
         continue_stream = asyncio.Event()
         release = asyncio.Event()
 
-        async def fake_stream_reply(*args: object, **kwargs: object) -> dict[str, object]:
+        async def fake_stream_reply(
+            *args: object, **kwargs: object
+        ) -> dict[str, object]:
             await kwargs["on_text_delta"]("partial")
             first_delta.set()
             await continue_stream.wait()
@@ -1342,11 +1406,13 @@ async def test_textual_app_shows_completed_reply_without_restart(
         await app.runtime.wait_until_idle()
         await pilot.pause()
         assert ("bot", "visible now") in entry_tuples(app.runtime)
-        assert any(block.entry.content == "visible now" for block in transcript_blocks(app))
+        assert any(
+            block.entry.content == "visible now" for block in transcript_blocks(app)
+        )
 
 
 @pytest.mark.anyio
-async def test_textual_app_shows_tool_details_while_streaming(
+async def test_textual_app_shows_tool_details_while_streaming(  # noqa: C901
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1367,7 +1433,9 @@ async def test_textual_app_shows_tool_details_while_streaming(
             self.usage = None
 
     class FakeEvent:
-        def __init__(self, event_type: str, item: dict[str, object] | None = None) -> None:
+        def __init__(
+            self, event_type: str, item: dict[str, object] | None = None
+        ) -> None:
             self.type = event_type
             self.item = FakeItem(item) if item is not None else None
 
@@ -1378,7 +1446,9 @@ async def test_textual_app_shows_tool_details_while_streaming(
         async def __aenter__(self) -> "FakeStreamManager":
             return self
 
-        async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+        async def __aexit__(
+            self, exc_type: object, exc: object, exc_tb: object
+        ) -> None:
             return None
 
         def __aiter__(self) -> "FakeStreamManager":
@@ -1434,7 +1504,10 @@ async def test_textual_app_shows_tool_details_while_streaming(
         await pilot.pause()
         await pilot.press("h", "i", "enter")
         await pilot.pause()
-        assert any(entry.kind == "tool" and "pwd" in entry.content for entry in app.runtime.entries)
+        assert any(
+            entry.kind == "tool" and "pwd" in entry.content
+            for entry in app.runtime.entries
+        )
         release.set()
         await app.runtime.wait_until_idle()
 
@@ -1465,7 +1538,8 @@ async def test_textual_app_reconciles_partial_bot_stream_with_final_reply(
         await pilot.pause()
         assert ("bot", "partial and complete") in entry_tuples(app.runtime)
         assert any(
-            block.entry.content == "partial and complete" for block in transcript_blocks(app)
+            block.entry.content == "partial and complete"
+            for block in transcript_blocks(app)
         )
 
 
@@ -1496,7 +1570,9 @@ async def test_textual_app_preserves_live_thinking_line_breaks(
         await pilot.pause()
         assert app.runtime.live_entry is not None
         assert app.runtime.live_entry.kind == "thinking"
-        assert app.runtime.live_entry.content == "**Calculating a date**\n\nDetails here"
+        assert (
+            app.runtime.live_entry.content == "**Calculating a date**\n\nDetails here"
+        )
         assert any(
             block.entry.content == "**Calculating a date**\n\nDetails here"
             for block in live_markdown_blocks(app)
@@ -1572,7 +1648,9 @@ async def test_textual_app_commits_streamed_markdown_as_markdown_block(
         await pilot.pause()
 
         assert not live_markdown_blocks(app)
-        bot_blocks = [block for block in transcript_blocks(app) if block.entry.kind == "bot"]
+        bot_blocks = [
+            block for block in transcript_blocks(app) if block.entry.kind == "bot"
+        ]
         assert bot_blocks
         assert isinstance(bot_blocks[-1].query_one("#body"), TextualMarkdown)
 
@@ -1828,7 +1906,9 @@ async def test_textual_app_space_toggles_queue_pause_and_tab_returns_to_composer
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepare_home(tmp_path, monkeypatch)
-    monkeypatch.setattr("faltoobot.chat.runtime.ChatRuntime.ensure_processing", lambda self: None)
+    monkeypatch.setattr(
+        "faltoobot.chat.runtime.ChatRuntime.ensure_processing", lambda self: None
+    )
     app = FaltooChatApp()
 
     async with app.run_test() as pilot:
@@ -1945,7 +2025,10 @@ async def test_textual_app_restores_saved_queue_as_paused(
 
 
 def test_visible_content_keeps_only_bold_thinking_text() -> None:
-    assert visible_content("thinking", "**Planning** reply\n\nMore detail") == "**Planning**"
+    assert (
+        visible_content("thinking", "**Planning** reply\n\nMore detail")
+        == "**Planning**"
+    )
     assert visible_content("thinking", "No bold here") == "No bold here"
 
 

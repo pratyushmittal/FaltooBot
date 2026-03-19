@@ -10,18 +10,22 @@ from pathlib import Path
 
 from faltoobot.config import Config
 
-
+HEX_CHANNEL_SHORT = 2
+HEX_CHANNEL_LONG = 4
+DARK_BACKGROUND_THRESHOLD = 0.5
 
 
 def status_text(config: Config) -> str:
-    model = f"{config.openai_model} (fast)" if config.openai_fast else config.openai_model
+    model = (
+        f"{config.openai_model} (fast)" if config.openai_fast else config.openai_model
+    )
     return f"model: {model}  thinking: {config.openai_thinking}"
 
 
 def _channel_value(value: str) -> int:
-    if len(value) == 2:
+    if len(value) == HEX_CHANNEL_SHORT:
         return int(value, 16)
-    if len(value) == 4:
+    if len(value) == HEX_CHANNEL_LONG:
         return int(value[:2], 16)
     return int(value[:2], 16)
 
@@ -66,7 +70,7 @@ def terminal_background_dark(timeout: float = 0.1) -> bool | None:
         return None
     red, green, blue = (_channel_value(value.decode()) for value in match.groups())
     brightness = (0.299 * red + 0.587 * green + 0.114 * blue) / 255
-    return brightness < 0.5
+    return brightness < DARK_BACKGROUND_THRESHOLD
 
 
 def input_hint(
@@ -84,5 +88,7 @@ def input_hint(
 
 
 def open_in_default_editor(path: Path) -> None:
-    command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
+    command = (
+        ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
+    )
     subprocess.Popen(command)  # noqa: S603

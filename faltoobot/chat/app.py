@@ -435,64 +435,91 @@ class FaltooChatApp(App[None]):
         self.queue_state.selected_snapshot = self.queue_state.selected
         return layout_changed or force
 
-    def refresh_transcript(self, *, force: bool = False) -> None:
+    def transcript_snapshot(self) -> tuple[tuple[str, str, bool], ...]:
         entries = list(self.runtime.entries)
         live = self.runtime.live_entry
-        snapshot = tuple((entry.kind, entry.content, False) for entry in entries) + (
+        return tuple((entry.kind, entry.content, False) for entry in entries) + (
             ((live.kind, live.content, True),) if live else ()
         )
-        snapshot_changed = snapshot != self.transcript_state.snapshot
-        if not force and not snapshot_changed:
-            return
 
-        transcript = self.transcript()
-        previous_scroll = transcript.scroll_y
-        had_live = self.transcript_state.stream_block is not None or live is not None
+    def sync_transcript_entries(
+        self,
+        transcript: VerticalScroll,
+        entries: list[Any],
+        *,
+        force: bool = False,
+    ) -> None:
         previous_rendered = tuple(
             (block.entry.kind, block.entry.content)
             for block in self.transcript_state.blocks
         )
         rendered = tuple((entry.kind, entry.content) for entry in entries)
         append_only = rendered[: len(self.transcript_state.blocks)] == previous_rendered
-
         if force or not append_only:
             transcript.remove_children()
             self.transcript_state.blocks = []
             self.transcript_state.stream_block = None
-            if entries:
-                self.transcript_state.blocks = [EntryBlock(entry) for entry in entries]
-                transcript.mount(*self.transcript_state.blocks)
-        else:
-            new_entries = entries[len(self.transcript_state.blocks) :]
-            if new_entries:
-                blocks = [EntryBlock(entry) for entry in new_entries]
-                self.transcript_state.blocks.extend(blocks)
+            blocks = [EntryBlock(entry) for entry in entries]
+            self.transcript_state.blocks = blocks
+            if blocks:
                 transcript.mount(*blocks)
+            return
+        new_entries = entries[len(self.transcript_state.blocks) :]
+        if not new_entries:
+            return
+        blocks = [EntryBlock(entry) for entry in new_entries]
+        self.transcript_state.blocks.extend(blocks)
+        transcript.mount(*blocks)
 
+    def remove_stream_block(self) -> None:
+        if self.transcript_state.stream_block is None:
+            return
+        self.transcript_state.stream_block.remove()
+        self.transcript_state.stream_block = None
+
+    def sync_transcript_live_entry(
+        self,
+        transcript: VerticalScroll,
+        entries: list[Any],
+        live: Any,
+    ) -> None:
+        stream_block = self.transcript_state.stream_block
         if live is None:
-            if self.transcript_state.stream_block is not None:
-                final_index = len(self.transcript_state.blocks)
-                if final_index < len(entries):
-                    final_entry = entries[final_index]
-                    if (
-                        self.transcript_state.stream_block.entry.kind
-                        == final_entry.kind
-                    ):
-                        committed = EntryBlock(final_entry)
-                        self.transcript_state.stream_block.remove()
-                        transcript.mount(committed)
-                        self.transcript_state.blocks.append(committed)
-                        self.transcript_state.stream_block = None
-                if self.transcript_state.stream_block is not None:
-                    self.transcript_state.stream_block.remove()
+            if stream_block is None:
+                return
+            final_index = len(self.transcript_state.blocks)
+            if final_index < len(entries):
+                final_entry = entries[final_index]
+                if stream_block.entry.kind == final_entry.kind:
+                    committed = EntryBlock(final_entry)
+                    stream_block.remove()
+                    transcript.mount(committed)
+                    self.transcript_state.blocks.append(committed)
                     self.transcript_state.stream_block = None
-        elif self.transcript_state.stream_block is None:
+                    return
+            self.remove_stream_block()
+            return
+        if stream_block is None:
             self.transcript_state.stream_block = LiveMarkdownBlock(live)
             transcript.mount(self.transcript_state.stream_block)
-        elif not self.transcript_state.stream_block.set_entry(live):
-            self.transcript_state.stream_block.remove()
+            return
+        if not stream_block.set_entry(live):
+            stream_block.remove()
             self.transcript_state.stream_block = LiveMarkdownBlock(live)
             transcript.mount(self.transcript_state.stream_block)
+
+    def refresh_transcript(self, *, force: bool = False) -> None:
+        entries = list(self.runtime.entries)
+        live = self.runtime.live_entry
+        snapshot = self.transcript_snapshot()
+        if not force and snapshot == self.transcript_state.snapshot:
+            return
+
+        transcript = self.transcript()
+        previous_scroll = transcript.scroll_y
+        had_live = self.transcript_state.stream_block is not None or live is not None
+        self.sync_transcript_entries(transcript, entries, force=force)
+        self.sync_transcript_live_entry(transcript, entries, live)
 
         if self.transcript_state.follow:
             self.scroll_transcript_end(settle=had_live)
@@ -594,6 +621,23 @@ class FaltooChatApp(App[None]):
         self.refresh_commands(force=True)
         return True
 
+    def handle_selected_queue_key(self, key: str) -> bool:
+        actions = {
+            "up": lambda: self.move_queue_selection(-1),
+            "down": lambda: self.move_queue_selection(1),
+            "enter": self.action_edit_selected_queue,
+            "delete": self.action_delete_selected_queue,
+            "backspace": self.action_delete_selected_queue,
+            "space": self.action_toggle_selected_queue_pause,
+            "shift+up": self.action_move_selected_queue_up,
+            "shift+down": self.action_move_selected_queue_down,
+        }
+        action = actions.get(key)
+        if action is None:
+            return False
+        result = action()
+        return True if result is None else result
+
     def handle_composer_key(self, key: str) -> bool:
         if key == "escape":
             return self.dismiss_slash_commands()
@@ -601,26 +645,7 @@ class FaltooChatApp(App[None]):
             return self.complete_slash_command() or self.toggle_queue_focus()
         if self.queue_state.selected is None:
             return False
-        if key == "up":
-            return self.move_queue_selection(-1)
-        if key == "down":
-            return self.move_queue_selection(1)
-        if key == "enter":
-            self.action_edit_selected_queue()
-            return True
-        if key in {"delete", "backspace"}:
-            self.action_delete_selected_queue()
-            return True
-        if key == "space":
-            self.action_toggle_selected_queue_pause()
-            return True
-        if key == "shift+up":
-            self.action_move_selected_queue_up()
-            return True
-        if key == "shift+down":
-            self.action_move_selected_queue_down()
-            return True
-        return False
+        return self.handle_selected_queue_key(key)
 
     @on(QueueItem.Picked)
     def on_queue_item_picked(self, message: QueueItem.Picked) -> None:

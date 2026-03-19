@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import faltoobot.cli as cli
+from faltoobot import cli
 from faltoobot.config import Config
 
 
@@ -58,7 +58,9 @@ def test_install_service_uses_systemd_on_linux(tmp_path: Path, monkeypatch) -> N
     config = make_config(tmp_path)
     calls: list[tuple[tuple[str, ...], bool]] = []
 
-    def fake_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def fake_systemctl(
+        *args: str, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
         calls.append((args, check))
         return subprocess.CompletedProcess(["systemctl", "--user", *args], 0, "", "")
 
@@ -90,5 +92,10 @@ def test_has_service_checks_linux_unit_file(tmp_path: Path, monkeypatch) -> None
 
 def test_render_log_line_uses_level_colors() -> None:
     assert cli.render_log_line("2026-03-17 INFO faltoobot: ok").style == "cyan"
-    assert cli.render_log_line("13:03:05.809 [whatsmeow.Client.Socket WARNING] - noisy").style == "yellow"
+    assert (
+        cli.render_log_line(
+            "13:03:05.809 [whatsmeow.Client.Socket WARNING] - noisy"
+        ).style
+        == "yellow"
+    )
     assert cli.render_log_line("Traceback (most recent call last):").style == "bold red"

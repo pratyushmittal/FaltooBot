@@ -29,11 +29,28 @@ class Composer(TextArea):
         Binding("escape", "composer_escape", "Dismiss commands", priority=True),
         Binding("up", "composer_up", "Cursor up / queue previous", priority=True),
         Binding("down", "composer_down", "Cursor down / queue next", priority=True),
-        Binding("backspace", "composer_backspace", "Backspace / remove queue item", priority=True),
-        Binding("delete", "composer_delete", "Delete / remove queue item", priority=True),
+        Binding(
+            "backspace",
+            "composer_backspace",
+            "Backspace / remove queue item",
+            priority=True,
+        ),
+        Binding(
+            "delete", "composer_delete", "Delete / remove queue item", priority=True
+        ),
         Binding("space", "composer_space", "Space / toggle queue pause", priority=True),
-        Binding("shift+up", "composer_shift_up", "Select up / move queue item", priority=True),
-        Binding("shift+down", "composer_shift_down", "Select down / move queue item", priority=True),
+        Binding(
+            "shift+up",
+            "composer_shift_up",
+            "Select up / move queue item",
+            priority=True,
+        ),
+        Binding(
+            "shift+down",
+            "composer_shift_down",
+            "Select down / move queue item",
+            priority=True,
+        ),
     ]
     BINDING_GROUP_TITLE = "Chat"
 
@@ -289,7 +306,9 @@ class EntryBlock(Vertical):
                 visible_content(entry.kind, entry.content)
             )
             return True
-        self.query_one("#body", Static).update(Text(visible_content(entry.kind, entry.content)))
+        self.query_one("#body", Static).update(
+            Text(visible_content(entry.kind, entry.content))
+        )
         return True
 
     def on_resize(self, _: events.Resize) -> None:
@@ -307,14 +326,18 @@ class LiveMarkdownBlock(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            Text(visible_content(self.entry.kind, self.entry.content)), id="body", classes="body"
+            Text(visible_content(self.entry.kind, self.entry.content)),
+            id="body",
+            classes="body",
         )
 
     def set_entry(self, entry: Entry) -> bool:
         if entry.kind != self.entry.kind or entry.kind not in {"bot", "thinking"}:
             return False
         self.entry = entry
-        self.query_one("#body", Static).update(Text(visible_content(entry.kind, entry.content)))
+        self.query_one("#body", Static).update(
+            Text(visible_content(entry.kind, entry.content))
+        )
         return True
 
     def on_resize(self, _: events.Resize) -> None:

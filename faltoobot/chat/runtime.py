@@ -20,7 +20,14 @@ from faltoobot.store import (
     sync_assistant_turn,
 )
 
-from .entries import Entry, StreamState, history_entries, item_entries, item_key, tool_entry
+from .entries import (
+    Entry,
+    StreamState,
+    history_entries,
+    item_entries,
+    item_key,
+    tool_entry,
+)
 from .images import display_prompt, prompt_message_item
 from .prompts import (
     default_session_name,
@@ -62,7 +69,9 @@ class ChatRuntime:
     def save_queue(self) -> None:
         if self.session is None:
             return
-        self.session = replace_queued_prompts(self.require_session(), self.pending_prompts)
+        self.session = replace_queued_prompts(
+            self.require_session(), self.pending_prompts
+        )
 
     def display_entries(self) -> list[Entry]:
         return [*self.entries, *([self.live_entry] if self.live_entry else [])]
@@ -73,9 +82,13 @@ class ChatRuntime:
             self.notify()
 
     def cli_session(self, workspace: Path, name: str | None = None) -> Session:
-        if name is None and (existing := existing_cli_session(self.config.sessions_dir, workspace)):
+        if name is None and (
+            existing := existing_cli_session(self.config.sessions_dir, workspace)
+        ):
             return existing
-        return cli_session(self.config.sessions_dir, session_name(name), workspace=workspace)
+        return cli_session(
+            self.config.sessions_dir, session_name(name), workspace=workspace
+        )
 
     def restore_queue(self) -> None:
         if self.session is None or not self.session.queued_prompts:
@@ -92,7 +105,9 @@ class ChatRuntime:
 
     async def start(self) -> None:
         if not self.config.openai_api_key:
-            raise RuntimeError(f"openai.api_key is missing. Add it to {self.config.config_file}")
+            raise RuntimeError(
+                f"openai.api_key is missing. Add it to {self.config.config_file}"
+            )
         self.session = self.cli_session(Path.cwd(), self.name)
         self.restore_queue()
         self.start_client()
@@ -193,7 +208,10 @@ class ChatRuntime:
         return None
 
     def move_prompt(self, index: int, target: int) -> int | None:
-        if not (0 <= index < len(self.pending_prompts) and 0 <= target < len(self.pending_prompts)):
+        if not (
+            0 <= index < len(self.pending_prompts)
+            and 0 <= target < len(self.pending_prompts)
+        ):
             return None
         prompt = self.pending_prompts.pop(index)
         self.pending_prompts.insert(target, prompt)
@@ -213,10 +231,14 @@ class ChatRuntime:
                 return True
             case "/reset":
                 session = self.require_session()
-                self.session = self.cli_session(session.workspace, default_session_name())
+                self.session = self.cli_session(
+                    session.workspace, default_session_name()
+                )
                 self.pending_prompts = []
                 new_session = self.require_session()
-                self.append_entry("meta", f"new session: {new_session.name} ({new_session.id})")
+                self.append_entry(
+                    "meta", f"new session: {new_session.name} ({new_session.id})"
+                )
                 return True
             case "/exit":
                 return False
@@ -234,7 +256,9 @@ class ChatRuntime:
         display_text = display_prompt(prompt, self.require_session().workspace)
         self.append_entry("you", display_text, notify=False)
         self.notify()
-        self.processing_task = asyncio.create_task(self.process_now(prompt, display_text))
+        self.processing_task = asyncio.create_task(
+            self.process_now(prompt, display_text)
+        )
 
     def ensure_processing(self) -> None:
         if self.processing_task is None or self.processing_task.done():
@@ -252,7 +276,9 @@ class ChatRuntime:
             self.processing_task = None
 
     async def process_now(self, prompt: str, display_text: str) -> None:
-        await self.handle_prompt(prompt, display_text=display_text, already_rendered=True)
+        await self.handle_prompt(
+            prompt, display_text=display_text, already_rendered=True
+        )
         if self.pending_prompts:
             await self.process_pending()
         else:
@@ -342,17 +368,14 @@ class ChatRuntime:
                 self.entries.append(Entry("bot", turn.content))
         self.notify()
 
-    async def handle_prompt(
+    async def store_user_prompt(
         self,
+        session: Session,
         prompt: str,
+        optimistic_text: str,
         *,
-        display_text: str | None = None,
         already_rendered: bool = False,
-    ) -> None:
-        session = self.require_session()
-        optimistic_text = display_text or display_prompt(prompt, session.workspace)
-        if not already_rendered:
-            self.append_entry("you", optimistic_text)
+    ) -> Session:
         display_text, message_item = await prompt_message_item(
             self.require_client(),
             session.workspace,
@@ -368,8 +391,9 @@ class ChatRuntime:
         if already_rendered and display_text != optimistic_text:
             self.replace_last_entry("you", display_text)
             self.notify()
-        state = StreamState()
+        return session
 
+    def reply_callbacks(self, state: StreamState) -> dict[str, Callable[..., Any]]:
         async def on_text_delta(delta: str) -> None:
             self.stream_delta(state, "bot", delta)
 
@@ -390,33 +414,63 @@ class ChatRuntime:
         async def on_stream_end(items: list[dict[str, Any]], text: str) -> None:
             self.sync_assistant_progress(text, items)
 
+        return {
+            "on_text_delta": on_text_delta,
+            "on_reasoning_delta": on_reasoning_delta,
+            "on_reasoning_done": on_reasoning_done,
+            "on_output_item": on_output_item,
+            "on_stream_end": on_stream_end,
+        }
+
+    async def run_reply_task(
+        self,
+        session: Session,
+        state: StreamState,
+    ) -> ReplyResult | None:
         task = asyncio.create_task(
             stream_reply(
                 self.require_client(),
                 self.config,
                 session,
                 session_items(session),
-                on_text_delta=on_text_delta,
-                on_reasoning_delta=on_reasoning_delta,
-                on_reasoning_done=on_reasoning_done,
-                on_output_item=on_output_item,
-                on_stream_end=on_stream_end,
+                **self.reply_callbacks(state),
             )
         )
         self.current_reply_task = task
         try:
-            result = await task
+            return await task
         except asyncio.CancelledError:
             self.close_stream(state)
             self.append_entry("meta", "reply interrupted")
-            return
+            return None
         except Exception as exc:
             self.close_stream(state)
             self.append_entry("error", str(exc))
-            return
+            return None
         finally:
             self.current_reply_task = None
 
+    async def handle_prompt(
+        self,
+        prompt: str,
+        *,
+        display_text: str | None = None,
+        already_rendered: bool = False,
+    ) -> None:
+        session = self.require_session()
+        optimistic_text = display_text or display_prompt(prompt, session.workspace)
+        if not already_rendered:
+            self.append_entry("you", optimistic_text)
+        session = await self.store_user_prompt(
+            session,
+            prompt,
+            optimistic_text,
+            already_rendered=already_rendered,
+        )
+        state = StreamState()
+        result = await self.run_reply_task(session, state)
+        if result is None:
+            return
         self.close_stream(state)
         self.render_assistant_turn(self.store_assistant_turn(result), state)
 

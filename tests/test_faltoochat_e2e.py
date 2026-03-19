@@ -6,6 +6,9 @@ import pytest
 
 from faltoobot.chat.runtime import build_chat_runtime
 
+FIRST_RUN_MESSAGE_COUNT = 2
+SECOND_RUN_MESSAGE_COUNT = 4
+
 
 def config_text(system_prompt: str) -> str:
     return "\n".join(
@@ -76,9 +79,9 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
     assert messages[1]["content"] == "FALTOO_E2E_OK"
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
-    assert "Reply with exactly the requested text when asked to do so." in messages[1].get(
-        "instructions", ""
-    )
+    assert "Reply with exactly the requested text when asked to do so." in messages[
+        1
+    ].get("instructions", "")
 
 
 @pytest.mark.anyio
@@ -114,7 +117,9 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
     assert messages[1]["content"] == str(workspace)
     assert messages[1]["items"]
     assert messages[1]["usage"]["total_tokens"] > 0
-    assert "instructions" not in messages[1] or isinstance(messages[1]["instructions"], str)
+    assert "instructions" not in messages[1] or isinstance(
+        messages[1]["instructions"], str
+    )
 
 
 @pytest.mark.anyio
@@ -152,8 +157,8 @@ async def test_faltoochat_reuses_existing_session_for_workspace(
     assert second["workspace"] == str(workspace)
     assert isinstance(first_messages, list)
     assert isinstance(second_messages, list)
-    assert len(first_messages) == 2
-    assert len(second_messages) == 4
+    assert len(first_messages) == FIRST_RUN_MESSAGE_COUNT
+    assert len(second_messages) == SECOND_RUN_MESSAGE_COUNT
     assert [message["content"] for message in second_messages] == [
         "Reply with exactly FIRST_RUN_OK and nothing else.",
         "FIRST_RUN_OK",
