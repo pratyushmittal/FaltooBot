@@ -7,7 +7,7 @@ from typing import Any, TypeAlias
 from openai import AsyncOpenAI
 from openai.types.responses import (
     FunctionToolParam,
-    Response,
+    ParsedResponse,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
     ResponsesServerEvent,
@@ -17,7 +17,7 @@ COMPACT_THRESHOLD = 210_000
 
 Tool: TypeAlias = Callable[..., str] | Callable[..., Awaitable[str]]
 StreamingReplyItem: TypeAlias = (
-    ResponsesServerEvent | Response | ResponseFunctionToolCallOutputItem
+    ResponsesServerEvent | ParsedResponse | ResponseFunctionToolCallOutputItem
 )
 
 

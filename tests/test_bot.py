@@ -14,14 +14,13 @@ from neonize.utils.jid import Jid2String
 
 from faltoobot import audio, bot
 from faltoobot.bot import (
-    _chat_session_id,
     _latest_assistant_text,
     _replace_chat_session,
     keep_chat_typing,
     source_chat_ids,
 )
 from faltoobot.config import Config
-from faltoobot.sessions import get_messages
+from faltoobot.sessions import get_messages, get_session
 
 
 def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
@@ -195,7 +194,7 @@ async def test_process_message_transcribes_voice_notes(
         assert model == "gpt-4o-transcribe"
         return "Call mom at 6"
 
-    async def fake_get_answer(session_id: str, question: str, **_: object) -> dict[str, Any]:
+    async def fake_get_answer(*, question: str, **_: object) -> dict[str, Any]:
         prompts.append(question)
         return {
             "messages": [
@@ -220,11 +219,12 @@ async def test_process_message_transcribes_voice_notes(
         chat_locks=defaultdict(asyncio.Lock),
     )
 
-    session_id = _chat_session_id(config, Jid2String(event.Info.MessageSource.Chat))
+    chat_key = bot.normalize_chat(Jid2String(event.Info.MessageSource.Chat))
+    session = get_session(chat_key=chat_key)
     assert client.downloads == 1
     assert client.replies == ["Done"]
     assert prompts == ["Call mom at 6"]
-    assert get_messages(session_id)["message_ids"] == [event.Info.ID]
+    assert get_messages(session)["message_ids"] == [event.Info.ID]
 
 
 @pytest.mark.anyio
@@ -250,12 +250,13 @@ async def test_process_message_rejects_long_voice_notes(
         chat_locks=defaultdict(asyncio.Lock),
     )
 
-    session_id = _chat_session_id(config, Jid2String(event.Info.MessageSource.Chat))
+    chat_key = bot.normalize_chat(Jid2String(event.Info.MessageSource.Chat))
+    session = get_session(chat_key=chat_key)
     assert client.downloads == 0
     assert client.replies == [
         f"Voice note is too long. Keep it under {audio.DEFAULT_AUDIO_MAX_SECONDS} seconds."
     ]
-    assert get_messages(session_id)["message_ids"] == [event.Info.ID]
+    assert get_messages(session)["message_ids"] == [event.Info.ID]
 
 
 @pytest.mark.anyio
@@ -316,7 +317,8 @@ def test_replace_chat_session_creates_new_session_for_reset(
 
     config = make_config(tmp_path, allowed_chats=set())
     config.root.mkdir(parents=True, exist_ok=True)
-    first = _chat_session_id(config, "8960294979@s.whatsapp.net")
+    chat_key = "8960294979@s.whatsapp.net"
+    first = get_session(chat_key=chat_key)
     original = get_messages(first)
     original["messages"].append({"type": "message", "role": "user", "content": "hi"})
     original["message_ids"] = ["msg-1"]
@@ -326,7 +328,7 @@ def test_replace_chat_session_creates_new_session_for_reset(
 
     second = _replace_chat_session(
         config,
-        "8960294979@s.whatsapp.net",
+        chat_key,
         ["msg-1"],
     )
 

@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+import hashlib
 
 import pytest
 from PIL import Image
@@ -45,23 +46,63 @@ class FakeClient:
         self.closed = True
 
 
-def test_get_session_id_creates_messages_json_and_workspace(
+def test_get_session_creates_messages_json_and_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    chat_key = "123@lid"
 
-    session_id = sessions.get_session_id()
-    payload = sessions.get_messages(session_id)
+    session = sessions.get_session(chat_key=chat_key)
+    payload = sessions.get_messages(session)
 
-    assert payload["id"] == session_id
-    assert payload["kind"] == "whatsapp"
+    assert payload["id"] == session[1]
+    assert payload["chat_key"] == chat_key
     assert payload["messages"] == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
     assert (
-        tmp_path / ".faltoobot" / "sessions" / session_id / "messages.json"
+        tmp_path / ".faltoobot" / "sessions" / chat_key / session[1] / "messages.json"
     ).exists()
+
+
+def test_get_session_sets_dir_chat_key_and_last_used(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    workspace = tmp_path / "workspace"
+    chat_key = sessions.get_dir_chat_key(workspace)
+
+    session = sessions.get_session(chat_key=chat_key, workspace=workspace)
+    payload = sessions.get_messages(session)
+    last_used = (
+        (tmp_path / ".faltoobot" / "sessions" / chat_key / sessions.LAST_USED_FILE)
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+
+    assert payload["chat_key"] == chat_key
+    assert chat_key == (
+        f"code@{workspace.resolve().name}:"
+        f"{hashlib.md5(str(workspace.resolve()).encode('utf-8')).hexdigest()[-6:]}"
+    )
+    assert last_used == session[1]
+
+
+def test_get_session_reads_last_used_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    chat_key = "123@lid"
+
+    first = sessions.get_session(chat_key=chat_key)
+    second = sessions.get_session(chat_key=chat_key)
+    payload = sessions.get_messages(second)
+
+    assert second == first
+    assert payload["id"] == first[1]
 
 
 @pytest.mark.anyio
@@ -98,15 +139,16 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         )
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    chat_key = "123@lid"
 
-    session_id = sessions.get_session_id()
+    session = sessions.get_session(chat_key=chat_key)
     payload = await sessions.get_answer(
-        session_id=session_id,
+        session=session,
         question="Hi",
         message_id="msg-1",
     )
     duplicate = await sessions.get_answer(
-        session_id=session_id,
+        session=session,
         question="Hi again",
         message_id="msg-1",
     )
@@ -187,9 +229,13 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
     image = tmp_path / "large.png"
     Image.new("RGB", (2000, 1200), color="red").save(image)
 
-    session_id = sessions.get_session_id(workspace=tmp_path / "workspace")
+    chat_key = "123@lid"
+    session = sessions.get_session(
+        chat_key=chat_key,
+        workspace=tmp_path / "workspace",
+    )
     payload = await sessions.get_answer(
-        session_id=session_id,
+        session=session,
         question="Look",
         attachments=[image],
     )

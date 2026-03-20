@@ -1,5 +1,5 @@
 Save tokens, write less code.
-Use Functional Programming: create functions instead of classes.
+Prefer functions over classes.
 Use typing. Ignore type-check using `# type: ignore` for minor things or unsupported features in `ty`
 
 Infra:

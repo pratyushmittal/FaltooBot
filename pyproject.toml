@@ -21,6 +21,7 @@ dependencies = [
 faltoobot = "faltoobot.cli:main"
 faltoochat = "faltoobot.chat.cli:main"
 faltoomac = "faltoobot.faltoomac.cli:main"
+makemigrations = "faltoobot.dev:main"
 
 [tool.setuptools.packages.find]
 include = ["faltoobot*"]

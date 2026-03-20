@@ -207,10 +207,12 @@ class FaltooChatApp(App[None]):
         Binding("ctrl+c", "interrupt_or_quit", "Interrupt", show=False),
     ]
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         config: Config | None = None,
         name: str | None = None,
+        new_session: bool = False,
+        initial_prompt: str | None = None,
         client: AsyncOpenAI | None = None,
         terminal_dark: bool | None = None,
     ) -> None:
@@ -223,7 +225,13 @@ class FaltooChatApp(App[None]):
                 self.theme = theme
         elif terminal_dark is not None:
             self.theme = "textual-dark" if terminal_dark else "textual-light"
-        self.runtime = build_chat_runtime(config=chat_config, name=name, client=client)
+        self.runtime = build_chat_runtime(
+            config=chat_config,
+            name=name,
+            new_session=new_session,
+            client=client,
+        )
+        self.initial_prompt = initial_prompt
         self.transcript_state = TranscriptState()
         self.queue_state = QueueState()
         self.slash_state = SlashState()
@@ -341,6 +349,10 @@ class FaltooChatApp(App[None]):
         await self.runtime.start()
         self.sync_view(force=True)
         self.scroll_transcript_end()
+        if self.initial_prompt:
+            await self.runtime.submit(self.initial_prompt)
+            self.sync_view(force=True)
+            self.scroll_transcript_end()
         self.call_after_refresh(self.focus_composer)
 
     async def on_unmount(self) -> None:

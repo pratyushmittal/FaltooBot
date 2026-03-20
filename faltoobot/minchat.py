@@ -1,0 +1,306 @@
+import sys
+from pathlib import Path
+from typing import Any
+
+from openai.types.responses import ResponseFunctionToolCallOutputItem
+from textual import getters
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Center, Vertical, VerticalScroll
+from textual.widgets import Markdown, TextArea
+
+from faltoobot import sessions
+from faltoobot.chat.entries import tool_entry
+from faltoobot.placeholders import get_random_placeholder
+
+SKIPPABLE_EVENT_TYPES = {
+    "response.created",
+    "response.in_progress",
+    "response.completed",
+    "response.output_item.added",
+    "response.output_item.done",
+    "response.content_part.added",
+    "response.content_part.done",
+}
+
+
+def get_text(value: Any) -> str:
+    match value:
+        case str(text):
+            return text.strip()
+        case list(parts):
+            return "\n".join(
+                text
+                for part in parts
+                if isinstance(part, dict)
+                for text in [str(part.get("text") or "").strip()]
+                if text
+            )
+        case _:
+            return ""
+
+
+def get_item_text(item: dict[str, Any]) -> str:
+    if text := tool_entry(item):
+        return text
+    match item:
+        case {"type": "message", "content": content}:
+            return get_text(content)
+        case {"type": "reasoning", "summary": summary}:
+            return get_text(summary)
+        case {"type": "function_call_output"}:
+            return ""
+        case _:
+            return ""
+
+
+def get_item_classes(item: dict[str, Any]) -> str:
+    match item:
+        case {"type": "message", "role": "user"}:
+            return "user"
+        case {"type": "message"}:
+            return "answer"
+        case {"type": "reasoning"}:
+            return "thinking"
+        case {"type": "function_call"} | {"type": "function_call_output"}:
+            return "tool"
+        case _:
+            return ""
+
+
+def get_event_text(event: Any) -> str | None:  # noqa: PLR0911
+    if isinstance(event, ResponseFunctionToolCallOutputItem):
+        return get_text(event.output)
+
+    match event.type:
+        case (
+            "response.reasoning_summary_part.added"
+            | "response.reasoning_summary_part.done"
+        ):
+            text = getattr(getattr(event, "part", None), "text", "")
+            return text if isinstance(text, str) else ""
+        case (
+            "response.reasoning_summary_text.delta"
+            | "response.reasoning_text.delta"
+            | "response.output_text.delta"
+        ):
+            delta = getattr(event, "delta", "")
+            return delta if isinstance(delta, str) else ""
+        case (
+            "response.reasoning_summary_text.done"
+            | "response.reasoning_text.done"
+            | "response.output_text.done"
+        ):
+            text = getattr(event, "text", "")
+            return text if isinstance(text, str) else ""
+        case "response.web_search_call.in_progress":
+            return "Web search"
+        case "response.web_search_call.searching":
+            return "Web search\nsearching"
+        case "response.web_search_call.completed":
+            return "Web search\ncompleted"
+        case _:
+            return None
+
+
+def get_event_classes(event_type: str, text: str | None) -> str:
+    if text is None:
+        return f"{event_type} unknown"
+    if "reasoning" in event_type:
+        return "thinking"
+    if "web_search_call" in event_type or event_type == "function_call_output":
+        return "tool"
+    if "output_text" in event_type:
+        return "answer"
+    return event_type
+
+
+class FaltooChatApp(App[None]):
+    CSS = """
+    App {
+        background: $background;
+        color: $text;
+    }
+
+    Screen {
+        layout: vertical;
+        background: $background;
+    }
+
+    #shell {
+        width: 1fr;
+        max-width: 80;
+        height: 1fr;
+    }
+
+    #transcript {
+        height: 1fr;
+        overflow-y: auto;
+        padding: 1 2 0 2;
+    }
+
+    #composer {
+        height: 6;
+        margin: 1 2 2 2;
+        padding: 0 1;
+        background: $surface;
+        border: tall $primary;
+        color: $text;
+    }
+
+    Markdown {
+        margin: 0 0 1 0;
+        padding: 0 1;
+        background: $surface;
+        border-left: wide $panel;
+        color: $text;
+    }
+
+    .user {
+        background: $primary 15%;
+        border-left: wide $primary;
+        color: $text;
+    }
+
+    .thinking {
+        background: $accent 12%;
+        border-left: wide $accent;
+        color: $text;
+    }
+
+    .tool {
+        background: $warning 12%;
+        border-left: wide $warning;
+        color: $text;
+    }
+
+    .answer {
+        background: $success 12%;
+        border-left: wide $success;
+        color: $text;
+    }
+
+    .unknown {
+        background: $error 12%;
+        border-left: wide $error;
+        color: $text;
+    }
+    """
+
+    def __init__(self, session: sessions.Session) -> None:
+        super().__init__()
+        self.session = session
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Vertical(id="shell"):
+                yield VerticalScroll(id="transcript")
+                yield Composer(
+                    id="composer",
+                    text="",
+                    soft_wrap=True,
+                    show_line_numbers=False,
+                    highlight_cursor_line=False,
+                    placeholder=get_random_placeholder(),
+                )
+
+    async def on_mount(self) -> None:
+        await self.load_messages()
+
+    async def load_messages(self) -> None:
+        messages_json = sessions.get_messages(self.session)
+        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript.remove_children()
+        blocks = []
+        for message in messages_json["messages"]:
+            if not isinstance(message, dict):
+                continue
+            text = get_item_text(message)
+            if text:
+                blocks.append(Markdown(text, classes=get_item_classes(message)))
+        if not blocks:
+            blocks = [
+                Markdown(
+                    "_No messages yet. The void is waiting._",
+                    classes="thinking",
+                )
+            ]
+        transcript.mount(*blocks)
+        transcript.scroll_end(animate=False, immediate=True)
+
+    async def submit_message(self) -> None:
+        composer = self.query_one("#composer", Composer)
+        transcript = self.query_one("#transcript", VerticalScroll)
+        question = composer.text.strip()
+        if not question:
+            return
+
+        composer.load_text("")
+        transcript.mount(Markdown(question, classes="user"))
+        transcript.scroll_end(animate=False, immediate=True)
+
+        current_type = ""
+        markdown: Markdown = Markdown("")
+        async for event in sessions.get_answer_streaming(
+            session=self.session,
+            question=question,
+        ):
+            event_type = getattr(event, "type", None)
+            if not isinstance(event_type, str) or event_type in SKIPPABLE_EVENT_TYPES:
+                continue
+
+            text = get_event_text(event)
+            classes = get_event_classes(event_type, text)
+            if text is None:
+                text = f"Unknown type: {event_type}\n\n"
+
+            if current_type != event_type:
+                current_type = event_type
+                markdown = Markdown("", classes=classes)
+                transcript.mount(markdown)
+
+            if text:
+                markdown.append(text)
+
+            is_done = (
+                event_type == "function_call_output"
+                or event_type.endswith(".done")
+                or event_type.endswith(".completed")
+            )
+            if is_done:
+                current_type = ""
+                continue
+
+            transcript.scroll_end(animate=False, immediate=True)
+
+
+class Composer(TextArea):
+    BINDINGS = [
+        Binding("enter", "composer_enter", "Submit", priority=True),
+    ]
+    BINDING_GROUP_TITLE = "Chat"
+
+    # for type-checking
+    app = getters.app(FaltooChatApp)
+
+    def action_composer_enter(self) -> None:
+        self.app.run_worker(self.app.submit_message(), exclusive=True)
+
+
+def main() -> int:
+    session_id = sys.argv[1] if len(sys.argv) > 1 else None
+    try:
+        FaltooChatApp(
+            session=sessions.get_session(
+                chat_key=sessions.get_dir_chat_key(Path.cwd()),
+                session_id=session_id,
+                workspace=Path.cwd(),
+            ),
+        ).run()
+    except KeyboardInterrupt:
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

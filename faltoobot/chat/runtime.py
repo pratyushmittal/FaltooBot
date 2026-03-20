@@ -43,6 +43,7 @@ from .terminal import open_in_default_editor
 class ChatRuntime:
     config: Config
     name: str | None = None
+    new_session: bool = False
     client: AsyncOpenAI | None = None
     session: Session | None = None
     pending_prompts: list[QueuedPrompt] = field(default_factory=list)
@@ -81,9 +82,17 @@ class ChatRuntime:
         if notify:
             self.notify()
 
-    def cli_session(self, workspace: Path, name: str | None = None) -> Session:
-        if name is None and (
-            existing := existing_cli_session(self.config.sessions_dir, workspace)
+    def cli_session(
+        self,
+        workspace: Path,
+        name: str | None = None,
+        *,
+        new_session: bool = False,
+    ) -> Session:
+        if (
+            not new_session
+            and name is None
+            and (existing := existing_cli_session(self.config.sessions_dir, workspace))
         ):
             return existing
         return cli_session(
@@ -108,7 +117,9 @@ class ChatRuntime:
             raise RuntimeError(
                 f"openai.api_key is missing. Add it to {self.config.config_file}"
             )
-        self.session = self.cli_session(Path.cwd(), self.name)
+        self.session = self.cli_session(
+            Path.cwd(), self.name, new_session=self.new_session
+        )
         self.restore_queue()
         self.start_client()
         session = self.require_session()
@@ -478,6 +489,12 @@ class ChatRuntime:
 def build_chat_runtime(
     config: Config | None = None,
     name: str | None = None,
+    new_session: bool = False,
     client: AsyncOpenAI | None = None,
 ) -> ChatRuntime:
-    return ChatRuntime(config=config or build_config(), name=name, client=client)
+    return ChatRuntime(
+        config=config or build_config(),
+        name=name,
+        new_session=new_session,
+        client=client,
+    )
