@@ -137,6 +137,11 @@ def _session_parts(session: Session) -> tuple[str, str]:
     return _validate_chat_key(chat_key), session_id
 
 
+def get_messages_path(session: Session) -> Path:
+    chat_key, session_id = _session_parts(session)
+    return _messages_path(chat_key, session_id)
+
+
 def _write_text_atomic(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")

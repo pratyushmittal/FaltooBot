@@ -11,6 +11,7 @@ from textual.widgets import Markdown, TextArea
 
 from faltoobot import sessions
 from faltoobot.chat.entries import tool_entry
+from faltoobot.chat.terminal import open_in_default_editor
 from faltoobot.placeholders import get_random_placeholder
 
 SKIPPABLE_EVENT_TYPES = {
@@ -54,42 +55,26 @@ def get_item_text(item: dict[str, Any]) -> str:
             return ""
 
 
-def get_item_classes(item: dict[str, Any]) -> str:
-    match item:
-        case {"type": "message", "role": "user"}:
-            return "user"
-        case {"type": "message"}:
-            return "answer"
-        case {"type": "reasoning"}:
-            return "thinking"
-        case {"type": "function_call"} | {"type": "function_call_output"}:
-            return "tool"
-        case _:
-            return ""
-
-
 def get_event_text(event: Any) -> str | None:
     if isinstance(event, ResponseFunctionToolCallOutputItem):
         return get_text(event.output)
 
     match event.type:
-        case (
-            "response.reasoning_summary_part.added"
-            | "response.reasoning_summary_part.done"
-        ):
+        case "response.reasoning_summary_part.added":
             value = getattr(getattr(event, "part", None), "text", "")
+        case (
+            "response.reasoning_summary_part.done"
+            | "response.reasoning_summary_text.done"
+            | "response.reasoning_text.done"
+            | "response.output_text.done"
+        ):
+            value = ""
         case (
             "response.reasoning_summary_text.delta"
             | "response.reasoning_text.delta"
             | "response.output_text.delta"
         ):
             value = getattr(event, "delta", "")
-        case (
-            "response.reasoning_summary_text.done"
-            | "response.reasoning_text.done"
-            | "response.output_text.done"
-        ):
-            value = getattr(event, "text", "")
         case "response.web_search_call.in_progress":
             value = "Web search"
         case "response.web_search_call.searching":
@@ -101,16 +86,20 @@ def get_event_text(event: Any) -> str | None:
     return value if isinstance(value, str) else ""
 
 
+def get_safe_class_name(value: str) -> str:
+    return value.replace(".", "-")
+
+
 def get_event_classes(event_type: str, text: str | None) -> str:
     if text is None:
-        return f"{event_type} unknown"
+        return f"{get_safe_class_name(event_type)} unknown"
     if "reasoning" in event_type:
         return "thinking"
     if "web_search_call" in event_type or event_type == "function_call_output":
         return "tool"
     if "output_text" in event_type:
         return "answer"
-    return event_type
+    return get_safe_class_name(event_type)
 
 
 class FaltooChatApp(App[None]):
@@ -215,7 +204,18 @@ class FaltooChatApp(App[None]):
                 continue
             text = get_item_text(message)
             if text:
-                blocks.append(Markdown(text, classes=get_item_classes(message)))
+                match message:
+                    case {"type": "message", "role": "user"}:
+                        classes = "user"
+                    case {"type": "message"}:
+                        classes = "answer"
+                    case {"type": "reasoning"}:
+                        classes = "thinking"
+                    case {"type": "function_call"} | {"type": "function_call_output"}:
+                        classes = "tool"
+                    case _:
+                        classes = ""
+                blocks.append(Markdown(text, classes=classes))
         if not blocks:
             blocks = [
                 Markdown(
@@ -234,8 +234,13 @@ class FaltooChatApp(App[None]):
             return
 
         composer.load_text("")
+        if question == "/tree":
+            open_in_default_editor(sessions.get_messages_path(self.session))
+            return
         transcript.mount(Markdown(question, classes="user"))
-        transcript.scroll_end(animate=False, immediate=True)
+        is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
+        if is_at_bottom:
+            transcript.scroll_end(animate=False, immediate=True)
 
         current_type = ""
         markdown: Markdown = Markdown("")
@@ -249,8 +254,7 @@ class FaltooChatApp(App[None]):
 
             text = get_event_text(event)
             classes = get_event_classes(event_type, text)
-            if text is None:
-                text = f"Unknown type: {event_type}\n\n"
+            text = text if text is not None else f"Unknown type: {event_type}\n\n"
 
             if current_type != event_type:
                 current_type = event_type
@@ -269,7 +273,9 @@ class FaltooChatApp(App[None]):
                 current_type = ""
                 continue
 
-            transcript.scroll_end(animate=False, immediate=True)
+            is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
+            if is_at_bottom:
+                transcript.scroll_end(animate=False, immediate=True)
 
 
 class Composer(TextArea):
