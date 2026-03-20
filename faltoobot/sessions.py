@@ -169,9 +169,13 @@ def _coerce_messages_json(session_id: str, payload: dict[str, Any]) -> MessagesJ
 
 
 def get_messages(session_id: str) -> MessagesJson:
-    get_session_id(session_id=session_id)
     with _locked_session(session_id):
-        return _coerce_messages_json(session_id, _read_json(_messages_path(session_id)))
+        path = _messages_path(session_id)
+        payload = _read_json(path)
+        if not payload:
+            get_session_id(session_id=session_id)
+            payload = _read_json(path)
+        return _coerce_messages_json(session_id, payload)
 
 
 def set_messages(session_id: str, messages_json: MessagesJson) -> None:
