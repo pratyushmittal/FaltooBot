@@ -324,6 +324,7 @@ async def get_answer_streaming(
             model=config.openai_model,
             input=list(messages_json["messages"]),
             tools=[get_run_shell_call_tool(Path(messages_json["workspace"]))],
+            api_key=config.openai_api_key,
         ):
             response_output = _response_output(event)
             if response_output:

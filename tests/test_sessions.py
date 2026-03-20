@@ -82,7 +82,9 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         model: str,
         input: list[Any],
         tools: list[Any],
+        api_key: str,
     ):
+        assert api_key == "test"
         calls.append(input)
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         yield FakeResponse(
@@ -175,7 +177,9 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         model: str,
         input: list[Any],
         tools: list[Any],
+        api_key: str,
     ):
+        assert api_key == "test"
         yield FakeResponse([])
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)

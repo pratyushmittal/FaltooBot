@@ -188,8 +188,9 @@ async def get_streaming_reply(
     model: str,
     input: list[Any],
     tools: list[Tool],
+    api_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(api_key=api_key)
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
 

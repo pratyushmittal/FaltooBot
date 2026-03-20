@@ -246,7 +246,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
             },
         ]
     )
-    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda: client)
+    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
 
     items = [
         item
@@ -254,6 +254,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
             model="gpt-5-mini",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[greet],
+            api_key="test-key",
         )
     ]
 
@@ -316,7 +317,7 @@ async def test_get_streaming_reply_yields_all_stream_events(
             }
         ]
     )
-    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda: client)
+    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
 
     items = [
         item
@@ -324,6 +325,7 @@ async def test_get_streaming_reply_yields_all_stream_events(
             model="gpt-5-mini",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[],
+            api_key="test-key",
         )
     ]
 
