@@ -68,7 +68,7 @@ def get_item_classes(item: dict[str, Any]) -> str:
             return ""
 
 
-def get_event_text(event: Any) -> str | None:  # noqa: PLR0911
+def get_event_text(event: Any) -> str | None:
     if isinstance(event, ResponseFunctionToolCallOutputItem):
         return get_text(event.output)
 
@@ -77,30 +77,28 @@ def get_event_text(event: Any) -> str | None:  # noqa: PLR0911
             "response.reasoning_summary_part.added"
             | "response.reasoning_summary_part.done"
         ):
-            text = getattr(getattr(event, "part", None), "text", "")
-            return text if isinstance(text, str) else ""
+            value = getattr(getattr(event, "part", None), "text", "")
         case (
             "response.reasoning_summary_text.delta"
             | "response.reasoning_text.delta"
             | "response.output_text.delta"
         ):
-            delta = getattr(event, "delta", "")
-            return delta if isinstance(delta, str) else ""
+            value = getattr(event, "delta", "")
         case (
             "response.reasoning_summary_text.done"
             | "response.reasoning_text.done"
             | "response.output_text.done"
         ):
-            text = getattr(event, "text", "")
-            return text if isinstance(text, str) else ""
+            value = getattr(event, "text", "")
         case "response.web_search_call.in_progress":
-            return "Web search"
+            value = "Web search"
         case "response.web_search_call.searching":
-            return "Web search\nsearching"
+            value = "Web search\nsearching"
         case "response.web_search_call.completed":
-            return "Web search\ncompleted"
+            value = "Web search\ncompleted"
         case _:
             return None
+    return value if isinstance(value, str) else ""
 
 
 def get_event_classes(event_type: str, text: str | None) -> str:
