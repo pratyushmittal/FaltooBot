@@ -14,6 +14,7 @@ from PIL import Image
 
 from faltoobot.config import app_root, build_config
 from faltoobot.gpt_utils import get_streaming_reply
+from faltoobot.tools import get_run_shell_call_tool
 
 MESSAGES_FILE = "messages.json"
 WORKSPACE_DIR = "workspace"
@@ -318,7 +319,7 @@ async def get_answer_streaming(
         async for event in get_streaming_reply(
             model=config.openai_model,
             input=list(messages_json["messages"]),
-            tools=[],
+            tools=[get_run_shell_call_tool(Path(messages_json["workspace"]))],
         ):
             response_output = _response_output(event)
             if response_output:

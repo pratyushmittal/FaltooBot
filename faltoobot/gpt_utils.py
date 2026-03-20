@@ -35,11 +35,15 @@ def _parse_docs(docs: str) -> dict[str, Any]:
     return {"function_docs": function_description, "arguments": arguments}
 
 
+def _callable_name(function: Callable[..., Any]) -> str:
+    return getattr(function, "__name__", type(function).__name__)
+
+
 def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
     sig = inspect.signature(function)
     docs = inspect.getdoc(function)
     if not docs:
-        raise ValueError(f"Missing docstring for {function.__name__}")
+        raise ValueError(f"Missing docstring for {_callable_name(function)}")
 
     description = _parse_docs(docs)
     parameters: dict[str, Any] = {
@@ -68,7 +72,7 @@ def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
             raise ValueError(
                 "Documentation not provided in",
                 param_name,
-                function.__name__,
+                _callable_name(function),
             )
 
         if param.default != inspect._empty:
@@ -87,7 +91,7 @@ def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
 
     return FunctionToolParam(
         type="function",
-        name=function.__name__,
+        name=_callable_name(function),
         parameters=parameters,
         strict=True,
         description=description["function_docs"],
@@ -150,7 +154,7 @@ async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> str:
     if inspect.isawaitable(result):
         result = await result
     if not isinstance(result, str):
-        raise TypeError(f"Tool {function.__name__} must return str")
+        raise TypeError(f"Tool {_callable_name(function)} must return str")
     return result
 
 
@@ -187,13 +191,25 @@ async def get_streaming_reply(
 ) -> AsyncIterator[StreamingReplyItem]:
     client = AsyncOpenAI()
     tool_defs = [get_tools_definition(tool) for tool in tools]
-    tools_by_name = {tool.__name__: tool for tool in tools}
+    tools_by_name = {_callable_name(tool): tool for tool in tools}
+
+    cloud_tools = [
+        {
+            "type": "web_search",
+            "user_location": {
+                "type": "approximate",
+                "country": "IN",
+                "city": "Lucknow",
+                "region": "Lucknow",
+            },
+        }
+    ]
 
     async def reply(current_input: list[Any]) -> AsyncIterator[StreamingReplyItem]:
         async with client.responses.stream(
             model=model,
             input=_compacted_items(current_input),
-            tools=tool_defs,
+            tools=tool_defs + cloud_tools,  # type: ignore
             store=False,
             parallel_tool_calls=True,
             reasoning={"summary": "auto"},

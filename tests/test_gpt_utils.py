@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from openai.types.responses import (
@@ -7,6 +7,7 @@ from openai.types.responses import (
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
+    ResponseFunctionToolCallOutputItem,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseReasoningTextDeltaEvent,
@@ -105,21 +106,23 @@ def greet(name: str) -> str:
 
 def test_get_tools_definition() -> None:
     tool = get_tools_definition(sample_tool)
+    parameters = cast(dict[str, Any], tool["parameters"])
+    properties = cast(dict[str, Any], parameters["properties"])
 
     assert tool["type"] == "function"
     assert tool["name"] == "sample_tool"
     assert tool["strict"] is True
     assert tool["description"] == "Run a sample tool."
-    assert tool["parameters"]["required"] == ["name", "count", "mode"]
-    assert tool["parameters"]["properties"]["name"] == {
+    assert parameters["required"] == ["name", "count", "mode"]
+    assert properties["name"] == {
         "type": "string",
         "description": "User name.",
     }
-    assert tool["parameters"]["properties"]["count"] == {
+    assert properties["count"] == {
         "type": "integer",
         "description": "Retry count.",
     }
-    assert tool["parameters"]["properties"]["mode"] == {
+    assert properties["mode"] == {
         "type": "string",
         "description": "Execution mode.",
         "enum": ["fast", "safe"],
@@ -269,7 +272,8 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "response.output_text.done",
         "response",
     ]
-    assert items[9].output == "hello Faltoobot"
+    tool_output = cast(ResponseFunctionToolCallOutputItem, items[9])
+    assert tool_output.output == "hello Faltoobot"
     assert client.responses.calls[0]["context_management"] == [
         {"type": "compaction", "compact_threshold": 210_000}
     ]

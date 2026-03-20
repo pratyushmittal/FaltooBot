@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 
 from faltoobot import sessions
+from faltoobot.gpt_utils import get_tools_definition
 
 
 class FakeItem:
@@ -44,7 +45,6 @@ class FakeClient:
         self.closed = True
 
 
-
 def test_get_session_id_creates_messages_json_and_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -59,7 +59,9 @@ def test_get_session_id_creates_messages_json_and_workspace(
     assert payload["messages"] == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
-    assert (tmp_path / ".faltoobot" / "sessions" / session_id / "messages.json").exists()
+    assert (
+        tmp_path / ".faltoobot" / "sessions" / session_id / "messages.json"
+    ).exists()
 
 
 @pytest.mark.anyio
@@ -74,6 +76,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         lambda: SimpleNamespace(openai_model="gpt-5-mini", openai_api_key="test"),
     )
     calls: list[list[dict[str, Any]]] = []
+    tool_defs: list[Any] = []
 
     async def fake_get_streaming_reply(
         model: str,
@@ -81,6 +84,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         tools: list[Any],
     ):
         calls.append(input)
+        tool_defs.extend([get_tools_definition(tool) for tool in tools])
         yield FakeResponse(
             [
                 {
@@ -113,6 +117,30 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             "content": "Hi",
         }
     ]
+    assert len(tool_defs) == 1
+    tool_def = tool_defs[0]
+    assert tool_def["type"] == "function"
+    assert tool_def["name"] == "run_shell_call"
+    assert tool_def["strict"] is True
+    assert tool_def["description"].startswith(
+        "Returns the output of a shell command. Use it to inspect files and run CLI tasks."
+    )
+    assert "Commands are run from" in tool_def["description"]
+    assert tool_def["parameters"] == {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "Bash command to run.",
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "description": "Kill the command after this timeout in milliseconds.",
+            },
+        },
+        "required": ["command", "timeout_ms"],
+        "additionalProperties": False,
+    }
     assert payload["message_ids"] == ["msg-1"]
     assert payload["messages"] == [
         {
