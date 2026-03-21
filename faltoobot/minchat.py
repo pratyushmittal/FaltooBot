@@ -210,6 +210,9 @@ class FaltooChatApp(App[None]):
         await transcript.mount(*blocks)
         self.scroll_transcript_end(transcript)
 
+        composer = self.query_one("#composer", Composer)
+        composer.focus()
+
     async def handle_command(self, question: str) -> bool:
         match question:
             case "/tree":
