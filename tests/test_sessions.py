@@ -4,6 +4,7 @@ from typing import Any
 import hashlib
 
 import pytest
+from openai.types.responses import ResponseInputParam
 from PIL import Image
 
 from faltoobot import sessions
@@ -26,6 +27,11 @@ class FakeResponse:
 class FakeUpload:
     def __init__(self, file_id: str) -> None:
         self.id = file_id
+
+
+class FakeCompletedEvent:
+    def __init__(self, usage: dict[str, Any]) -> None:
+        self.response = SimpleNamespace(usage=usage)
 
 
 class FakeFiles:
@@ -64,6 +70,17 @@ def test_get_session_creates_messages_json_and_workspace(
     assert (
         tmp_path / ".faltoobot" / "sessions" / chat_key / session[1] / "messages.json"
     ).exists()
+
+
+def _config(tmp_path: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        root=tmp_path / ".faltoobot",
+        system_prompt="system prompt",
+        openai_model="gpt-5-mini",
+        openai_api_key="test",
+        openai_thinking="low",
+        openai_fast=False,
+    )
 
 
 def test_get_session_sets_dir_chat_key_and_last_used(
@@ -114,18 +131,19 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     monkeypatch.setattr(
         sessions,
         "build_config",
-        lambda: SimpleNamespace(openai_model="gpt-5-mini", openai_api_key="test"),
+        lambda: _config(tmp_path),
     )
-    calls: list[list[dict[str, Any]]] = []
+    calls: list[ResponseInputParam] = []
     tool_defs: list[Any] = []
 
     async def fake_get_streaming_reply(
-        model: str,
-        input: list[Any],
+        instructions: str,
+        input: ResponseInputParam,
         tools: list[Any],
         api_key: str,
     ):
         assert api_key == "test"
+        assert instructions.startswith("system prompt")
         calls.append(input)
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         yield FakeResponse(
@@ -202,6 +220,68 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
 
 
 @pytest.mark.anyio
+async def test_get_answer_saves_usage_from_completed_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(
+        sessions,
+        "build_config",
+        lambda: _config(tmp_path),
+    )
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: ResponseInputParam,
+        tools: list[Any],
+        api_key: str,
+    ):
+        assert instructions.startswith("system prompt")
+        yield FakeCompletedEvent(
+            {
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 3,
+            }
+        )
+        yield FakeResponse(
+            [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                }
+            ]
+        )
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+
+    session = sessions.get_session(chat_key="123@lid")
+    payload = await sessions.get_answer(session=session, question="Hi")
+
+    assert payload["messages"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": "Hi",
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}],
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 3,
+            },
+        },
+    ]
+
+
+@pytest.mark.anyio
 async def test_get_answer_uploads_and_resizes_image_attachments(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -210,18 +290,19 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
     monkeypatch.setattr(
         sessions,
         "build_config",
-        lambda: SimpleNamespace(openai_model="gpt-5-mini", openai_api_key="test"),
+        lambda: _config(tmp_path),
     )
     client = FakeClient()
     monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
 
     async def fake_get_streaming_reply(
-        model: str,
-        input: list[Any],
+        instructions: str,
+        input: ResponseInputParam,
         tools: list[Any],
         api_key: str,
     ):
         assert api_key == "test"
+        assert instructions.startswith("system prompt")
         yield FakeResponse([])
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)

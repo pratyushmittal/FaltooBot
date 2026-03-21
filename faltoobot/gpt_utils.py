@@ -2,7 +2,7 @@ import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from openai import AsyncOpenAI
 from openai.types.responses import (
@@ -10,8 +10,11 @@ from openai.types.responses import (
     ParsedResponse,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
+    ResponseInputParam,
     ResponsesServerEvent,
 )
+
+from faltoobot.config import build_config
 
 COMPACT_THRESHOLD = 210_000
 
@@ -98,23 +101,33 @@ def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
     )
 
 
-def _item_dict(value: Any) -> dict[str, Any] | None:
+def _item_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
-    return value if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
+    return value
 
 
-def _compacted_items(items: list[Any]) -> list[Any]:
-    """Keep only the latest compacted history window.
-
-    When the API returns a ``compaction`` item, it replaces all earlier context.
-    So for the next request we can drop everything before the newest compaction
-    item and send only that compacted item plus whatever came after it.
-    """
+def trim_input(items: ResponseInputParam) -> ResponseInputParam:
+    # Keep only the latest compacted history window.
     for index in range(len(items) - 1, -1, -1):
-        item = _item_dict(items[index])
-        if item and item.get("type") == "compaction":
-            return items[index:]
+        if _item_dict(items[index]).get("type") == "compaction":
+            items = items[index:]
+            break
+
+    # Strip SDK-only fields before replaying saved items back to the API.
+    items = cast(
+        ResponseInputParam,
+        [
+            {
+                key: value
+                for key, value in _item_dict(item).items()
+                if key != "parsed_arguments"
+            }
+            for item in items
+        ],
+    )
     return items
 
 
@@ -144,7 +157,7 @@ def _response_tool_calls(response_output: list[Any]) -> list[ResponseFunctionToo
     tool_calls: list[ResponseFunctionToolCall] = []
     for item in response_output:
         raw_item = _item_dict(item)
-        if raw_item and raw_item.get("type") == "function_call":
+        if raw_item.get("type") == "function_call":
             tool_calls.append(_tool_call_item(raw_item))
     return tool_calls
 
@@ -185,11 +198,12 @@ async def _tool_result(
 
 
 async def get_streaming_reply(
-    model: str,
-    input: list[Any],
+    instructions: str,
+    input: ResponseInputParam,
     tools: list[Tool],
     api_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
+    config = build_config()
     client = AsyncOpenAI(api_key=api_key)
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
@@ -206,14 +220,19 @@ async def get_streaming_reply(
         }
     ]
 
-    async def reply(current_input: list[Any]) -> AsyncIterator[StreamingReplyItem]:
+    async def reply(
+        current_input: ResponseInputParam,
+    ) -> AsyncIterator[StreamingReplyItem]:
         async with client.responses.stream(
-            model=model,
-            input=_compacted_items(current_input),
+            model=config.openai_model,
+            input=trim_input(current_input),
             tools=tool_defs + cloud_tools,  # type: ignore
             store=False,
             parallel_tool_calls=True,
-            reasoning={"summary": "auto"},
+            instructions=instructions,
+            reasoning={"summary": "auto", "effort": config.openai_thinking},  # type: ignore
+            service_tier="priority" if config.openai_fast else "default",
+            include=["reasoning.encrypted_content", "web_search_call.action.sources"],
             context_management=[
                 {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
             ],
@@ -231,7 +250,7 @@ async def get_streaming_reply(
 
         for tool_call in tool_calls:
             result = await _tool_result(tools_by_name, tool_call)
-            current_input.append(result.to_dict())
+            current_input.append(cast(Any, result.to_dict()))
             yield result
 
         async for item in reply(current_input):

@@ -1,4 +1,5 @@
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -8,6 +9,7 @@ from openai.types.responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
+    ResponseInputParam,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseReasoningTextDeltaEvent,
@@ -247,11 +249,20 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         ]
     )
     monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
 
     items = [
         item
         async for item in get_streaming_reply(
-            model="gpt-5-mini",
+            instructions="system prompt",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[greet],
             api_key="test-key",
@@ -318,11 +329,20 @@ async def test_get_streaming_reply_yields_all_stream_events(
         ]
     )
     monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
 
     items = [
         item
         async for item in get_streaming_reply(
-            model="gpt-5-mini",
+            instructions="system prompt",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[],
             api_key="test-key",
@@ -335,3 +355,43 @@ async def test_get_streaming_reply_yields_all_stream_events(
     ]
     assert isinstance(items[1], FakeResponse)
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_trims_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient([{"events": [], "output": []}])
+    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
+
+    items = cast(
+        ResponseInputParam,
+        [
+            {"type": "message", "role": "user", "content": "old"},
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "greet",
+                "arguments": '{"name":"Faltoobot"}',
+                "parsed_arguments": {"name": "Faltoobot"},
+            },
+            {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
+            {"type": "message", "role": "user", "content": "hi"},
+        ],
+    )
+
+    [item async for item in get_streaming_reply("system prompt", items, [], "test-key")]
+
+    assert client.responses.calls[0]["input"] == [
+        {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
+        {"type": "message", "role": "user", "content": "hi"},
+    ]

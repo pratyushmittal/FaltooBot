@@ -6,14 +6,16 @@ from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, RLock
-from typing import Any, AsyncIterator, TypeAlias, TypedDict
+from typing import Any, AsyncIterator, TypeAlias, TypedDict, cast
 from uuid import uuid4
 
 from openai import AsyncOpenAI
+from openai.types.responses import ResponseInputParam
 from PIL import Image
 
 from faltoobot.config import app_root, build_config
 from faltoobot.gpt_utils import StreamingReplyItem, get_streaming_reply
+from faltoobot.instructions import system_instructions
 from faltoobot.tools import get_run_shell_call_tool
 
 MESSAGES_FILE = "messages.json"
@@ -31,7 +33,7 @@ class MessagesJson(TypedDict):
     id: str
     chat_key: str
     workspace: str
-    messages: list[dict[str, Any]]
+    messages: ResponseInputParam
     message_ids: list[str]
 
 
@@ -342,6 +344,27 @@ def _response_output(value: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _response_usage(value: Any) -> dict[str, Any] | None:
+    usage = getattr(value, "usage", None)
+    if usage is None:
+        usage = getattr(getattr(value, "response", None), "usage", None)
+    if hasattr(usage, "to_dict"):
+        usage = usage.to_dict()
+    return usage if isinstance(usage, dict) else None
+
+
+def _attach_usage(
+    items: list[dict[str, Any]], usage: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    if usage is None:
+        return items
+    for item in reversed(items):
+        if item.get("type") == "message" and item.get("role") == "assistant":
+            item["usage"] = usage
+            break
+    return items
+
+
 async def get_answer(
     session: Session,
     question: str,
@@ -371,6 +394,7 @@ async def get_answer_streaming(
         messages_json = get_messages(session)
         if message_id and message_id in messages_json["message_ids"]:
             return
+        pending_usage: dict[str, Any] | None = None
 
         workspace = Path(messages_json["workspace"])
         text = question.strip()
@@ -387,19 +411,21 @@ async def get_answer_streaming(
             raise ValueError("Question or attachments required")
 
         user_message = {"type": "message", "role": "user", "content": content}
-        messages_json["messages"].append(user_message)
+        messages_json["messages"].append(cast(Any, user_message))
         if message_id:
             messages_json["message_ids"].append(message_id)
         set_messages(session, messages_json)
 
         async for event in get_streaming_reply(
-            model=config.openai_model,
+            instructions=system_instructions(config, workspace),
             input=list(messages_json["messages"]),
             tools=[get_run_shell_call_tool(Path(messages_json["workspace"]))],
             api_key=config.openai_api_key,
         ):
-            response_output = _response_output(event)
+            pending_usage = _response_usage(event) or pending_usage
+            response_output = _attach_usage(_response_output(event), pending_usage)
             if response_output:
-                messages_json["messages"].extend(response_output)
+                messages_json["messages"].extend(cast(Any, response_output))
                 set_messages(session, messages_json)
+                pending_usage = None
             yield event
