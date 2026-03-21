@@ -1,9 +1,13 @@
 import sys
+import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from openai.types.responses import ResponseFunctionToolCallOutputItem
+from openai.types.responses import (
+    ResponseFunctionToolCallOutputItem,
+    ResponseInputItemParam,
+)
 from textual import getters
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -11,7 +15,6 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import Markdown, TextArea
 
 from faltoobot import sessions
-from faltoobot.chat.entries import tool_entry
 from faltoobot.chat.terminal import open_in_default_editor
 from faltoobot.placeholders import get_random_placeholder
 
@@ -42,8 +45,31 @@ def get_text(value: Any) -> str:
             return ""
 
 
-def get_item_text(item: Any) -> str:
-    if text := tool_entry(item):
+def get_tool_text(item: ResponseInputItemParam) -> str | None:
+    match item:
+        case {"type": "function_call", "name": str(name), "arguments": str(arguments)}:
+            try:
+                arguments = json.dumps(
+                    json.loads(arguments),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            except json.JSONDecodeError:
+                pass
+            return f"{name}\n{arguments}" if arguments.strip() else name
+        case {
+            "type": "web_search_call",
+            "action": {"query": str(query)},
+        }:
+            return f"web search\n{query.strip()}" if query.strip() else "web search"
+        case {"type": str(item_type)} if item_type.endswith("_call"):
+            return item_type.replace("_", " ")
+        case _:
+            return None
+
+
+def get_item_text(item: ResponseInputItemParam) -> str:
+    if text := get_tool_text(item):
         return text
     match item:
         case {"type": "message", "content": content}:
