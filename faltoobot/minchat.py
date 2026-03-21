@@ -275,6 +275,7 @@ class FaltooChatApp(App[None]):
 class Composer(TextArea):
     BINDINGS = [
         Binding("enter", "composer_enter", "Submit", priority=True),
+        Binding("shift+enter", "newline", "New line", priority=True),
     ]
     BINDING_GROUP_TITLE = "Chat"
 
@@ -283,6 +284,9 @@ class Composer(TextArea):
 
     def action_composer_enter(self) -> None:
         self.app.run_worker(self.app.submit_message(), exclusive=True)
+
+    def action_newline(self) -> None:
+        self.insert("\n")
 
 
 def main() -> int:
