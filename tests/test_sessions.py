@@ -1,14 +1,13 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 import hashlib
 
 import pytest
-from openai.types.responses import ResponseInputParam
 from PIL import Image
 
 from faltoobot import sessions
-from faltoobot.gpt_utils import get_tools_definition
+from faltoobot.gpt_utils import MessageHistory, get_tools_definition
 
 
 class FakeItem:
@@ -20,8 +19,13 @@ class FakeItem:
 
 
 class FakeResponse:
-    def __init__(self, output: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        output: list[dict[str, Any]],
+        usage: dict[str, Any] | None = None,
+    ) -> None:
         self.output = [FakeItem(item) for item in output]
+        self.usage = usage
 
 
 class FakeUpload:
@@ -30,8 +34,9 @@ class FakeUpload:
 
 
 class FakeCompletedEvent:
-    def __init__(self, usage: dict[str, Any]) -> None:
-        self.response = SimpleNamespace(usage=usage)
+    def __init__(self, output: list[dict[str, Any]], usage: dict[str, Any]) -> None:
+        self.type = "response.completed"
+        self.response = FakeResponse(output, usage)
 
 
 class FakeFiles:
@@ -133,27 +138,47 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "build_config",
         lambda: _config(tmp_path),
     )
-    calls: list[ResponseInputParam] = []
+    calls: list[MessageHistory] = []
     tool_defs: list[Any] = []
 
     async def fake_get_streaming_reply(
         instructions: str,
-        input: ResponseInputParam,
+        input: MessageHistory,
         tools: list[Any],
-        api_key: str,
     ):
-        assert api_key == "test"
         assert instructions.startswith("system prompt")
-        calls.append(input)
+        calls.append(list(input))
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
-        yield FakeResponse(
+        input.append(
+            cast(
+                Any,
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                },
+            )
+        )
+        input[-1]["usage"] = {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 3,
+        }
+        yield FakeCompletedEvent(
             [
                 {
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": "hello"}],
                 }
-            ]
+            ],
+            {
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 3,
+            },
         )
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
@@ -214,63 +239,6 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             "type": "message",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "hello"}],
-        },
-    ]
-    assert duplicate == payload
-
-
-@pytest.mark.anyio
-async def test_get_answer_saves_usage_from_completed_event(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-    monkeypatch.setattr(
-        sessions,
-        "build_config",
-        lambda: _config(tmp_path),
-    )
-
-    async def fake_get_streaming_reply(
-        instructions: str,
-        input: ResponseInputParam,
-        tools: list[Any],
-        api_key: str,
-    ):
-        assert instructions.startswith("system prompt")
-        yield FakeCompletedEvent(
-            {
-                "input_tokens": 1,
-                "output_tokens": 2,
-                "output_tokens_details": {"reasoning_tokens": 0},
-                "total_tokens": 3,
-            }
-        )
-        yield FakeResponse(
-            [
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "hello"}],
-                }
-            ]
-        )
-
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
-
-    session = sessions.get_session(chat_key="123@lid")
-    payload = await sessions.get_answer(session=session, question="Hi")
-
-    assert payload["messages"] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": "Hi",
-        },
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "hello"}],
             "usage": {
                 "input_tokens": 1,
                 "output_tokens": 2,
@@ -279,6 +247,7 @@ async def test_get_answer_saves_usage_from_completed_event(
             },
         },
     ]
+    assert duplicate == payload
 
 
 @pytest.mark.anyio
@@ -297,13 +266,12 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
 
     async def fake_get_streaming_reply(
         instructions: str,
-        input: ResponseInputParam,
+        input: MessageHistory,
         tools: list[Any],
-        api_key: str,
     ):
-        assert api_key == "test"
         assert instructions.startswith("system prompt")
-        yield FakeResponse([])
+        if False:
+            yield FakeCompletedEvent([], {})
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
 

@@ -9,7 +9,6 @@ from openai.types.responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
-    ResponseInputParam,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseReasoningTextDeltaEvent,
@@ -19,7 +18,11 @@ from openai.types.responses import (
 )
 
 from faltoobot import gpt_utils
-from faltoobot.gpt_utils import get_streaming_reply, get_tools_definition
+from faltoobot.gpt_utils import (
+    MessageHistory,
+    get_streaming_reply,
+    get_tools_definition,
+)
 
 
 class Mode(str, Enum):
@@ -30,14 +33,35 @@ class Mode(str, Enum):
 class FakeItem:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
+        self.type = str(payload.get("type") or "")
+        for key, value in payload.items():
+            setattr(self, key, value)
+
+    def __getitem__(self, key: str) -> Any:
+        return self.payload[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.payload[key] = value
+        setattr(self, key, value)
 
     def to_dict(self) -> dict[str, Any]:
         return self.payload
 
 
 class FakeResponse:
-    def __init__(self, output: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        output: list[dict[str, Any]],
+        usage: dict[str, Any] | None = None,
+    ) -> None:
         self.output = [FakeItem(item) for item in output]
+        self.usage = usage
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "output": [item.to_dict() for item in self.output],
+            "usage": self.usage,
+        }
 
 
 class FakeStreamManager:
@@ -84,6 +108,12 @@ class FakeClient:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FakeCompletedEvent:
+    def __init__(self, output: list[dict[str, Any]]) -> None:
+        self.type = "response.completed"
+        self.response = FakeResponse(output)
 
 
 def sample_tool(name: str, count: int, mode: Mode) -> str:
@@ -212,16 +242,19 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
                             arguments='{"name":"Faltoobot"}',
                         ),
                     ),
+                    FakeCompletedEvent(
+                        [
+                            {
+                                "type": "function_call",
+                                "id": "fc_1",
+                                "call_id": "call_1",
+                                "name": "greet",
+                                "arguments": '{"name":"Faltoobot"}',
+                            }
+                        ]
+                    ),
                 ],
-                "output": [
-                    {
-                        "type": "function_call",
-                        "id": "fc_1",
-                        "call_id": "call_1",
-                        "name": "greet",
-                        "arguments": '{"name":"Faltoobot"}',
-                    }
-                ],
+                "output": [],
             },
             {
                 "events": [
@@ -243,6 +276,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
                         text="Done.",
                         logprobs=[],
                     ),
+                    FakeCompletedEvent([]),
                 ],
                 "output": [],
             },
@@ -254,6 +288,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "build_config",
         lambda: SimpleNamespace(
             openai_model="gpt-5-mini",
+            openai_api_key="test-key",
             openai_thinking="low",
             openai_fast=False,
         ),
@@ -265,7 +300,6 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
             instructions="system prompt",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[greet],
-            api_key="test-key",
         )
     ]
 
@@ -278,11 +312,11 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "response.function_call_arguments.delta",
         "response.function_call_arguments.done",
         "response.output_item.done",
-        "response",
+        "response.completed",
         "function_call_output",
         "response.output_text.delta",
         "response.output_text.done",
-        "response",
+        "response.completed",
     ]
     tool_output = cast(ResponseFunctionToolCallOutputItem, items[9])
     assert tool_output.output == "hello Faltoobot"
@@ -316,15 +350,18 @@ async def test_get_streaming_reply_yields_all_stream_events(
                             id="cmp_1",
                             encrypted_content="secret",
                         ),
-                    )
+                    ),
+                    FakeCompletedEvent(
+                        [
+                            {
+                                "type": "compaction",
+                                "id": "cmp_1",
+                                "encrypted_content": "secret",
+                            }
+                        ]
+                    ),
                 ],
-                "output": [
-                    {
-                        "type": "compaction",
-                        "id": "cmp_1",
-                        "encrypted_content": "secret",
-                    }
-                ],
+                "output": [],
             }
         ]
     )
@@ -334,6 +371,7 @@ async def test_get_streaming_reply_yields_all_stream_events(
         "build_config",
         lambda: SimpleNamespace(
             openai_model="gpt-5-mini",
+            openai_api_key="test-key",
             openai_thinking="low",
             openai_fast=False,
         ),
@@ -345,15 +383,13 @@ async def test_get_streaming_reply_yields_all_stream_events(
             instructions="system prompt",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[],
-            api_key="test-key",
         )
     ]
 
     assert [getattr(item, "type", "response") for item in items] == [
         "response.output_item.done",
-        "response",
+        "response.completed",
     ]
-    assert isinstance(items[1], FakeResponse)
     assert client.closed is True
 
 
@@ -361,20 +397,28 @@ async def test_get_streaming_reply_yields_all_stream_events(
 async def test_get_streaming_reply_trims_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = FakeClient([{"events": [], "output": []}])
+    client = FakeClient(
+        [
+            {
+                "events": [FakeCompletedEvent([])],
+                "output": [],
+            }
+        ]
+    )
     monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
     monkeypatch.setattr(
         gpt_utils,
         "build_config",
         lambda: SimpleNamespace(
             openai_model="gpt-5-mini",
+            openai_api_key="test-key",
             openai_thinking="low",
             openai_fast=False,
         ),
     )
 
     items = cast(
-        ResponseInputParam,
+        MessageHistory,
         [
             {"type": "message", "role": "user", "content": "old"},
             {
@@ -385,13 +429,18 @@ async def test_get_streaming_reply_trims_input(
                 "parsed_arguments": {"name": "Faltoobot"},
             },
             {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
-            {"type": "message", "role": "user", "content": "hi"},
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": "hi",
+                "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            },
         ],
     )
 
-    [item async for item in get_streaming_reply("system prompt", items, [], "test-key")]
+    [item async for item in get_streaming_reply("system prompt", items, [])]
 
     assert client.responses.calls[0]["input"] == [
         {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
-        {"type": "message", "role": "user", "content": "hi"},
+        {"type": "message", "role": "assistant", "content": "hi"},
     ]

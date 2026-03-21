@@ -7,10 +7,9 @@ from typing import Any, TypeAlias, cast
 from openai import AsyncOpenAI
 from openai.types.responses import (
     FunctionToolParam,
-    ParsedResponse,
+    ResponseCompletedEvent,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
-    ResponseInputParam,
     ResponsesServerEvent,
 )
 
@@ -19,8 +18,10 @@ from faltoobot.config import build_config
 COMPACT_THRESHOLD = 210_000
 
 Tool: TypeAlias = Callable[..., str] | Callable[..., Awaitable[str]]
+MessageItem: TypeAlias = dict[str, Any]
+MessageHistory: TypeAlias = list[MessageItem]
 StreamingReplyItem: TypeAlias = (
-    ResponsesServerEvent | ParsedResponse | ResponseFunctionToolCallOutputItem
+    ResponsesServerEvent | ResponseFunctionToolCallOutputItem
 )
 
 
@@ -101,7 +102,7 @@ def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
     )
 
 
-def _item_dict(value: Any) -> dict[str, Any]:
+def _to_message_item(value: Any) -> MessageItem:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
     if not isinstance(value, dict):
@@ -109,25 +110,22 @@ def _item_dict(value: Any) -> dict[str, Any]:
     return value
 
 
-def trim_input(items: ResponseInputParam) -> ResponseInputParam:
+def trim_input(items: MessageHistory) -> MessageHistory:
     # Keep only the latest compacted history window.
     for index in range(len(items) - 1, -1, -1):
-        if _item_dict(items[index]).get("type") == "compaction":
+        if items[index].get("type") == "compaction":
             items = items[index:]
             break
 
     # Strip SDK-only fields before replaying saved items back to the API.
-    items = cast(
-        ResponseInputParam,
-        [
-            {
-                key: value
-                for key, value in _item_dict(item).items()
-                if key != "parsed_arguments"
-            }
-            for item in items
-        ],
-    )
+    items = [
+        {
+            key: value
+            for key, value in item.items()
+            if key not in {"parsed_arguments", "usage"}
+        }
+        for item in items
+    ]
     return items
 
 
@@ -141,24 +139,14 @@ def _parse_tool_arguments(raw_arguments: str) -> tuple[dict[str, Any], str | Non
     return value, None
 
 
-def _tool_call_item(raw_item: dict[str, Any]) -> ResponseFunctionToolCall:
-    return ResponseFunctionToolCall(
-        type="function_call",
-        id=raw_item.get("id"),
-        call_id=str(raw_item.get("call_id", "")),
-        name=str(raw_item.get("name", "")),
-        arguments=str(raw_item.get("arguments", "")),
-        status=raw_item.get("status"),
-        namespace=raw_item.get("namespace"),
-    )
-
-
-def _response_tool_calls(response_output: list[Any]) -> list[ResponseFunctionToolCall]:
+def _response_tool_calls(
+    event: ResponseCompletedEvent,
+) -> list[ResponseFunctionToolCall]:
     tool_calls: list[ResponseFunctionToolCall] = []
-    for item in response_output:
-        raw_item = _item_dict(item)
-        if raw_item.get("type") == "function_call":
-            tool_calls.append(_tool_call_item(raw_item))
+    for item in event.response.output:
+        if item.type == "function_call":
+            item = cast(ResponseFunctionToolCall, item)
+            tool_calls.append(item)
     return tool_calls
 
 
@@ -199,12 +187,11 @@ async def _tool_result(
 
 async def get_streaming_reply(
     instructions: str,
-    input: ResponseInputParam,
+    input: MessageHistory,
     tools: list[Tool],
-    api_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
     config = build_config()
-    client = AsyncOpenAI(api_key=api_key)
+    client = AsyncOpenAI(api_key=config.openai_api_key)
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
 
@@ -221,11 +208,11 @@ async def get_streaming_reply(
     ]
 
     async def reply(
-        current_input: ResponseInputParam,
+        current_input: MessageHistory,
     ) -> AsyncIterator[StreamingReplyItem]:
         async with client.responses.stream(
             model=config.openai_model,
-            input=trim_input(current_input),
+            input=cast(Any, trim_input(current_input)),
             tools=tool_defs + cloud_tools,  # type: ignore
             store=False,
             parallel_tool_calls=True,
@@ -238,19 +225,30 @@ async def get_streaming_reply(
             ],
         ) as stream:
             async for event in stream:
+                if event.type == "response.completed":
+                    # Normalize output items to plain dicts before sharing and persisting
+                    # history, then attach usage to the last item from this response.
+                    event = cast(ResponseCompletedEvent, event)
+                    dict_response = event.response.to_dict()
+                    current_input.extend(dict_response["output"])  # type: ignore
+                    current_input[-1]["usage"] = dict_response["usage"]
                 yield event
-            response = await stream.get_final_response()
-            yield response
 
-        response_output = getattr(response, "output", [])
-        current_input.extend(response_output)
-        tool_calls = _response_tool_calls(response_output)
+        # https://developers.openai.com/api/reference/resources/responses/streaming-events#response.completed
+        # the last event is always `response.completed`
+        # it always contains full response in event.response
+        # including usage
+        if event.type != "response.completed":
+            raise ValueError("last event was not response.completed")
+        event = cast(ResponseCompletedEvent, event)
+
+        tool_calls = _response_tool_calls(event)
         if not tool_calls:
             return
 
         for tool_call in tool_calls:
             result = await _tool_result(tools_by_name, tool_call)
-            current_input.append(cast(Any, result.to_dict()))
+            current_input.append(_to_message_item(result))
             yield result
 
         async for item in reply(current_input):

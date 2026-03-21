@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -17,7 +18,7 @@ def config_text(system_prompt: str) -> str:
             "",
             "[openai]",
             'api_key = ""',
-            'model = "gpt-5.4"',
+            'model = "gpt-5.4-nano"',
             'thinking = "high"',
             "",
             "[bot]",
@@ -70,7 +71,7 @@ async def test_faltoochat_uses_env_api_key_and_persists_session(
 
     prompt = "Reply with exactly FALTOO_E2E_OK and nothing else."
     payload = await run_chat_turn(home, prompt)
-    messages = payload["messages"]
+    messages = cast(list[dict[str, Any]], payload["messages"])
     assert payload["name"] == "CLI E2E Chat"
     assert payload["workspace"] == str(workspace)
     assert isinstance(messages, list)
@@ -109,7 +110,7 @@ async def test_faltoochat_runs_pwd_in_session_workspace(
 
     prompt = "Run `pwd` in the shell tool and reply with only the output."
     payload = await run_chat_turn(home, prompt)
-    messages = payload["messages"]
+    messages = cast(list[dict[str, Any]], payload["messages"])
     assert isinstance(messages, list)
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[0]["content"] == prompt
@@ -150,8 +151,8 @@ async def test_faltoochat_reuses_existing_session_for_workspace(
         home, "Reply with exactly SECOND_RUN_OK and nothing else.", name=None
     )
 
-    first_messages = first["messages"]
-    second_messages = second["messages"]
+    first_messages = cast(list[dict[str, Any]], first["messages"])
+    second_messages = cast(list[dict[str, Any]], second["messages"])
     assert first["id"] == second["id"]
     assert first["workspace"] == str(workspace)
     assert second["workspace"] == str(workspace)
