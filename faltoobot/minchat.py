@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from openai.types.responses import ResponseFunctionToolCallOutputItem
 from textual import getters
@@ -41,7 +42,7 @@ def get_text(value: Any) -> str:
             return ""
 
 
-def get_item_text(item: dict[str, Any]) -> str:
+def get_item_text(item: Any) -> str:
     if text := tool_entry(item):
         return text
     match item:
@@ -226,6 +227,23 @@ class FaltooChatApp(App[None]):
         transcript.mount(*blocks)
         transcript.scroll_end(animate=False, immediate=True)
 
+    async def handle_command(self, question: str) -> bool:
+        match question:
+            case "/tree":
+                open_in_default_editor(sessions.get_messages_path(self.session))
+                return True
+            case "/reset":
+                workspace = Path(sessions.get_messages(self.session)["workspace"])
+                self.session = sessions.get_session(
+                    chat_key=self.session[0],
+                    session_id=str(uuid4()),
+                    workspace=workspace,
+                )
+                await self.load_messages()
+                return True
+            case _:
+                return False
+
     async def submit_message(self) -> None:
         composer = self.query_one("#composer", Composer)
         transcript = self.query_one("#transcript", VerticalScroll)
@@ -234,8 +252,7 @@ class FaltooChatApp(App[None]):
             return
 
         composer.load_text("")
-        if question == "/tree":
-            open_in_default_editor(sessions.get_messages_path(self.session))
+        if await self.handle_command(question):
             return
         transcript.mount(Markdown(question, classes="user"))
         is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
