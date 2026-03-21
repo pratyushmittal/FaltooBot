@@ -171,10 +171,17 @@ class FaltooChatApp(App[None]):
     async def on_mount(self) -> None:
         await self.load_messages()
 
+    def scroll_transcript_end(self, transcript: VerticalScroll) -> None:
+        self.call_after_refresh(
+            transcript.scroll_end,
+            animate=False,
+            immediate=True,
+        )
+
     async def load_messages(self) -> None:
         messages_json = sessions.get_messages(self.session)
         transcript = self.query_one("#transcript", VerticalScroll)
-        transcript.remove_children()
+        await transcript.remove_children()
         blocks = []
         for message in messages_json["messages"]:
             if not isinstance(message, dict):
@@ -201,7 +208,7 @@ class FaltooChatApp(App[None]):
                 )
             ]
         await transcript.mount(*blocks)
-        transcript.scroll_end(animate=False, immediate=True)
+        self.scroll_transcript_end(transcript)
 
     async def handle_command(self, question: str) -> bool:
         match question:
@@ -243,7 +250,7 @@ class FaltooChatApp(App[None]):
 
             is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
             if is_at_bottom:
-                transcript.scroll_end(animate=False, immediate=True)
+                self.scroll_transcript_end(transcript)
 
     async def submit_message(self) -> None:
         composer = self.query_one("#composer", Composer)
@@ -258,7 +265,7 @@ class FaltooChatApp(App[None]):
         await transcript.mount(Markdown(question, classes="user"))
         is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
         if is_at_bottom:
-            transcript.scroll_end(animate=False, immediate=True)
+            self.scroll_transcript_end(transcript)
         await self.stream_reply(transcript, question)
 
 
