@@ -19,6 +19,7 @@ from faltoobot.chat.terminal import open_in_default_editor
 from faltoobot.placeholders import get_random_placeholder
 
 SKIPPABLE_EVENT_TYPES = {
+    "response.function_call_arguments.delta",
     "response.created",
     "response.in_progress",
     "response.completed",
@@ -26,7 +27,9 @@ SKIPPABLE_EVENT_TYPES = {
     "response.output_item.done",
     "response.content_part.added",
     "response.content_part.done",
+    "function_call_output",
 }
+MAX_TOOL_LINES = 5
 
 
 def get_text(value: Any) -> str:
@@ -45,18 +48,27 @@ def get_text(value: Any) -> str:
             return ""
 
 
+def clip_lines(text: str, max_lines: int = MAX_TOOL_LINES) -> str:
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    return "\n".join([*lines[: max_lines - 1], "..."])
+
+
+def get_tool_call_text(name: str, arguments: str) -> str:
+    if arguments.strip():
+        try:
+            arguments = json.dumps(json.loads(arguments), ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            pass
+        return clip_lines(f"{name}\n{arguments}")
+    return name
+
+
 def get_tool_text(item: ResponseInputItemParam) -> str | None:
     match item:
         case {"type": "function_call", "name": str(name), "arguments": str(arguments)}:
-            try:
-                arguments = json.dumps(
-                    json.loads(arguments),
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            except json.JSONDecodeError:
-                pass
-            return f"{name}\n{arguments}" if arguments.strip() else name
+            return get_tool_call_text(name, arguments)
         case {
             "type": "web_search_call",
             "action": {"query": str(query)},
@@ -102,6 +114,11 @@ def get_event_text(event: Any) -> str | None:
             | "response.output_text.delta"
         ):
             value = getattr(event, "delta", "")
+        case "response.function_call_arguments.done":
+            return get_tool_call_text(
+                str(getattr(event, "name", "") or ""),
+                str(getattr(event, "arguments", "") or ""),
+            )
         case "response.web_search_call.in_progress":
             value = "Web search"
         case "response.web_search_call.searching":
@@ -122,7 +139,7 @@ def get_event_classes(event_type: str, text: str | None) -> str:
         return f"{get_safe_class_name(event_type)} unknown"
     if "reasoning" in event_type:
         return "thinking"
-    if "web_search_call" in event_type or event_type == "function_call_output":
+    if "web_search_call" in event_type or "function_call_arguments" in event_type:
         return "tool"
     if "output_text" in event_type:
         return "answer"
