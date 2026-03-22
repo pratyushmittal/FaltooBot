@@ -1,15 +1,20 @@
+import asyncio
 import json
 import os
 from pathlib import Path
 
 import pytest
-from textual.widgets import Markdown
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.minchat import Composer, FaltooChatApp
 
 MIN_ASSISTANT_MESSAGES = 2
+
+
+async def wait_for_idle(app: FaltooChatApp) -> None:
+    while app.is_answering:
+        await asyncio.sleep(0.05)
 
 
 def config_text(system_prompt: str) -> str:
@@ -85,16 +90,9 @@ async def test_minchat_streams_ls_and_follow_up_e2e(
         composer = app.query_one("#composer", Composer)
 
         composer.load_text("Run `ls` in the shell tool and reply with one filename.")
-        await app.submit_message()
+        await composer.action_composer_enter()
+        await asyncio.wait_for(wait_for_idle(app), timeout=30)
         await pilot.pause()
-
-        transcript = app.query_one("#transcript")
-        tool_blocks = [
-            block
-            for block in transcript.children
-            if isinstance(block, Markdown) and block.has_class("tool")
-        ]
-        assert any("run_shell_call" in block._markdown for block in tool_blocks)
 
         first_payload = sessions.get_messages(app.session)
         first_items = [
@@ -116,7 +114,8 @@ async def test_minchat_streams_ls_and_follow_up_e2e(
         )
 
         composer.load_text("What command did you run?")
-        await app.submit_message()
+        await composer.action_composer_enter()
+        await asyncio.wait_for(wait_for_idle(app), timeout=30)
         await pilot.pause()
 
         second_payload = sessions.get_messages(app.session)

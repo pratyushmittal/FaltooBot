@@ -5,9 +5,17 @@ from typing import Any
 import pytest
 from textual import events
 
-from faltoobot import sessions
-from faltoobot.minchat import Composer, FaltooChatApp
+from faltoobot import sessions, submit_queue
+from faltoobot.minchat import Composer, FaltooChatApp, get_local_user_message_item
+from faltoobot.widgets import QueueWidget
 from textual.widgets import Markdown
+
+
+async def wait_for_condition(check: Any) -> None:
+    while True:
+        if check():
+            return
+        await asyncio.sleep(0.01)
 
 
 def build_app(
@@ -113,7 +121,7 @@ async def test_minchat_submits_composer_attachments(
         composer = app.query_one("#composer", Composer)
         composer.load_text("What is this?")
         composer.attach_image(image.resolve())
-        await app.submit_message()
+        await composer.action_composer_enter()
         await pilot.pause()
         assert composer.attachments == []
 
@@ -121,7 +129,7 @@ async def test_minchat_submits_composer_attachments(
         {
             "session": app.session,
             "question": "What is this?",
-            "attachments": [image.resolve()],
+            "attachments": [str(image.resolve())],
         }
     ]
 
@@ -152,13 +160,14 @@ async def test_minchat_load_all_button_loads_full_history(
 
 
 @pytest.mark.anyio
-async def test_minchat_disables_composer_while_streaming(
+async def test_minchat_queues_messages_while_streaming(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
     started = asyncio.Event()
     release = asyncio.Event()
+    seen: list[str] = []
 
     async def fake_get_answer_streaming(
         *,
@@ -166,9 +175,11 @@ async def test_minchat_disables_composer_while_streaming(
         question: str,
         attachments: list[sessions.Attachment] | None = None,
     ):
+        seen.append(question)
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
-        started.set()
-        await release.wait()
+        if question == "hello":
+            started.set()
+            await release.wait()
         yield type("Event", (), {"type": "response.output_text.done"})()
 
     monkeypatch.setattr(
@@ -179,14 +190,71 @@ async def test_minchat_disables_composer_while_streaming(
     async with app.run_test() as pilot:
         composer = app.query_one("#composer", Composer)
         composer.load_text("hello")
-        submit = asyncio.create_task(app.submit_message())
+        await composer.action_composer_enter()
         await asyncio.wait_for(started.wait(), timeout=3)
         await pilot.pause()
-        assert composer.disabled
         assert str(composer.border_subtitle) == "answering"
 
-        release.set()
-        await submit
+        composer.load_text("later")
+        await composer.action_composer_enter()
         await pilot.pause()
-        assert not composer.disabled
+        queue = submit_queue.get_queue(app.session)
+        assert [item["id"] for item in queue]
+        assert queue[0]["auto_submit"] is True
+        assert app.query_one("#queue").display
+
+        release.set()
+        await asyncio.wait_for(
+            wait_for_condition(lambda: not app.is_answering), timeout=3
+        )
+        await pilot.pause()
         assert str(composer.border_subtitle) == ""
+        assert submit_queue.get_queue(app.session) == []
+        assert seen == ["hello", "later"]
+
+
+def test_get_local_user_message_item_keeps_local_image_paths() -> None:
+    message = get_local_user_message_item(
+        "hello",
+        [Path("/tmp/cat.png")],
+    )
+
+    assert message == {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "hello"},
+            {"type": "input_image", "image_path": "/tmp/cat.png"},
+        ],
+    }
+
+
+@pytest.mark.anyio
+async def test_minchat_queue_widget_keybindings_update_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    submit_queue.add_to_queue(
+        app.session,
+        {"type": "message", "role": "user", "content": "first"},
+    )
+    submit_queue.add_to_queue(
+        app.session,
+        {"type": "message", "role": "user", "content": "second"},
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        queue_widget = app.query_one(QueueWidget)
+        queue_widget.focus()
+
+        await pilot.press("shift+down")
+        await pilot.pause()
+        queue = submit_queue.get_queue(app.session)
+        assert [item["content"] for item in queue] == ["second", "first"]
+
+        await pilot.press("delete")
+        await pilot.pause()
+        queue = submit_queue.get_queue(app.session)
+        assert [item["content"] for item in queue] == ["second"]

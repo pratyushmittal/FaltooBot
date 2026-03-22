@@ -43,7 +43,14 @@ def _resolved_path(path: Path) -> Path | None:
         resolved = path.resolve()
     except OSError:
         return None
-    return resolved if resolved.exists() else None
+
+    try:
+        exists = resolved.exists()
+    except OSError:
+        # text was too long
+        return None
+    else:
+        return resolved if exists else None
 
 
 def _resolved_pasted_path(source: str, workspace: Path) -> Path | None:

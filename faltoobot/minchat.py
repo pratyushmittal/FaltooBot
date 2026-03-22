@@ -16,9 +16,43 @@ from faltoobot.messages_rendering import get_item_text
 from faltoobot.paste import pasted_image_path, save_clipboard_image
 from faltoobot.placeholders import get_random_placeholder
 from faltoobot.stream import get_event_text
+from faltoobot.widgets import QueueWidget
 
-TRANSCRIPT_BOTTOM_THRESHOLD = 6
+TRANSCRIPT_BOTTOM_THRESHOLD = 4
 STARTUP_MESSAGES_LIMIT = 100
+
+
+def get_local_user_message_item(
+    question: str,
+    attachments: list[sessions.Attachment],
+) -> MessageItem:
+    # comment: this local MessageItem is not appended to messages_json. It mirrors the
+    # user item that later goes through session handling, where local file attachments
+    # are uploaded before the API call.
+    content: list[dict[str, Any]] = [
+        *([{"type": "input_text", "text": question}] if question else []),
+        *({"type": "input_image", "image_path": str(path)} for path in attachments),
+    ]
+    return {
+        "type": "message",
+        "role": "user",
+        "content": content,
+    }
+
+
+def decompose_local_message_item(
+    message_item: MessageItem,
+) -> tuple[str, list[sessions.Attachment]]:
+    question = ""
+    attachments: list[sessions.Attachment] = []
+    for part in message_item["content"]:
+        if part.get("type") == "input_text":
+            question += str(part.get("text") or "")
+        if part.get("type") == "input_image" and isinstance(
+            part.get("image_path"), str
+        ):
+            attachments.append(part["image_path"])
+    return question, attachments
 
 
 class FaltooChatApp(App[None]):
@@ -57,9 +91,14 @@ class FaltooChatApp(App[None]):
         border: round $primary;
     }
 
-    #composer {
+    #footer {
         width: 1fr;
         max-width: 84;
+        height: auto;
+    }
+
+    #composer {
+        width: 1fr;
         height: 7;
         margin: 1 0 1 0;
         padding: 0 0 0 1;
@@ -132,22 +171,28 @@ class FaltooChatApp(App[None]):
         self.session = session
         self.is_answering = False
 
+    def queue(self) -> QueueWidget:
+        return self.query_one(QueueWidget)
+
     def compose(self) -> ComposeResult:
         yield Static(id="backdrop")
         with Vertical(id="shell"):
             yield VerticalScroll(id="transcript")
             with Center():
-                yield Composer(
-                    id="composer",
-                    text="",
-                    soft_wrap=True,
-                    show_line_numbers=False,
-                    highlight_cursor_line=False,
-                    placeholder=get_random_placeholder(),
-                )
+                with Vertical(id="footer"):
+                    yield QueueWidget()
+                    yield Composer(
+                        id="composer",
+                        text="",
+                        soft_wrap=True,
+                        show_line_numbers=False,
+                        highlight_cursor_line=False,
+                        placeholder=get_random_placeholder(),
+                    )
 
     async def on_mount(self) -> None:
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
+        await self.queue().refresh_queue()
 
     async def load_messages(
         self,
@@ -191,23 +236,6 @@ class FaltooChatApp(App[None]):
     async def action_load_all_messages(self) -> None:
         await self.load_messages()
 
-    async def handle_command(self, question: str) -> bool:
-        match question:
-            case "/tree":
-                open_in_default_editor(sessions.get_messages_path(self.session))
-                return True
-            case "/reset":
-                workspace = Path(sessions.get_messages(self.session)["workspace"])
-                self.session = sessions.get_session(
-                    chat_key=self.session[0],
-                    session_id=str(uuid4()),
-                    workspace=workspace,
-                )
-                await self.load_messages()
-                return True
-            case _:
-                return False
-
     async def stream_reply(
         self,
         transcript: VerticalScroll,
@@ -244,28 +272,9 @@ class FaltooChatApp(App[None]):
                     immediate=True,
                 )
 
-    async def submit_message(self) -> None:
-        composer = self.query_one("#composer", Composer)
-        transcript = self.query_one("#transcript", VerticalScroll)
-        question = composer.text.strip()
-        attachments = composer.take_attachments()
-        if not question and not attachments:
-            return
-
-        composer.load_text("")
-        if await self.handle_command(question):
-            return
-
+    async def submit_message(self, message_item: MessageItem):
         # render user message
-        content: list[dict[str, str]] = [
-            *([{"type": "input_text", "text": question}] if question else []),
-            *({"type": "input_image"} for _ in attachments),
-        ]
-        message_item: MessageItem = {
-            "type": "message",
-            "role": "user",
-            "content": content,
-        }
+        transcript = self.query_one("#transcript", VerticalScroll)
         preview_text, preview_classes = get_item_text(message_item)  # type: ignore
         await transcript.mount(Markdown(preview_text, classes=preview_classes))
         self.call_after_refresh(
@@ -274,21 +283,20 @@ class FaltooChatApp(App[None]):
             immediate=True,
         )
 
-        # disable input and start answering
+        # stream reply
         self.is_answering = True
-        composer.disabled = self.is_answering
-        composer.border_subtitle = "answering" if self.is_answering else ""
+        composer = self.query_one("#composer", Composer)
+        composer.border_subtitle = "answering"
         try:
             await self.stream_reply(
                 transcript,
-                question,
-                attachments=attachments,
+                *decompose_local_message_item(message_item),
             )
         finally:
             self.is_answering = False
-            composer.disabled = self.is_answering
-            composer.border_subtitle = "answering" if self.is_answering else ""
+            composer.border_subtitle = ""
             composer.focus()
+        await self.queue().submit_next_message()
 
 
 class Composer(TextArea):
@@ -335,8 +343,43 @@ class Composer(TextArea):
             return
         super().action_paste()
 
-    def action_composer_enter(self) -> None:
-        self.app.run_worker(self.app.submit_message(), exclusive=True)
+    async def handle_command(self, question: str) -> bool:
+        match question:
+            case "/tree":
+                open_in_default_editor(sessions.get_messages_path(self.app.session))
+                return True
+            case "/reset":
+                workspace = Path(sessions.get_messages(self.app.session)["workspace"])
+                self.app.session = sessions.get_session(
+                    chat_key=self.app.session[0],
+                    session_id=str(uuid4()),
+                    workspace=workspace,
+                )
+                await self.app.load_messages()
+                await self.app.queue().refresh_queue()
+                return True
+            case _:
+                return False
+
+    async def action_composer_enter(self) -> None:
+        question = self.text.strip()
+        attachments = self.take_attachments()
+        if not question and not attachments:
+            return
+
+        self.load_text("")
+        if await self.handle_command(question):
+            return
+
+        # add to queue if answering
+        message_item = get_local_user_message_item(question, attachments)
+        if self.app.is_answering:
+            await self.app.queue().add_to_queue(message_item)
+            self.focus()
+            return
+
+        # exclusive=True tells Textual to cancel all previous workers before starting the new one
+        self.app.run_worker(self.app.submit_message(message_item), exclusive=True)
 
     def action_newline(self) -> None:
         self.insert("\n")
