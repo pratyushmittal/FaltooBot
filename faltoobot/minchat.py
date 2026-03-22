@@ -90,6 +90,8 @@ class FaltooChatApp(App[None]):
     }
 
     .tool {
+        max-height: 6;
+        overflow-y: hidden;
         background: $warning 8%;
         border-left: none;
         color: $text-muted;

@@ -1,7 +1,127 @@
 import json
+import re
+import shlex
 from typing import Any
 
 from faltoobot.gpt_utils import MessageItem
+
+SED_RANGE_RE = re.compile(r"(?P<start>\d+)(?:,(?P<end>\d+))?p$")
+MIN_CD_PREFIX_PARTS = 4
+
+RG_VALUE_FLAGS = frozenset(
+    {
+        "-A",
+        "-B",
+        "-C",
+        "-E",
+        "-M",
+        "-g",
+        "-m",
+        "-t",
+        "-T",
+        "--after-context",
+        "--before-context",
+        "--colors",
+        "--context",
+        "--encoding",
+        "--engine",
+        "--glob",
+        "--iglob",
+        "--max-count",
+        "--max-columns",
+        "--path-separator",
+        "--pre",
+        "--pre-glob",
+        "--regex-size-limit",
+        "--sort",
+        "--sortr",
+        "--type",
+        "--type-add",
+        "--type-clear",
+        "--type-not",
+    }
+)
+
+
+def _shell_command_summary(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command
+    if not parts:
+        return command
+    parts = _strip_shell_prefix(parts)
+    if not parts:
+        return command
+    if parts[0] == "sed":
+        return _sed_command_summary(parts) or command
+    if parts[0] == "rg":
+        return _rg_command_summary(parts) or command
+    return command
+
+
+def _strip_shell_prefix(parts: list[str]) -> list[str]:
+    if len(parts) < MIN_CD_PREFIX_PARTS or parts[0] != "cd":
+        return parts
+    for separator in ("&&", ";"):
+        if separator in parts[2:]:
+            return parts[parts.index(separator) + 1 :]
+    return parts
+
+
+def _sed_command_summary(parts: list[str]) -> str | None:
+    script = None
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        if part == "--":
+            index += 1
+            break
+        if part.startswith("-"):
+            index += 2 if part in {"-e", "-f"} else 1
+            continue
+        script = part
+        index += 1
+        break
+    if script is None or index >= len(parts):
+        return None
+    filename = parts[index]
+    if not filename:
+        return None
+    if not (match := SED_RANGE_RE.fullmatch(script)):
+        return None
+    start = match.group("start")
+    end = match.group("end") or start
+    return f"reading {filename} {start} to {end}"
+
+
+def _rg_command_summary(parts: list[str]) -> str | None:
+    pattern = None
+    locations: list[str] = []
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        if part == "--":
+            index += 1
+            break
+        if part.startswith("-"):
+            if part in RG_VALUE_FLAGS:
+                index += 2
+            else:
+                index += 1
+            continue
+        pattern = part
+        index += 1
+        break
+    if pattern is None:
+        return None
+    while index < len(parts):
+        part = parts[index]
+        if not part.startswith("-"):
+            locations.append(part)
+        index += 1
+    location = " ".join(locations) or "."
+    return f"searching for {pattern} in {location}"
 
 
 def _content_text(parts: list[Any]) -> str:
@@ -35,11 +155,17 @@ def _clip_lines(text: str, max_lines: int = 5) -> str:
 
 
 def _tool_call_text(name: str, arguments: str) -> str:
+    parsed_arguments: dict[str, Any] | None = None
     if arguments.strip():
         try:
-            arguments = json.dumps(json.loads(arguments), ensure_ascii=False, indent=2)
+            parsed_arguments = json.loads(arguments)
+            arguments = json.dumps(parsed_arguments, ensure_ascii=False, indent=2)
         except json.JSONDecodeError:
             pass
+        if name == "run_shell_call" and isinstance(parsed_arguments, dict):
+            command = parsed_arguments.get("command")
+            if isinstance(command, str) and command.strip():
+                return _clip_lines(f"{name}\n{_shell_command_summary(command)}")
         return _clip_lines(f"{name}\n{arguments}")
     return name
 
@@ -64,11 +190,14 @@ def get_item_text(item: MessageItem) -> tuple[str, str] | None:
         return text, "tool"
     match item:
         case {"type": "message", "role": "user", "content": content}:
-            return (_get_text(content), "user") if _get_text(content) else None
+            text = _get_text(content)
+            return (text, "user") if text else None
         case {"type": "message", "content": content}:
-            return (_get_text(content), "answer") if _get_text(content) else None
+            text = _get_text(content)
+            return (text, "answer") if text else None
         case {"type": "reasoning", "summary": summary}:
-            return (_get_text(summary), "thinking") if _get_text(summary) else None
+            text = _get_text(summary)
+            return (text, "thinking") if text else None
         case {"type": "function_call_output"}:
             return None
         case _:
