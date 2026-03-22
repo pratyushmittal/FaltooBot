@@ -49,17 +49,26 @@ class FaltooChatApp(App[None]):
         align-horizontal: center;
         overflow-y: auto;
         padding: 1 2 0 2;
+        border: round transparent;
+    }
+
+    #transcript:focus {
+        border: round $primary;
     }
 
     #composer {
         width: 1fr;
-        max-width: 80;
-        height: 6;
-        margin: 1 2 2 2;
-        padding: 0 1;
-        background: $surface;
-        border: tall $primary;
+        max-width: 84;
+        height: 7;
+        margin: 1 0 1 0;
+        padding: 0 0 0 1;
+        background: $background;
+        border: round $panel;
         color: $text;
+    }
+
+    #composer:focus {
+        border: round $primary;
     }
 
     Markdown {
