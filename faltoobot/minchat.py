@@ -130,6 +130,7 @@ class FaltooChatApp(App[None]):
     def __init__(self, session: sessions.Session) -> None:
         super().__init__()
         self.session = session
+        self.is_answering = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="backdrop")
@@ -255,6 +256,7 @@ class FaltooChatApp(App[None]):
         if await self.handle_command(question):
             return
 
+        # render user message
         content: list[dict[str, str]] = [
             *([{"type": "input_text", "text": question}] if question else []),
             *({"type": "input_image"} for _ in attachments),
@@ -266,18 +268,27 @@ class FaltooChatApp(App[None]):
         }
         preview_text, preview_classes = get_item_text(message_item)  # type: ignore
         await transcript.mount(Markdown(preview_text, classes=preview_classes))
-
         self.call_after_refresh(
             transcript.scroll_end,
             animate=False,
             immediate=True,
         )
 
-        await self.stream_reply(
-            transcript,
-            question,
-            attachments=attachments,
-        )
+        # disable input and start answering
+        self.is_answering = True
+        composer.disabled = self.is_answering
+        composer.border_subtitle = "answering" if self.is_answering else ""
+        try:
+            await self.stream_reply(
+                transcript,
+                question,
+                attachments=attachments,
+            )
+        finally:
+            self.is_answering = False
+            composer.disabled = self.is_answering
+            composer.border_subtitle = "answering" if self.is_answering else ""
+            composer.focus()
 
 
 class Composer(TextArea):

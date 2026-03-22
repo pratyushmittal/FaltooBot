@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -148,3 +149,44 @@ async def test_minchat_load_all_button_loads_full_history(
         await app.action_load_all_messages()
         await pilot.pause()
         assert len(transcript.query(Markdown)) == total_messages
+
+
+@pytest.mark.anyio
+async def test_minchat_disables_composer_while_streaming(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_get_answer_streaming(
+        *,
+        session: sessions.Session,
+        question: str,
+        attachments: list[sessions.Attachment] | None = None,
+    ):
+        yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
+        started.set()
+        await release.wait()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.minchat.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        submit = asyncio.create_task(app.submit_message())
+        await asyncio.wait_for(started.wait(), timeout=3)
+        await pilot.pause()
+        assert composer.disabled
+        assert str(composer.border_subtitle) == "answering"
+
+        release.set()
+        await submit
+        await pilot.pause()
+        assert not composer.disabled
+        assert str(composer.border_subtitle) == ""
