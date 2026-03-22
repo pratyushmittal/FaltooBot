@@ -13,6 +13,9 @@ MIN_ASSISTANT_MESSAGES = 2
 
 
 async def wait_for_idle(app: FaltooChatApp) -> None:
+    # comment: composer submit schedules a worker, so answering can start a moment later.
+    while not app.is_answering:
+        await asyncio.sleep(0.05)
     while app.is_answering:
         await asyncio.sleep(0.05)
 
