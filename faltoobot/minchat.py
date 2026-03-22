@@ -7,7 +7,7 @@ from textual import events, getters
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
-from textual.widgets import Markdown, TextArea
+from textual.widgets import Markdown, Static, TextArea
 
 from faltoobot import sessions
 from faltoobot.chat.terminal import open_in_default_editor
@@ -23,13 +23,24 @@ TRANSCRIPT_BOTTOM_THRESHOLD = 6
 class FaltooChatApp(App[None]):
     CSS = """
     App {
-        background: $background;
         color: $text;
     }
 
     Screen {
         layout: vertical;
-        background: $background;
+        layers: base content;
+    }
+
+    #backdrop {
+        layer: base;
+        width: 1fr;
+        height: 1fr;
+    }
+
+    #frame {
+        layer: content;
+        width: 1fr;
+        height: 1fr;
     }
 
     #shell {
@@ -56,9 +67,15 @@ class FaltooChatApp(App[None]):
     Markdown {
         margin: 0 0 1 0;
         padding: 0 1;
-        background: $surface;
         border-left: wide $panel;
         color: $text;
+    }
+
+    /* Textual adds bottom margin to every paragraph. Remove it for the last
+       paragraph so message blocks keep their external gap without looking taller
+       than the content inside them. */
+    Markdown > MarkdownParagraph:last-child {
+        margin: 0;
     }
 
     .user {
@@ -68,20 +85,17 @@ class FaltooChatApp(App[None]):
     }
 
     .thinking {
-        background: $accent 12%;
-        border-left: wide $accent;
-        color: $text;
+        border-left: none;
+        color: $text-muted;
     }
 
     .tool {
-        background: $warning 12%;
-        border-left: wide $warning;
+        border-left: none;
         color: $text;
     }
 
     .answer {
-        background: $success 12%;
-        border-left: wide $success;
+        border-left: none;
         color: $text;
     }
 
@@ -97,7 +111,8 @@ class FaltooChatApp(App[None]):
         self.session = session
 
     def compose(self) -> ComposeResult:
-        with Center():
+        yield Static(id="backdrop")
+        with Center(id="frame"):
             with Vertical(id="shell"):
                 yield VerticalScroll(id="transcript")
                 yield Composer(
