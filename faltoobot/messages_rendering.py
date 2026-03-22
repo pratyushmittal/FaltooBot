@@ -165,7 +165,9 @@ def _tool_call_text(name: str, arguments: str) -> str:
         if name == "run_shell_call" and isinstance(parsed_arguments, dict):
             command = parsed_arguments.get("command")
             if isinstance(command, str) and command.strip():
-                return _clip_lines(f"{name}\n{_shell_command_summary(command)}")
+                summary = _shell_command_summary(command)
+                if summary != command:
+                    return _clip_lines(summary)
         return _clip_lines(f"{name}\n{arguments}")
     return name
 

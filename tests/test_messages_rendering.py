@@ -10,7 +10,7 @@ def test_get_item_text_summarizes_run_shell_call_sed_commands() -> None:
         }
     )
 
-    assert rendering == ("run_shell_call\nreading faltoobot/chat.py 1 to 220", "tool")
+    assert rendering == ("reading faltoobot/chat.py 1 to 220", "tool")
 
 
 def test_get_item_text_summarizes_run_shell_call_rg_commands() -> None:
@@ -23,6 +23,6 @@ def test_get_item_text_summarizes_run_shell_call_rg_commands() -> None:
     )
 
     assert rendering == (
-        "run_shell_call\nsearching for foobar in faltoobot tests",
+        "searching for foobar in faltoobot tests",
         "tool",
     )
