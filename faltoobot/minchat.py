@@ -11,9 +11,9 @@ from textual.widgets import Markdown, TextArea
 
 from faltoobot import sessions
 from faltoobot.chat.terminal import open_in_default_editor
-from faltoobot.paste import pasted_image_path, save_clipboard_image
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.messages_rendering import get_item_text
+from faltoobot.paste import pasted_image_path, save_clipboard_image
 from faltoobot.placeholders import get_random_placeholder
 from faltoobot.stream import get_event_text
 
@@ -112,18 +112,6 @@ class FaltooChatApp(App[None]):
     async def on_mount(self) -> None:
         await self.load_messages()
 
-    def continue_scrolling(self, transcript: VerticalScroll) -> None:
-        def scroll_if_needed() -> None:
-            is_at_bottom = (
-                transcript.max_scroll_y - transcript.scroll_y
-                <= TRANSCRIPT_BOTTOM_THRESHOLD
-            )
-            if not is_at_bottom:
-                return
-            transcript.scroll_end(animate=False, immediate=True)
-
-        self.call_after_refresh(scroll_if_needed)
-
     async def load_messages(self) -> None:
         messages_json = sessions.get_messages(self.session)
         transcript = self.query_one("#transcript", VerticalScroll)
@@ -184,13 +172,24 @@ class FaltooChatApp(App[None]):
                 if is_new:
                     block = None
                 continue
+
+            should_continue = (
+                transcript.max_scroll_y - transcript.scroll_y
+                <= TRANSCRIPT_BOTTOM_THRESHOLD
+            )
+
             if block is None or is_new:
                 block = Markdown(text, classes=classes)
                 await transcript.mount(block)
             else:
                 await block.append(text)
 
-            self.continue_scrolling(transcript)
+            if should_continue:
+                self.call_after_refresh(
+                    transcript.scroll_end,
+                    animate=False,
+                    immediate=True,
+                )
 
     async def submit_message(self) -> None:
         composer = self.query_one("#composer", Composer)
@@ -216,7 +215,12 @@ class FaltooChatApp(App[None]):
         preview_text, preview_classes = get_item_text(message_item)  # type: ignore
         await transcript.mount(Markdown(preview_text, classes=preview_classes))
 
-        self.continue_scrolling(transcript)
+        self.call_after_refresh(
+            transcript.scroll_end,
+            animate=False,
+            immediate=True,
+        )
+
         await self.stream_reply(
             transcript,
             question,
