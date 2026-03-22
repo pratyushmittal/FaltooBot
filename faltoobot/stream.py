@@ -1,16 +1,7 @@
-import json
 from typing import Any
 
 from faltoobot.gpt_utils import StreamingReplyItem
-
-MAX_TOOL_LINES = 5
-
-
-def _clip_lines(text: str, max_lines: int = MAX_TOOL_LINES) -> str:
-    lines = text.splitlines()
-    if len(lines) <= max_lines:
-        return text
-    return "\n".join([*lines[: max_lines - 1], "..."])
+from faltoobot.messages_rendering import get_item_text
 
 
 def _safe_class_name(value: str) -> str:
@@ -20,26 +11,10 @@ def _safe_class_name(value: str) -> str:
 def _tool_text(item: Any) -> str:
     if hasattr(item, "to_dict"):
         item = item.to_dict()
-
-    match item:
-        case {"type": "function_call", "name": str(name), "arguments": str(arguments)}:
-            if arguments.strip():
-                try:
-                    arguments = json.dumps(
-                        json.loads(arguments),
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                except json.JSONDecodeError:
-                    pass
-                return _clip_lines(f"{name}\n{arguments}")
-            return name
-        case {"type": "web_search_call", "action": {"query": str(query)}}:
-            return f"web search\n{query.strip()}" if query.strip() else "web search"
-        case {"type": str(item_type)} if item_type.endswith("_call"):
-            return item_type.replace("_", " ")
-        case _:
-            return ""
+    if not (rendering := get_item_text(item)):
+        return ""
+    text, classes = rendering
+    return text if classes == "tool" else ""
 
 
 def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:
