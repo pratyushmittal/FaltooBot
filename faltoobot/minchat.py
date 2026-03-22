@@ -37,25 +37,23 @@ class FaltooChatApp(App[None]):
         height: 1fr;
     }
 
-    #frame {
+    #shell {
         layer: content;
         width: 1fr;
         height: 1fr;
     }
 
-    #shell {
-        width: 1fr;
-        max-width: 80;
-        height: 1fr;
-    }
-
     #transcript {
+        width: 1fr;
         height: 1fr;
+        align-horizontal: center;
         overflow-y: auto;
         padding: 1 2 0 2;
     }
 
     #composer {
+        width: 1fr;
+        max-width: 80;
         height: 6;
         margin: 1 2 2 2;
         padding: 0 1;
@@ -65,6 +63,8 @@ class FaltooChatApp(App[None]):
     }
 
     Markdown {
+        width: 1fr;
+        max-width: 80;
         margin: 0 0 1 0;
         padding: 0 1;
         border-left: wide $panel;
@@ -90,8 +90,9 @@ class FaltooChatApp(App[None]):
     }
 
     .tool {
+        background: $warning 8%;
         border-left: none;
-        color: $text;
+        color: $text-muted;
     }
 
     .answer {
@@ -112,9 +113,9 @@ class FaltooChatApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Static(id="backdrop")
-        with Center(id="frame"):
-            with Vertical(id="shell"):
-                yield VerticalScroll(id="transcript")
+        with Vertical(id="shell"):
+            yield VerticalScroll(id="transcript")
+            with Center():
                 yield Composer(
                     id="composer",
                     text="",
