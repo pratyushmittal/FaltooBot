@@ -106,7 +106,7 @@ def test_get_session_sets_dir_chat_key_and_last_used(
 
     assert payload["chat_key"] == chat_key
     assert chat_key == (
-        f"code@{workspace.resolve().name}:"
+        f"code@{workspace.resolve().name}-"
         f"{hashlib.md5(str(workspace.resolve()).encode('utf-8')).hexdigest()[-6:]}"
     )
     assert last_used == session[1]

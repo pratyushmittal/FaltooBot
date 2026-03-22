@@ -1,10 +1,9 @@
-import json
 import sys
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from textual import getters
+from textual import events, getters
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
@@ -12,71 +11,13 @@ from textual.widgets import Markdown, TextArea
 
 from faltoobot import sessions
 from faltoobot.chat.terminal import open_in_default_editor
+from faltoobot.paste import pasted_image_path, save_clipboard_image
 from faltoobot.gpt_utils import MessageItem
+from faltoobot.messages_rendering import get_item_text
 from faltoobot.placeholders import get_random_placeholder
 from faltoobot.stream import get_event_text
 
-
-def get_text(value: Any) -> str:
-    match value:
-        case str(text):
-            return text.strip()
-        case list(parts):
-            return "\n".join(
-                text
-                for part in parts
-                if isinstance(part, dict)
-                for text in [str(part.get("text") or "").strip()]
-                if text
-            )
-        case _:
-            return ""
-
-
-def clip_lines(text: str, max_lines: int = 5) -> str:
-    lines = text.splitlines()
-    if len(lines) <= max_lines:
-        return text
-    return "\n".join([*lines[: max_lines - 1], "..."])
-
-
-def get_tool_call_text(name: str, arguments: str) -> str:
-    if arguments.strip():
-        try:
-            arguments = json.dumps(json.loads(arguments), ensure_ascii=False, indent=2)
-        except json.JSONDecodeError:
-            pass
-        return clip_lines(f"{name}\n{arguments}")
-    return name
-
-
-def get_tool_text(item: MessageItem) -> str | None:
-    match item:
-        case {"type": "function_call", "name": str(name), "arguments": str(arguments)}:
-            return get_tool_call_text(name, arguments)
-        case {
-            "type": "web_search_call",
-            "action": {"query": str(query)},
-        }:
-            return f"web search\n{query.strip()}" if query.strip() else "web search"
-        case {"type": str(item_type)} if item_type.endswith("_call"):
-            return item_type.replace("_", " ")
-        case _:
-            return None
-
-
-def get_item_text(item: MessageItem) -> str:
-    if text := get_tool_text(item):
-        return text
-    match item:
-        case {"type": "message", "content": content}:
-            return get_text(content)
-        case {"type": "reasoning", "summary": summary}:
-            return get_text(summary)
-        case {"type": "function_call_output"}:
-            return ""
-        case _:
-            return ""
+TRANSCRIPT_BOTTOM_THRESHOLD = 6
 
 
 class FaltooChatApp(App[None]):
@@ -171,12 +112,17 @@ class FaltooChatApp(App[None]):
     async def on_mount(self) -> None:
         await self.load_messages()
 
-    def scroll_transcript_end(self, transcript: VerticalScroll) -> None:
-        self.call_after_refresh(
-            transcript.scroll_end,
-            animate=False,
-            immediate=True,
-        )
+    def continue_scrolling(self, transcript: VerticalScroll) -> None:
+        def scroll_if_needed() -> None:
+            is_at_bottom = (
+                transcript.max_scroll_y - transcript.scroll_y
+                <= TRANSCRIPT_BOTTOM_THRESHOLD
+            )
+            if not is_at_bottom:
+                return
+            transcript.scroll_end(animate=False, immediate=True)
+
+        self.call_after_refresh(scroll_if_needed)
 
     async def load_messages(self) -> None:
         messages_json = sessions.get_messages(self.session)
@@ -184,21 +130,8 @@ class FaltooChatApp(App[None]):
         await transcript.remove_children()
         blocks = []
         for message in messages_json["messages"]:
-            if not isinstance(message, dict):
-                continue
-            text = get_item_text(message)
-            if text:
-                match message:
-                    case {"type": "message", "role": "user"}:
-                        classes = "user"
-                    case {"type": "message"}:
-                        classes = "answer"
-                    case {"type": "reasoning"}:
-                        classes = "thinking"
-                    case {"type": "function_call"} | {"type": "function_call_output"}:
-                        classes = "tool"
-                    case _:
-                        classes = ""
+            if rendering := get_item_text(message):
+                text, classes = rendering
                 blocks.append(Markdown(text, classes=classes))
         if not blocks:
             blocks = [
@@ -208,7 +141,11 @@ class FaltooChatApp(App[None]):
                 )
             ]
         await transcript.mount(*blocks)
-        self.scroll_transcript_end(transcript)
+        self.call_after_refresh(
+            transcript.scroll_end,
+            animate=False,
+            immediate=True,
+        )
 
         composer = self.query_one("#composer", Composer)
         composer.focus()
@@ -234,11 +171,13 @@ class FaltooChatApp(App[None]):
         self,
         transcript: VerticalScroll,
         question: str,
+        attachments: list[sessions.Attachment] | None = None,
     ) -> None:
         block: Markdown | None = None
         async for event in sessions.get_answer_streaming(
             session=self.session,
             question=question,
+            attachments=attachments,
         ):
             is_new, classes, text = get_event_text(event)
             if not text:
@@ -251,25 +190,38 @@ class FaltooChatApp(App[None]):
             else:
                 await block.append(text)
 
-            is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
-            if is_at_bottom:
-                self.scroll_transcript_end(transcript)
+            self.continue_scrolling(transcript)
 
     async def submit_message(self) -> None:
         composer = self.query_one("#composer", Composer)
         transcript = self.query_one("#transcript", VerticalScroll)
         question = composer.text.strip()
-        if not question:
+        attachments = composer.take_attachments()
+        if not question and not attachments:
             return
 
         composer.load_text("")
         if await self.handle_command(question):
             return
-        await transcript.mount(Markdown(question, classes="user"))
-        is_at_bottom = transcript.max_scroll_y - transcript.scroll_y <= 3  # noqa: PLR2004
-        if is_at_bottom:
-            self.scroll_transcript_end(transcript)
-        await self.stream_reply(transcript, question)
+
+        content: list[dict[str, str]] = [
+            *([{"type": "input_text", "text": question}] if question else []),
+            *({"type": "input_image"} for _ in attachments),
+        ]
+        message_item: MessageItem = {
+            "type": "message",
+            "role": "user",
+            "content": content,
+        }
+        preview_text, preview_classes = get_item_text(message_item)  # type: ignore
+        await transcript.mount(Markdown(preview_text, classes=preview_classes))
+
+        self.continue_scrolling(transcript)
+        await self.stream_reply(
+            transcript,
+            question,
+            attachments=attachments,
+        )
 
 
 class Composer(TextArea):
@@ -281,6 +233,40 @@ class Composer(TextArea):
 
     # for type-checking
     app = getters.app(FaltooChatApp)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.attachments: list[sessions.Attachment] = []
+
+    def attach_image(self, path: sessions.Attachment) -> None:
+        self.attachments.append(path)
+        count = len(self.attachments)
+        self.border_title = (
+            f"{count} attachment" if count == 1 else f"{count} attachments"
+        )
+        self.focus()
+
+    def take_attachments(self) -> list[sessions.Attachment]:
+        attachments = list(self.attachments)
+        self.attachments.clear()
+        self.border_title = ""
+        return attachments
+
+    async def on_paste(self, event: events.Paste) -> None:
+        if self.read_only:
+            return
+        if path := pasted_image_path(self.app.session, event.text):
+            event.stop()
+            event.prevent_default()
+            self.attach_image(path)
+
+    def action_paste(self) -> None:
+        if self.read_only:
+            return
+        if path := save_clipboard_image(self.app.session):
+            self.attach_image(path)
+            return
+        super().action_paste()
 
     def action_composer_enter(self) -> None:
         self.app.run_worker(self.app.submit_message(), exclusive=True)

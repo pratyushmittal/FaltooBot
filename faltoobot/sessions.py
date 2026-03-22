@@ -59,7 +59,7 @@ def get_dir_chat_key(workspace: Path) -> str:
     resolved = workspace.resolve()
     name = resolved.name or "root"
     digest = hashlib.md5(str(resolved).encode("utf-8")).hexdigest()[-6:]
-    return f"code@{name}:{digest}"
+    return f"code@{name}-{digest}"
 
 
 def _chat_root(chat_key: str) -> Path:
