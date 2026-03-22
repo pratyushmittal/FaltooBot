@@ -18,6 +18,7 @@ from faltoobot.placeholders import get_random_placeholder
 from faltoobot.stream import get_event_text
 
 TRANSCRIPT_BOTTOM_THRESHOLD = 6
+STARTUP_MESSAGES_LIMIT = 100
 
 
 class FaltooChatApp(App[None]):
@@ -80,6 +81,14 @@ class FaltooChatApp(App[None]):
         color: $text;
     }
 
+    .history-summary {
+        width: 1fr;
+        max-width: 80;
+        margin: 0 0 1 0;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
     /* Textual adds bottom margin to every paragraph. Remove it for the last
        paragraph so message blocks keep their external gap without looking taller
        than the content inside them. */
@@ -137,14 +146,26 @@ class FaltooChatApp(App[None]):
                 )
 
     async def on_mount(self) -> None:
-        await self.load_messages()
+        await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
 
-    async def load_messages(self) -> None:
+    async def load_messages(
+        self,
+        *,
+        recent_limit: int | None = None,
+    ) -> None:
         messages_json = sessions.get_messages(self.session)
         transcript = self.query_one("#transcript", VerticalScroll)
-        await transcript.remove_children()
         blocks = []
-        for message in messages_json["messages"]:
+        messages = messages_json["messages"]
+        if recent_limit is not None and len(messages) > recent_limit:
+            blocks.append(
+                Static(
+                    f"Showing last {recent_limit} of {len(messages)} messages. [@click=app.load_all_messages()]load all[/]",
+                    classes="history-summary",
+                )
+            )
+            messages = messages[-recent_limit:]
+        for message in messages:
             if rendering := get_item_text(message):
                 text, classes = rendering
                 blocks.append(Markdown(text, classes=classes))
@@ -155,6 +176,7 @@ class FaltooChatApp(App[None]):
                     classes="thinking",
                 )
             ]
+        await transcript.remove_children()
         await transcript.mount(*blocks)
         self.call_after_refresh(
             transcript.scroll_end,
@@ -164,6 +186,9 @@ class FaltooChatApp(App[None]):
 
         composer = self.query_one("#composer", Composer)
         composer.focus()
+
+    async def action_load_all_messages(self) -> None:
+        await self.load_messages()
 
     async def handle_command(self, question: str) -> bool:
         match question:

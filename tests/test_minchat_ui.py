@@ -6,6 +6,7 @@ from textual import events
 
 from faltoobot import sessions
 from faltoobot.minchat import Composer, FaltooChatApp
+from textual.widgets import Markdown
 
 
 def build_app(
@@ -122,3 +123,28 @@ async def test_minchat_submits_composer_attachments(
             "attachments": [image.resolve()],
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_minchat_load_all_button_loads_full_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    total_messages = 120
+    startup_messages = 100
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": f"prompt {index}"}
+        for index in range(total_messages)
+    ]
+    sessions.set_messages(app.session, messages_json)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript")
+        assert len(transcript.query(Markdown)) == startup_messages
+
+        await app.action_load_all_messages()
+        await pilot.pause()
+        assert len(transcript.query(Markdown)) == total_messages
