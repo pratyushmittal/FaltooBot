@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +26,8 @@ from faltoobot.gpt_utils import (
     get_streaming_reply,
     get_tools_definition,
 )
+
+RESPONSIVE_TOOL_MAX_SECONDS = 0.15
 
 
 class Mode(str, Enum):
@@ -444,3 +449,20 @@ async def test_get_streaming_reply_trims_input(
         {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
         {"type": "message", "role": "assistant", "content": "hi"},
     ]
+
+
+@pytest.mark.anyio
+async def test_run_tool_keeps_event_loop_responsive_for_sync_tools() -> None:
+    started = threading.Event()
+
+    def slow_tool() -> str:
+        started.set()
+        time.sleep(0.2)
+        return "done"
+
+    started_at = time.perf_counter()
+    task = asyncio.create_task(gpt_utils._run_tool(slow_tool, {}))
+    assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1.0), timeout=1.2)
+    await asyncio.sleep(0)
+    assert time.perf_counter() - started_at < RESPONSIVE_TOOL_MAX_SECONDS
+    assert await task == "done"

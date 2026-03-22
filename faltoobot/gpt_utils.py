@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -151,9 +152,13 @@ def _response_tool_calls(
 
 
 async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> str:
-    result = function(**kwargs)
-    if inspect.isawaitable(result):
-        result = await result
+    if inspect.iscoroutinefunction(function):
+        result = await function(**kwargs)
+    else:
+        # comment: sync tools can block the Textual event loop, so run them in a worker thread.
+        result = await asyncio.to_thread(function, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
     if not isinstance(result, str):
         raise TypeError(f"Tool {_callable_name(function)} must return str")
     return result
