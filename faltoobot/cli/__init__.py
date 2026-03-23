@@ -30,6 +30,7 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
+from faltoobot.migrations import run_release_migrations
 
 console = Console()
 
@@ -192,6 +193,8 @@ async def run_migrations(config: Config) -> list[str]:
         changes.append("config")
     config.sessions_dir.mkdir(parents=True, exist_ok=True)
     changes.append("sessions")
+    for version in run_release_migrations(config, project_root()):
+        changes.append(f"migration:{version}")
     if has_service(config):
         install_service(config)
         changes.append("service")
