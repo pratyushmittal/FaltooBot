@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-from faltoobot import cli, migrations
+from faltoobot.cli import app as cli
+from faltoobot.cli import migrations
 from faltoobot.config import Config
 
 

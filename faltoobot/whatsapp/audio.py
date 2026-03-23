@@ -1,6 +1,8 @@
 import io
 from typing import Any
 
+from openai import AsyncOpenAI
+
 DEFAULT_AUDIO_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 DEFAULT_AUDIO_MAX_SECONDS = 420
 NON_LATIN_SCRIPTS = (
@@ -93,8 +95,8 @@ async def transcribe_audio(
 async def audio_prompt(  # noqa: PLR0913
     client: Any,
     event: Any,
-    openai_client: Any,
     *,
+    openai_api_key: str,
     transcription_prompt: str,
     model: str = DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
     normalization_model: str,
@@ -111,25 +113,29 @@ async def audio_prompt(  # noqa: PLR0913
     blob = await client.download_any(event.Message)
     if not isinstance(blob, (bytes, bytearray)) or not blob:
         raise AudioError("I couldn't download that voice note.")
-    transcript = (
-        await transcribe_audio(
-            openai_client,
-            bytes(blob),
-            mimetype=str(getattr(message, "mimetype", "") or "audio/ogg"),
-            prompt=transcription_prompt,
-            model=model,
-        )
-    ).strip()
-    if not transcript:
-        raise AudioError("I couldn't transcribe that voice note.")
-    if contains_non_latin_script(transcript):
-        normalized = (
-            await normalize_transcript_script(
+    openai_client = AsyncOpenAI(api_key=openai_api_key)
+    try:
+        transcript = (
+            await transcribe_audio(
                 openai_client,
-                transcript,
-                model=normalization_model,
+                bytes(blob),
+                mimetype=str(getattr(message, "mimetype", "") or "audio/ogg"),
+                prompt=transcription_prompt,
+                model=model,
             )
         ).strip()
-        if normalized:
-            return normalized
-    return transcript
+        if not transcript:
+            raise AudioError("I couldn't transcribe that voice note.")
+        if contains_non_latin_script(transcript):
+            normalized = (
+                await normalize_transcript_script(
+                    openai_client,
+                    transcript,
+                    model=normalization_model,
+                )
+            ).strip()
+            if normalized:
+                return normalized
+        return transcript
+    finally:
+        await openai_client.close()

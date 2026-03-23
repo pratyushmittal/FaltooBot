@@ -11,7 +11,6 @@ from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
-from openai import AsyncOpenAI
 
 from .audio import AudioError, audio_message, audio_prompt
 from faltoobot.config import Config, build_config, normalize_chat
@@ -97,7 +96,6 @@ def should_skip(event: MessageEv, config: Config) -> bool:
 
 class ProcessMessageOptions(TypedDict):
     config: Config
-    openai_client: AsyncOpenAI
     chat_locks: dict[str, asyncio.Lock]
 
 
@@ -247,7 +245,6 @@ async def process_message(
     **kwargs: Unpack[ProcessMessageOptions],
 ) -> None:
     config = kwargs["config"]
-    openai_client = kwargs["openai_client"]
     chat_locks = kwargs["chat_locks"]
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
@@ -295,7 +292,7 @@ async def process_message(
             prompt = text or await audio_prompt(
                 client,
                 event,
-                openai_client,
+                openai_api_key=config.openai_api_key,
                 transcription_prompt=config.transcription_prompt,
                 model=config.openai_transcription_model,
                 normalization_model=config.openai_model,
@@ -351,7 +348,6 @@ async def run_auth(config: Config | None = None) -> None:
 async def run_bot(config: Config | None = None) -> None:
     config = config or build_config()
     configure_logging(config.log_file)
-    openai_client = AsyncOpenAI(api_key=config.openai_api_key)
     client = NewAClient(str(config.session_db))
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
     tasks: set[asyncio.Task[Any]] = set()
@@ -377,7 +373,6 @@ async def run_bot(config: Config | None = None) -> None:
                 current_client,
                 event,
                 config=config,
-                openai_client=openai_client,
                 chat_locks=chat_locks,
             )
         )
@@ -393,4 +388,3 @@ async def run_bot(config: Config | None = None) -> None:
     await client.idle()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    await openai_client.close()

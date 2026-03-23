@@ -18,9 +18,8 @@ dependencies = [
 ]
 
 [project.scripts]
-faltoobot = "faltoobot.cli:main"
+faltoobot = "faltoobot.cli.app:main"
 faltoochat = "faltoobot.faltoochat.app:main"
-makemigrations = "faltoobot.dev:main"
 
 [tool.setuptools.packages.find]
 include = ["faltoobot*"]

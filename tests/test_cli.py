@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from faltoobot import cli
+from faltoobot.cli import app as cli
 from faltoobot.config import Config
 
 
@@ -39,8 +39,8 @@ def test_write_run_script_uses_current_python(tmp_path: Path) -> None:
     text = config.run_script.read_text()
     assert text.startswith("#!/bin/sh\n")
     assert f"cd {shlex.quote(config.root.as_posix())}" in text
-    assert f"exec {shlex.quote(sys.executable)} -m faltoobot run" in text
-    assert "uv run faltoobot run" not in text
+    assert f"exec {shlex.quote(sys.executable)} -m faltoobot.cli.app run" in text
+    assert "-m faltoobot run" not in text
 
 
 def test_write_systemd_service_redirects_to_log(tmp_path: Path) -> None:
@@ -134,3 +134,14 @@ def test_merge_config_clamps_invalid_transcription_model() -> None:
     )
 
     assert merged["openai"]["transcription_model"] == "gpt-4o-transcribe"
+
+
+def test_handle_command_runs_makemigrations(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(cli, "run_makemigrations_command", lambda: calls.append("ran"))
+
+    cli.handle_command(cli.argparse.Namespace(command="makemigrations"), config)
+
+    assert calls == ["ran"]

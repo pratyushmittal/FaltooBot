@@ -12,8 +12,8 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
-from faltoobot.whatsapp import audio, bot
-from faltoobot.whatsapp.bot import (
+from faltoobot.whatsapp import app as bot, audio
+from faltoobot.whatsapp.app import (
     _latest_assistant_text,
     _replace_chat_session,
     keep_chat_typing,
@@ -215,7 +215,6 @@ async def test_process_message_transcribes_voice_notes(
         cast(NewAClient, client),
         event,
         config=config,
-        openai_client=object(),
         chat_locks=defaultdict(asyncio.Lock),
     )
 
@@ -246,7 +245,6 @@ async def test_process_message_rejects_long_voice_notes(
         cast(NewAClient, client),
         event,
         config=config,
-        openai_client=object(),
         chat_locks=defaultdict(asyncio.Lock),
     )
 
@@ -260,7 +258,9 @@ async def test_process_message_rejects_long_voice_notes(
 
 
 @pytest.mark.anyio
-async def test_audio_prompt_normalizes_urdu_script() -> None:
+async def test_audio_prompt_normalizes_urdu_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = FakePresenceClient()
     event = fake_event(audio_seconds=7)
     calls: list[str] = []
@@ -277,15 +277,21 @@ async def test_audio_prompt_normalizes_urdu_script() -> None:
             assert kwargs["input"] == "ہیلو دنیا"
             return SimpleNamespace(output_text="hello duniya")
 
+    async def fake_close() -> None:
+        return None
+
     openai_client = SimpleNamespace(
         audio=SimpleNamespace(transcriptions=FakeTranscriptions()),
         responses=FakeResponses(),
+        close=fake_close,
     )
+
+    monkeypatch.setattr(audio, "AsyncOpenAI", lambda api_key=None: openai_client)
 
     transcript = await audio.audio_prompt(
         client,
         event,
-        openai_client,
+        openai_api_key="key",
         transcription_prompt="Use English letters only.",
         normalization_model="gpt-5.4",
     )

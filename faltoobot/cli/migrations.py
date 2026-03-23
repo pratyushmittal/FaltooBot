@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import runpy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from faltoobot.config import Config
+
+from faltoobot.gpt_utils import MessageHistory, Tool, get_streaming_reply
+from faltoobot.tools import get_run_shell_call_tool
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 STATE_FILE = "migration-state.json"
@@ -81,3 +85,49 @@ def run_release_migrations(config: Config, root: Path) -> list[str]:
         write_applied_versions(config, applied_versions)
         ran.append(version)
     return ran
+
+
+PROMPT = (
+    "Check changes since last version release. Create `migrations` scripts as needed. "
+    "Use the run_shell_call tool to inspect the repo and create files directly when needed."
+)
+INSTRUCTIONS = (
+    "You are helping maintain the faltoobot repo. Keep migrations small, safe, and "
+    "non-destructive."
+)
+
+
+def ensure_repo_root(path: Path) -> Path:
+    if not ((path / "pyproject.toml").is_file() and (path / "migrations").is_dir()):
+        raise SystemExit("makemigrations is only for the faltoobot repo")
+    return path
+
+
+def build_makemigrations_messages(root: Path) -> MessageHistory:
+    readme = (root / "migrations" / "README.md").read_text(encoding="utf-8")
+    return [
+        {"type": "message", "role": "user", "content": PROMPT},
+        {
+            "type": "message",
+            "role": "user",
+            "content": f"Follow this migrations guide exactly:\n\n{readme}",
+        },
+    ]
+
+
+async def run_makemigrations(root: Path) -> None:
+    messages = build_makemigrations_messages(root)
+    tools = [cast(Tool, get_run_shell_call_tool(root))]
+    async for event in get_streaming_reply(INSTRUCTIONS, messages, tools):
+        if event.type != "response.output_text.delta":
+            continue
+        delta = getattr(event, "delta", "")
+        if delta:
+            print(delta, end="", flush=True)
+    print()
+
+
+def main() -> int:
+    root = ensure_repo_root(Path.cwd())
+    asyncio.run(run_makemigrations(root))
+    return 0
