@@ -10,9 +10,9 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import Markdown, Static, TextArea
 
 from faltoobot import sessions
-from faltoobot.chat.terminal import open_in_default_editor
+from faltoobot.chat.terminal import open_in_default_editor, textual_theme_from_terminal
 from faltoobot.gpt_utils import MessageItem
-from faltoobot.messages_rendering import get_item_text
+from faltoobot.messages_rendering import get_item_text, visible_thinking_text
 from faltoobot.paste import pasted_image_path, save_clipboard_image
 from faltoobot.placeholders import get_random_placeholder
 from faltoobot.stream import get_event_text
@@ -168,6 +168,8 @@ class FaltooChatApp(App[None]):
 
     def __init__(self, session: sessions.Session) -> None:
         super().__init__()
+        if theme := textual_theme_from_terminal():
+            self.theme = theme
         self.session = session
         self.is_answering = False
 
@@ -243,6 +245,7 @@ class FaltooChatApp(App[None]):
         attachments: list[sessions.Attachment] | None = None,
     ) -> None:
         block: Markdown | None = None
+        block_raw_text = ""
         async for event in sessions.get_answer_streaming(
             session=self.session,
             question=question,
@@ -252,6 +255,7 @@ class FaltooChatApp(App[None]):
             if not text:
                 if is_new:
                     block = None
+                    block_raw_text = ""
                 continue
 
             should_continue = (
@@ -260,8 +264,13 @@ class FaltooChatApp(App[None]):
             )
 
             if block is None or is_new:
-                block = Markdown(text, classes=classes)
+                block = Markdown("", classes=classes)
+                block_raw_text = ""
                 await transcript.mount(block)
+
+            if classes == "thinking":
+                block_raw_text += text
+                await block.update(visible_thinking_text(block_raw_text))
             else:
                 await block.append(text)
 

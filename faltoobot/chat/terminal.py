@@ -73,6 +73,12 @@ def terminal_background_dark(timeout: float = 0.1) -> bool | None:
     return brightness < DARK_BACKGROUND_THRESHOLD
 
 
+def textual_theme_from_terminal(timeout: float = 0.1) -> str | None:
+    if (terminal_dark := terminal_background_dark(timeout)) is None:
+        return None
+    return "textual-dark" if terminal_dark else "textual-light"
+
+
 def input_hint(
     config: Config,
     *,

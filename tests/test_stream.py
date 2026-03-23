@@ -33,3 +33,13 @@ def test_get_event_text_summarizes_streamed_shell_calls() -> None:
         "tool",
         "searching for foobar in faltoobot tests",
     )
+
+
+def test_get_event_text_starts_streamed_reasoning_summary() -> None:
+    event = SimpleNamespace(
+        type="response.reasoning_summary_part.added",
+        part=SimpleNamespace(text="**Planning** reply"),
+    )
+    is_new, classes, text = get_event_text(event)  # type: ignore[arg-type]
+
+    assert (is_new, classes, text) == (True, "thinking", "**Planning** reply")

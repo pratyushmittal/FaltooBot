@@ -7,6 +7,7 @@ from faltoobot.gpt_utils import MessageItem
 
 SED_RANGE_RE = re.compile(r"(?P<start>\d+)(?:,(?P<end>\d+))?p$")
 MIN_CD_PREFIX_PARTS = 4
+BOLD_SPAN_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
 
 RG_VALUE_FLAGS = frozenset(
     {
@@ -147,6 +148,13 @@ def _get_text(value: Any) -> str:
             return ""
 
 
+def visible_thinking_text(text: str) -> str:
+    matches = [match.strip() for match in BOLD_SPAN_RE.findall(text) if match.strip()]
+    if not matches:
+        return text
+    return "\n".join(f"**{match}**" for match in matches)
+
+
 def _clip_lines(text: str, max_lines: int = 5) -> str:
     lines = text.splitlines()
     if len(lines) <= max_lines:
@@ -198,7 +206,7 @@ def get_item_text(item: MessageItem) -> tuple[str, str] | None:
             text = _get_text(content)
             return (text, "answer") if text else None
         case {"type": "reasoning", "summary": summary}:
-            text = _get_text(summary)
+            text = visible_thinking_text(_get_text(summary))
             return (text, "thinking") if text else None
         case {"type": "function_call_output"}:
             return None

@@ -18,6 +18,19 @@ async def wait_for_condition(check: Any) -> None:
         await asyncio.sleep(0.01)
 
 
+def test_minchat_uses_terminal_theme_on_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "faltoobot.minchat.textual_theme_from_terminal",
+        lambda: "textual-light",
+    )
+    _, app = build_app(tmp_path, monkeypatch)
+
+    assert app.theme == "textual-light"
+
+
 def build_app(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -258,3 +271,63 @@ async def test_minchat_queue_widget_keybindings_update_queue(
         await pilot.pause()
         queue = submit_queue.get_queue(app.session)
         assert [item["content"] for item in queue] == ["second"]
+
+
+@pytest.mark.anyio
+async def test_minchat_keeps_answer_text_out_of_thinking_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async def fake_get_answer_streaming(
+        *,
+        session: sessions.Session,
+        question: str,
+        attachments: list[sessions.Attachment] | None = None,
+    ):
+        yield type(
+            "Event",
+            (),
+            {
+                "type": "response.reasoning_summary_part.added",
+                "part": type(
+                    "Part",
+                    (),
+                    {"text": "**Planning** answer\n\nHidden detail"},
+                )(),
+            },
+        )()
+        yield type("Event", (), {"type": "response.reasoning_summary_part.done"})()
+        yield type(
+            "Event", (), {"type": "response.output_text.delta", "delta": "Final answer"}
+        )()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.minchat.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    expected_blocks = 3
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(
+            lambda: (
+                not app.is_answering
+                and len(app.query_one("#transcript").children) >= expected_blocks
+            )
+        )
+        await pilot.pause()
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        thinking = [block for block in blocks if block.has_class("thinking")]
+        answer = [block for block in blocks if block.has_class("answer")]
+        assert thinking
+        assert answer
+        assert "Final answer" not in thinking[-1]._markdown
+        assert answer[-1]._markdown == "Final answer"

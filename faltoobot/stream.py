@@ -52,13 +52,15 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:
                 "thinking",
                 str(getattr(getattr(event, "part", None), "text", "") or ""),
             )
-        case "response.reasoning_summary_text.delta" | "response.reasoning_text.delta":
+        case "response.reasoning_summary_text.delta":
             value = getattr(event, "delta", "")
             is_new, classes, text = (
                 False,
                 "thinking",
                 value if isinstance(value, str) else "",
             )
+        case "response.reasoning_text.delta":
+            is_new, classes, text = False, "", ""
         case "response.output_text.delta":
             value = getattr(event, "delta", "")
             is_new, classes, text = (
