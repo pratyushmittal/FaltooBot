@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 
 from faltoobot.chat.entries import Entry
 from faltoobot.chat.runtime import ChatRuntime, build_chat_runtime
-from faltoobot.chat.terminal import status_text
+from faltoobot.faltoochat.terminal import status_text
 from faltoobot.config import Config
 
 T = TypeVar("T")

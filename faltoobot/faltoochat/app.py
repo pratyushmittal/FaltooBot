@@ -10,7 +10,10 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import Markdown, Static, TextArea
 
 from faltoobot import sessions
-from faltoobot.chat.terminal import open_in_default_editor, textual_theme_from_terminal
+from faltoobot.faltoochat.terminal import (
+    open_in_default_editor,
+    textual_theme_from_terminal,
+)
 from faltoobot.gpt_utils import MessageItem
 from .messages_rendering import get_item_text, visible_thinking_text
 from .paste import pasted_image_path, save_clipboard_image
