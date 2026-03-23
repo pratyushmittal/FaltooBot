@@ -19,7 +19,7 @@ dependencies = [
 
 [project.scripts]
 faltoobot = "faltoobot.cli:main"
-faltoochat = "faltoobot.minchat:main"
+faltoochat = "faltoobot.faltoochat.app:main"
 faltoomac = "faltoobot.faltoomac.cli:main"
 makemigrations = "faltoobot.dev:main"
 

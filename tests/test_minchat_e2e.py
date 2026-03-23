@@ -7,7 +7,7 @@ import pytest
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageItem
-from faltoobot.minchat import Composer, FaltooChatApp
+from faltoobot.faltoochat.app import Composer, FaltooChatApp
 
 MIN_ASSISTANT_MESSAGES = 2
 

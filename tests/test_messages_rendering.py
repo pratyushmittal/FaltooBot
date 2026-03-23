@@ -1,4 +1,4 @@
-from faltoobot.messages_rendering import get_item_text
+from faltoobot.faltoochat.messages_rendering import get_item_text
 
 
 def test_get_item_text_summarizes_run_shell_call_sed_commands() -> None:

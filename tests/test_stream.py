@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from faltoobot.stream import get_event_text
+from faltoobot.faltoochat.stream import get_event_text
 
 
 def test_get_event_text_ignores_non_tool_output_item_done() -> None:

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from faltoobot import sessions, submit_queue
+from faltoobot import sessions
+from faltoobot.faltoochat import submit_queue
 
 
 def build_session(tmp_path: Path, monkeypatch) -> sessions.Session:

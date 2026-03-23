@@ -1,3 +1,3 @@
-from faltoobot.minchat import main
+from faltoobot.faltoochat.app import main
 
 __all__ = ["main"]

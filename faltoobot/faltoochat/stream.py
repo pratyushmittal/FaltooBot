@@ -1,7 +1,7 @@
 from typing import Any
 
 from faltoobot.gpt_utils import StreamingReplyItem
-from faltoobot.messages_rendering import get_item_text
+from .messages_rendering import get_item_text
 
 
 def _safe_class_name(value: str) -> str:

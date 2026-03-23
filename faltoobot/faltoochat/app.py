@@ -12,11 +12,11 @@ from textual.widgets import Markdown, Static, TextArea
 from faltoobot import sessions
 from faltoobot.chat.terminal import open_in_default_editor, textual_theme_from_terminal
 from faltoobot.gpt_utils import MessageItem
-from faltoobot.messages_rendering import get_item_text, visible_thinking_text
-from faltoobot.paste import pasted_image_path, save_clipboard_image
-from faltoobot.placeholders import get_random_placeholder
-from faltoobot.stream import get_event_text
-from faltoobot.widgets import QueueWidget
+from .messages_rendering import get_item_text, visible_thinking_text
+from .paste import pasted_image_path, save_clipboard_image
+from .placeholders import get_random_placeholder
+from .stream import get_event_text
+from .widgets import QueueWidget
 
 TRANSCRIPT_BOTTOM_THRESHOLD = 4
 STARTUP_MESSAGES_LIMIT = 100

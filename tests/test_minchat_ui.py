@@ -5,9 +5,14 @@ from typing import Any
 import pytest
 from textual import events
 
-from faltoobot import sessions, submit_queue
-from faltoobot.minchat import Composer, FaltooChatApp, get_local_user_message_item
-from faltoobot.widgets import QueueWidget
+from faltoobot import sessions
+from faltoobot.faltoochat import submit_queue
+from faltoobot.faltoochat.app import (
+    Composer,
+    FaltooChatApp,
+    get_local_user_message_item,
+)
+from faltoobot.faltoochat.widgets import QueueWidget
 from textual.widgets import Markdown
 
 
@@ -23,7 +28,7 @@ def test_minchat_uses_terminal_theme_on_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "faltoobot.minchat.textual_theme_from_terminal",
+        "faltoobot.faltoochat.app.textual_theme_from_terminal",
         lambda: "textual-light",
     )
     _, app = build_app(tmp_path, monkeypatch)
@@ -87,7 +92,9 @@ async def test_minchat_ctrl_v_attaches_clipboard_image(
     workspace, app = build_app(tmp_path, monkeypatch)
     image = workspace / "clipboard.png"
     image.write_bytes(b"png")
-    monkeypatch.setattr("faltoobot.minchat.save_clipboard_image", lambda session: image)
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.save_clipboard_image", lambda session: image
+    )
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -125,7 +132,7 @@ async def test_minchat_submits_composer_attachments(
             yield None
 
     monkeypatch.setattr(
-        "faltoobot.minchat.sessions.get_answer_streaming",
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
         fake_get_answer_streaming,
     )
 
@@ -196,7 +203,7 @@ async def test_minchat_queues_messages_while_streaming(
         yield type("Event", (), {"type": "response.output_text.done"})()
 
     monkeypatch.setattr(
-        "faltoobot.minchat.sessions.get_answer_streaming",
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
         fake_get_answer_streaming,
     )
 
@@ -305,7 +312,7 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
         yield type("Event", (), {"type": "response.output_text.done"})()
 
     monkeypatch.setattr(
-        "faltoobot.minchat.sessions.get_answer_streaming",
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
         fake_get_answer_streaming,
     )
 
