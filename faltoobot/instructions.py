@@ -14,7 +14,7 @@ def _read_agents_text(path: Path) -> str | None:
     return text or None
 
 
-def instruction_parts(config: Config, workspace: Path) -> list[str]:
+def _instruction_parts(config: Config, workspace: Path) -> list[str]:
     parts = [config.system_prompt]
     seen = set[Path]()
     for base, label in (
@@ -32,4 +32,4 @@ def instruction_parts(config: Config, workspace: Path) -> list[str]:
 
 
 def system_instructions(config: Config, workspace: Path) -> str:
-    return "\n\n".join(part for part in instruction_parts(config, workspace) if part)
+    return "\n\n".join(part for part in _instruction_parts(config, workspace) if part)
