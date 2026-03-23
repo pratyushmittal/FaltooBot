@@ -2,6 +2,22 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.0.0 — 2026-03-23
+
+### Changed
+- `faltoochat` is now the new minimal terminal chat app, with a simpler and faster UI, persistent sessions, shell-tool rendering, and cleaner startup behavior.
+- Terminal chat now supports queued follow-up prompts while a reply is still running, including keyboard-driven queue management.
+- Image workflows in terminal chat are streamlined, with clipboard paste and local image attachments handled directly in the composer.
+- Thinking blocks now show only the visible summary instead of full reasoning detail.
+
+### Added
+- Startup now loads recent chat history first and offers a quick `load all` link for older messages.
+- Terminal chat has better focus styling, multiline input with `Shift+Enter`, and clearer summaries for common `sed` and `rg` shell calls.
+- `faltoobot makemigrations` and a built-in migration runner for future releases.
+
+### Removed
+- Legacy terminal chat implementation, `faltoomac`, and older unused agent/store codepaths.
+
 ## 0.5.0 — 2026-03-19
 
 ### Added
