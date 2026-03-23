@@ -80,7 +80,7 @@ async def transcribe_audio(
     model: str = DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
 ) -> str:
     audio_file = io.BytesIO(audio_bytes)
-    audio_file.name = f"voice-note{audio_suffix(mimetype)}"  # type: ignore[attr-defined]
+    audio_file.name = f"voice-note{audio_suffix(mimetype)}"
     response = await openai_client.audio.transcriptions.create(
         file=audio_file,
         model=model,
@@ -105,7 +105,9 @@ async def audio_prompt(  # noqa: PLR0913
         raise AudioError("No audio found in this message.")
     seconds = int(getattr(message, "seconds", 0) or 0)
     if seconds > max_seconds:
-        raise AudioError(f"Voice note is too long. Keep it under {max_seconds} seconds.")
+        raise AudioError(
+            f"Voice note is too long. Keep it under {max_seconds} seconds."
+        )
     blob = await client.download_any(event.Message)
     if not isinstance(blob, (bytes, bytearray)) or not blob:
         raise AudioError("I couldn't download that voice note.")

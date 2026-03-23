@@ -13,7 +13,7 @@ from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 from openai import AsyncOpenAI
 
-from faltoobot.audio import AudioError, audio_message, audio_prompt
+from .audio import AudioError, audio_message, audio_prompt
 from faltoobot.config import Config, build_config, normalize_chat
 from faltoobot.sessions import (
     MessagesJson,

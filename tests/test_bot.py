@@ -12,8 +12,8 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
-from faltoobot import audio, bot
-from faltoobot.bot import (
+from faltoobot.whatsapp import audio, bot
+from faltoobot.whatsapp.bot import (
     _latest_assistant_text,
     _replace_chat_session,
     keep_chat_typing,
