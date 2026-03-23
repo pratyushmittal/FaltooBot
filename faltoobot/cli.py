@@ -30,7 +30,6 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
-from faltoobot.store import ensure_sessions_dir
 
 console = Console()
 
@@ -191,7 +190,7 @@ async def run_migrations(config: Config) -> list[str]:
     changes: list[str] = []
     if migrate_config_file(config.config_file):
         changes.append("config")
-    ensure_sessions_dir(config.sessions_dir)
+    config.sessions_dir.mkdir(parents=True, exist_ok=True)
     changes.append("sessions")
     if has_service(config):
         install_service(config)
@@ -462,7 +461,10 @@ def configure_app(config: Config) -> None:
                 ),
                 "fast": prompt_bool("OpenAI fast mode", bool(openai.get("fast"))),
                 "transcription_model": prompt_transcription_model(
-                    str(openai.get("transcription_model") or TRANSCRIPTION_MODEL_OPTIONS[1])
+                    str(
+                        openai.get("transcription_model")
+                        or TRANSCRIPTION_MODEL_OPTIONS[1]
+                    )
                 ),
             },
             "bot": {
