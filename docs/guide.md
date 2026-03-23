@@ -10,7 +10,7 @@ Phase 1 is a proof of concept with:
 - OpenAI for text generation
 - macOS `launchd` service via `faltoobot install`
 
-Sessions are independent. A direct WhatsApp chat, a WhatsApp group, and each `faltoobot chat`
+Sessions are independent. A direct WhatsApp chat, a WhatsApp group, and each `faltoochat`
 run all get separate history and their own workspace.
 
 For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton-byte/neonize), which is Python-friendly and async. It gives us a cleaner Phase 1 path than wrapping `wacli` as a long-running sidecar, especially because `wacli` is designed around single-process store locking.
@@ -20,8 +20,7 @@ For the WhatsApp transport, this POC uses [`neonize`](https://github.com/krypton
 - `faltoobot auth` — authenticate the WhatsApp session by scanning a QR code
 - `faltoobot configure` — create or update `config.toml` interactively
 - `faltoobot run` — run the bot in the foreground
-- `faltoobot chat` — start a new interactive CLI session
-- `faltoochat` — shortcut for `faltoobot chat`
+- `faltoochat` — start a new interactive terminal chat
 - `faltoobot update` — pull the latest git changes, sync dependencies, and run migrations
 - `faltoobot install` — install and start the macOS `launchd` service
 - `faltoobot uninstall` — remove the macOS service
@@ -55,9 +54,8 @@ Built-in local commands:
 CLI chat commands:
 
 ```text
-/help
+/tree
 /reset
-/exit
 ```
 
 ## Config
@@ -148,7 +146,6 @@ uv run faltoobot paths
 uv run faltoobot auth
 uv run faltoobot configure
 uv run faltoobot run
-uv run faltoobot chat
 uv run faltoochat
 uv run faltoobot update
 ```
@@ -185,6 +182,7 @@ The repo currently uses:
 ## Notes
 
 - Phase 1 supports text everywhere and image input in `faltoochat`.
+- `faltoochat` also supports queued prompts while answering and `Shift+Enter` for multiline input.
 - Groups are off by default.
 - The bot ignores messages sent by itself.
 - This repo is meant to be used with `uv` for Python dependency management.

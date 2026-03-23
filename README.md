@@ -97,9 +97,9 @@ faltoobot run
 You can also use Faltoobot locally in the terminal:
 
 ```bash
-faltoobot chat
-faltoobot chat --name "Scratchpad"
 faltoochat
+faltoochat "draft a release note"
+faltoochat --new-session
 ```
 
 ### Commands
@@ -114,12 +114,11 @@ On WhatsApp:
 In terminal chat:
 
 ```text
-/help
+/tree
 /reset
-/exit
 ```
 
-`faltoochat` also supports image input. Paste an image file path, paste markdown like `![alt](path)`, or use `Ctrl+V` to attach the current macOS clipboard image.
+`faltoochat` supports image input, queued prompts while answering, and `Shift+Enter` for multiline input. Paste an image file path or use `Ctrl+V` to attach the current macOS clipboard image.
 
 ### Tests
 

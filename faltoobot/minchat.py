@@ -1,4 +1,4 @@
-import sys
+import argparse
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -166,11 +166,17 @@ class FaltooChatApp(App[None]):
     }
     """
 
-    def __init__(self, session: sessions.Session) -> None:
+    def __init__(
+        self,
+        session: sessions.Session,
+        *,
+        initial_prompt: str | None = None,
+    ) -> None:
         super().__init__()
         if theme := textual_theme_from_terminal():
             self.theme = theme
         self.session = session
+        self.initial_prompt = (initial_prompt or "").strip()
         self.is_answering = False
 
     def queue(self) -> QueueWidget:
@@ -195,6 +201,14 @@ class FaltooChatApp(App[None]):
     async def on_mount(self) -> None:
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
         await self.queue().refresh_queue()
+        if self.initial_prompt:
+            self.run_worker(
+                self.submit_message(
+                    get_local_user_message_item(self.initial_prompt, [])
+                ),
+                exclusive=True,
+            )
+            self.initial_prompt = ""
 
     async def load_messages(
         self,
@@ -394,8 +408,20 @@ class Composer(TextArea):
         self.insert("\n")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="faltoochat")
+    parser.add_argument("prompt", nargs="?", help="optional prompt to submit on launch")
+    parser.add_argument(
+        "--new-session",
+        action="store_true",
+        help="start a fresh session",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    session_id = sys.argv[1] if len(sys.argv) > 1 else None
+    args = parse_args()
+    session_id = str(uuid4()) if args.new_session else None
     try:
         FaltooChatApp(
             session=sessions.get_session(
@@ -403,6 +429,7 @@ def main() -> int:
                 session_id=session_id,
                 workspace=Path.cwd(),
             ),
+            initial_prompt=args.prompt,
         ).run()
     except KeyboardInterrupt:
         return 130
