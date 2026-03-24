@@ -181,7 +181,7 @@ The repo currently uses:
 
 ## Notes
 
-- Phase 1 supports text everywhere and image input in `faltoochat`.
+- Phase 1 supports text everywhere plus image input in both `faltoochat` and WhatsApp chats, including multi-image WhatsApp albums.
 - `faltoochat` also supports queued prompts while answering and `Shift+Enter` for multiline input.
 - Groups are off by default.
 - The bot ignores messages sent by itself.

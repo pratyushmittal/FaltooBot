@@ -8,6 +8,7 @@ All notable changes to `faltoobot` will be documented in this file.
 - `faltoochat` is now the new minimal terminal chat app, with a simpler and faster UI, persistent sessions, shell-tool rendering, and cleaner startup behavior.
 - Terminal chat now supports queued follow-up prompts while a reply is still running, including keyboard-driven queue management.
 - Image workflows in terminal chat are streamlined, with clipboard paste and local image attachments handled directly in the composer.
+- WhatsApp chats now support incoming image messages, including captioned images, image-only prompts, and multi-image albums grouped into one model turn.
 - Thinking blocks now show only the visible summary instead of full reasoning detail.
 
 ### Added

@@ -303,3 +303,54 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         }
     ]
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    client = FakeClient()
+    monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+    ):
+        assert instructions.startswith("system prompt")
+        if False:
+            yield FakeCompletedEvent([], {})
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+
+    first = tmp_path / "one.png"
+    second = tmp_path / "two.png"
+    Image.new("RGB", (8, 8), color="red").save(first)
+    Image.new("RGB", (8, 8), color="blue").save(second)
+
+    attachments = [first, second]
+    session = sessions.get_session(
+        chat_key="123@lid",
+        workspace=tmp_path / "workspace",
+    )
+    payload = await sessions.get_answer(
+        session=session,
+        question="compare",
+        attachments=attachments,
+    )
+
+    assert len(client.files.calls) == len(attachments)
+    assert payload["messages"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "compare"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+            ],
+        }
+    ]

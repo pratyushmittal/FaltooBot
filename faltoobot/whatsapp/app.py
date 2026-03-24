@@ -73,6 +73,7 @@ async def run_bot(config: Config | None = None) -> None:
     configure_logging(config.log_file)
     client = NewAClient(str(config.session_db))
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    pending_albums: dict[str, runtime.PendingAlbum] = {}
     tasks: set[asyncio.Task[Any]] = set()
 
     async def stop() -> None:
@@ -97,6 +98,7 @@ async def run_bot(config: Config | None = None) -> None:
                 event,
                 config=config,
                 chat_locks=chat_locks,
+                pending_albums=pending_albums,
             )
         )
         tasks.add(task)

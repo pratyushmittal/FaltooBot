@@ -1,5 +1,6 @@
 import asyncio
 from collections import defaultdict
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,9 +9,18 @@ import pytest
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import MessageEv
 from neonize.proto import Neonize_pb2
-from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
+from neonize.proto.waCommon.WACommon_pb2 import MessageKey
+from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
+    AlbumMessage,
+    AudioMessage,
+    ImageMessage,
+    Message,
+    MessageAssociation,
+    MessageContextInfo,
+)
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
+from PIL import Image
 
 from faltoobot.whatsapp import audio, runtime
 from faltoobot.whatsapp.runtime import (
@@ -71,11 +81,77 @@ def fake_event(
     )
 
 
+def fake_image_event(*, message_id: str = "img-1", caption: str = "") -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+    )
+    message = Message()
+    message.imageMessage.CopyFrom(ImageMessage(mimetype="image/png", caption=caption))
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
+def fake_album_event(*, message_id: str = "album-1", images: int = 2) -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+    )
+    message = Message()
+    message.albumMessage.CopyFrom(AlbumMessage(expectedImageCount=images))
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
+def fake_album_child_event(
+    *,
+    message_id: str,
+    parent_id: str,
+    caption: str = "",
+) -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+    )
+    message = Message()
+    message.imageMessage.CopyFrom(ImageMessage(mimetype="image/png", caption=caption))
+    message.messageContextInfo.CopyFrom(
+        MessageContextInfo(
+            messageAssociation=MessageAssociation(
+                associationType=MessageAssociation.MEDIA_ALBUM,
+                parentMessageKey=MessageKey(
+                    remoteJID="15555555555555@lid",
+                    fromMe=True,
+                    ID=parent_id,
+                ),
+            )
+        )
+    )
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
 class FakePresenceClient:
     def __init__(self, audio_bytes: bytes = b"voice-note") -> None:
         self.audio_bytes = audio_bytes
         self.calls: list[tuple[str, str]] = []
         self.replies: list[str] = []
+        self.reply_ids: list[str] = []
         self.sent_messages: list[str] = []
         self.downloads = 0
 
@@ -90,6 +166,7 @@ class FakePresenceClient:
 
     async def reply_message(self, text: str, event: object) -> str:
         self.replies.append(text)
+        self.reply_ids.append(str(getattr(getattr(event, "Info", None), "ID", "")))
         return "ok"
 
     async def send_message(self, chat: Neonize_pb2.JID, text: str) -> str:
@@ -99,6 +176,12 @@ class FakePresenceClient:
     async def download_any(self, message: Message, path: str | None = None) -> bytes:
         self.downloads += 1
         return self.audio_bytes
+
+
+def png_bytes() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (4, 3), color="red").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def test_source_chat_ids_include_alt_phone_identity() -> None:
@@ -297,6 +380,233 @@ async def test_audio_prompt_normalizes_urdu_script(
 
     assert transcript == "hello duniya"
     assert calls == ["transcribe", "normalize"]
+
+
+@pytest.mark.anyio
+async def test_process_message_sends_whatsapp_images_to_the_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient(audio_bytes=png_bytes())
+    calls: list[dict[str, Any]] = []
+
+    async def fake_get_answer(
+        *,
+        session: object,
+        question: str,
+        attachments: list[Path] | None = None,
+        **_: object,
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "question": question,
+                "attachments": attachments or [],
+            }
+        )
+        return {
+            "messages": [
+                {"type": "message", "role": "assistant", "content": "nice cat"}
+            ]
+        }
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    event = fake_image_event(caption="what is in this image?")
+    await runtime.process_message(
+        cast(NewAClient, client),
+        event,
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.downloads == 1
+    assert client.replies == ["nice cat"]
+    assert calls and calls[0]["question"] == "what is in this image?"
+    assert len(calls[0]["attachments"]) == 1
+    assert calls[0]["attachments"][0].suffix == ".png"
+    assert calls[0]["attachments"][0].is_file() is True
+
+
+@pytest.mark.anyio
+async def test_process_message_allows_image_only_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient(audio_bytes=png_bytes())
+    calls: list[dict[str, Any]] = []
+
+    async def fake_get_answer(
+        *,
+        question: str,
+        attachments: list[Path] | None = None,
+        **_: object,
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "question": question,
+                "attachments": attachments or [],
+            }
+        )
+        return {
+            "messages": [
+                {"type": "message", "role": "assistant", "content": "looks good"}
+            ]
+        }
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_image_event(caption=""),
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.downloads == 1
+    assert client.replies == ["looks good"]
+    assert len(calls) == 1
+    assert calls[0]["question"] == ""
+    assert len(calls[0]["attachments"]) == 1
+    assert calls[0]["attachments"][0].suffix == ".png"
+
+
+@pytest.mark.anyio
+async def test_process_message_groups_whatsapp_album_images_into_one_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient(audio_bytes=png_bytes())
+    calls: list[dict[str, Any]] = []
+    pending_albums: dict[str, runtime.PendingAlbum] = {}
+
+    async def fake_get_answer(
+        *,
+        question: str,
+        attachments: list[Path] | None = None,
+        **_: object,
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "question": question,
+                "attachments": attachments or [],
+            }
+        )
+        return {
+            "messages": [{"type": "message", "role": "assistant", "content": "done"}]
+        }
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    expected_images = 2
+
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_album_event(message_id="album-1", images=expected_images),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+    assert calls == []
+    assert client.replies == []
+
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_album_child_event(
+            message_id="img-1",
+            parent_id="album-1",
+            caption="compare these",
+        ),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+    assert calls == []
+    assert client.replies == []
+
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_album_child_event(message_id="img-2", parent_id="album-1"),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+
+    chat_key = normalize_chat("15555555555555@lid")
+    session = get_session(chat_key=chat_key)
+    assert pending_albums == {}
+    assert client.downloads == expected_images
+    assert client.replies == ["done"]
+    assert client.reply_ids == ["album-1"]
+    assert len(calls) == 1
+    assert calls[0]["question"] == "compare these"
+    assert len(calls[0]["attachments"]) == expected_images
+    assert get_messages(session)["message_ids"] == ["album-1", "img-1", "img-2"]
+
+
+@pytest.mark.anyio
+async def test_process_message_groups_captionless_album_images_into_one_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient(audio_bytes=png_bytes())
+    calls: list[dict[str, Any]] = []
+    pending_albums: dict[str, runtime.PendingAlbum] = {}
+
+    async def fake_get_answer(
+        *,
+        question: str,
+        attachments: list[Path] | None = None,
+        **_: object,
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "question": question,
+                "attachments": attachments or [],
+            }
+        )
+        return {
+            "messages": [{"type": "message", "role": "assistant", "content": "done"}]
+        }
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    expected_images = 2
+
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_album_event(message_id="album-2", images=expected_images),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_album_child_event(message_id="img-3", parent_id="album-2"),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+    await runtime.process_message(
+        cast(NewAClient, client),
+        fake_album_child_event(message_id="img-4", parent_id="album-2"),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+
+    assert client.replies == ["done"]
+    assert client.reply_ids == ["album-2"]
+    assert len(calls) == 1
+    assert calls[0]["question"] == ""
+    assert len(calls[0]["attachments"]) == expected_images
 
 
 def test_latest_assistant_text_reads_sessions_messages() -> None:
