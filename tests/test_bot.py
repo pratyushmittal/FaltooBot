@@ -12,14 +12,13 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import AudioMessage, Message
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
-from faltoobot.whatsapp import app as bot, audio
-from faltoobot.whatsapp.app import (
-    _latest_assistant_text,
-    _replace_chat_session,
+from faltoobot.whatsapp import audio, runtime
+from faltoobot.whatsapp.runtime import (
     keep_chat_typing,
+    latest_assistant_text,
     source_chat_ids,
 )
-from faltoobot.config import Config
+from faltoobot.config import Config, normalize_chat
 from faltoobot.sessions import get_messages, get_session
 
 
@@ -109,7 +108,7 @@ def test_source_chat_ids_include_alt_phone_identity() -> None:
         SenderAlt=jid("15555550123", "s.whatsapp.net"),
     )
 
-    assert bot.source_chat_ids(source) == {
+    assert runtime.source_chat_ids(source) == {
         "15555555555555@lid",
         "15555550123@s.whatsapp.net",
     }
@@ -123,7 +122,7 @@ def test_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
     )
     config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
-    assert bot.is_allowed_chat(config, source) is True
+    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
 
 
 def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
@@ -134,7 +133,7 @@ def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
     )
     config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
-    assert bot.is_allowed_chat(config, source) is True
+    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
 
 
 def test_keep_chat_typing_sends_composing_then_paused() -> None:
@@ -208,17 +207,17 @@ async def test_process_message_transcribes_voice_notes(
         }
 
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
-    monkeypatch.setattr(bot, "get_answer", fake_get_answer)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=7)
-    await bot.process_message(
+    await runtime.process_message(
         cast(NewAClient, client),
         event,
         config=config,
         chat_locks=defaultdict(asyncio.Lock),
     )
 
-    chat_key = bot.normalize_chat(Jid2String(event.Info.MessageSource.Chat))
+    chat_key = normalize_chat(Jid2String(event.Info.MessageSource.Chat))
     session = get_session(chat_key=chat_key)
     assert client.downloads == 1
     assert client.replies == ["Done"]
@@ -238,17 +237,17 @@ async def test_process_message_rejects_long_voice_notes(
     async def fake_get_answer(*args: object, **kwargs: object) -> dict[str, object]:
         raise AssertionError("get_answer should not run for oversized voice notes")
 
-    monkeypatch.setattr(bot, "get_answer", fake_get_answer)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=audio.DEFAULT_AUDIO_MAX_SECONDS + 1)
-    await bot.process_message(
+    await runtime.process_message(
         cast(NewAClient, client),
         event,
         config=config,
         chat_locks=defaultdict(asyncio.Lock),
     )
 
-    chat_key = bot.normalize_chat(Jid2String(event.Info.MessageSource.Chat))
+    chat_key = normalize_chat(Jid2String(event.Info.MessageSource.Chat))
     session = get_session(chat_key=chat_key)
     assert client.downloads == 0
     assert client.replies == [
@@ -312,10 +311,11 @@ def test_latest_assistant_text_reads_sessions_messages() -> None:
         ]
     }
 
-    assert _latest_assistant_text(messages_json) == "hello"
+    assert latest_assistant_text(messages_json) == "hello"
 
 
-def test_replace_chat_session_creates_new_session_for_reset(
+@pytest.mark.anyio
+async def test_process_message_reset_creates_new_session_for_chat(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -323,6 +323,7 @@ def test_replace_chat_session_creates_new_session_for_reset(
 
     config = make_config(tmp_path, allowed_chats=set())
     config.root.mkdir(parents=True, exist_ok=True)
+    client = FakePresenceClient()
     chat_key = "8960294979@s.whatsapp.net"
     first = get_session(chat_key=chat_key)
     original = get_messages(first)
@@ -332,15 +333,30 @@ def test_replace_chat_session_creates_new_session_for_reset(
 
     set_messages(first, original)
 
-    second = _replace_chat_session(
-        config,
-        chat_key,
-        ["msg-1"],
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("8960294979", "s.whatsapp.net"),
+        Sender=jid("8960294979", "s.whatsapp.net"),
+    )
+    event = cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=Message(conversation="/reset"),
+            Info=SimpleNamespace(MessageSource=source, ID="msg-2"),
+        ),
     )
 
+    await runtime.process_message(
+        cast(NewAClient, client),
+        event,
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    second = get_session(chat_key=chat_key)
     assert second != first
+    assert client.replies == ["Memory cleared for this chat."]
     assert get_messages(first)["messages"] == [
         {"type": "message", "role": "user", "content": "hi"}
     ]
     assert get_messages(second)["messages"] == []
-    assert get_messages(second)["message_ids"] == ["msg-1"]
+    assert get_messages(second)["message_ids"] == ["msg-1", "msg-2"]

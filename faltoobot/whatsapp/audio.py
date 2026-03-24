@@ -3,8 +3,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-DEFAULT_AUDIO_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 DEFAULT_AUDIO_MAX_SECONDS = 420
+AUDIO_MODEL = "gpt-4o-transcribe"
 NON_LATIN_SCRIPTS = (
     (0x0600, 0x06FF),
     (0x0750, 0x077F),
@@ -16,12 +16,6 @@ SCRIPT_NORMALIZATION_PROMPT = (
     "For Hindi, Urdu, and Hinglish, produce phonetic transliteration in Roman script. "
     "Never output Urdu or Devanagari script. Return only the converted text."
 )
-
-
-class AudioError(RuntimeError):
-    pass
-
-
 MIME_SUFFIXES = {
     "audio/aac": ".aac",
     "audio/flac": ".flac",
@@ -38,39 +32,15 @@ MIME_SUFFIXES = {
 }
 
 
+class AudioError(RuntimeError):
+    pass
+
+
 def audio_message(event: Any) -> Any | None:
     message = getattr(event, "Message", None)
     if message is None or not hasattr(message, "HasField"):
         return None
     return message.audioMessage if message.HasField("audioMessage") else None
-
-
-def audio_suffix(mimetype: str) -> str:
-    return MIME_SUFFIXES.get(mimetype.lower(), ".ogg")
-
-
-def contains_non_latin_script(text: str) -> bool:
-    for char in text:
-        codepoint = ord(char)
-        if any(start <= codepoint <= end for start, end in NON_LATIN_SCRIPTS):
-            return True
-    return False
-
-
-async def normalize_transcript_script(
-    openai_client: Any,
-    transcript: str,
-    *,
-    model: str,
-) -> str:
-    response = await openai_client.responses.create(
-        model=model,
-        input=transcript,
-        instructions=SCRIPT_NORMALIZATION_PROMPT,
-        store=False,
-    )
-    text = getattr(response, "output_text", "")
-    return text.strip() if isinstance(text, str) else transcript
 
 
 async def transcribe_audio(
@@ -79,10 +49,10 @@ async def transcribe_audio(
     *,
     mimetype: str,
     prompt: str,
-    model: str = DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+    model: str = AUDIO_MODEL,
 ) -> str:
     audio_file = io.BytesIO(audio_bytes)
-    audio_file.name = f"voice-note{audio_suffix(mimetype)}"
+    audio_file.name = f"voice-note{MIME_SUFFIXES.get(mimetype.lower(), '.ogg')}"
     response = await openai_client.audio.transcriptions.create(
         file=audio_file,
         model=model,
@@ -98,21 +68,22 @@ async def audio_prompt(  # noqa: PLR0913
     *,
     openai_api_key: str,
     transcription_prompt: str,
-    model: str = DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+    model: str = AUDIO_MODEL,
     normalization_model: str,
     max_seconds: int = DEFAULT_AUDIO_MAX_SECONDS,
 ) -> str:
     message = audio_message(event)
     if message is None:
         raise AudioError("No audio found in this message.")
-    seconds = int(getattr(message, "seconds", 0) or 0)
-    if seconds > max_seconds:
+    if int(getattr(message, "seconds", 0) or 0) > max_seconds:
         raise AudioError(
             f"Voice note is too long. Keep it under {max_seconds} seconds."
         )
+
     blob = await client.download_any(event.Message)
     if not isinstance(blob, (bytes, bytearray)) or not blob:
         raise AudioError("I couldn't download that voice note.")
+
     openai_client = AsyncOpenAI(api_key=openai_api_key)
     try:
         transcript = (
@@ -126,16 +97,19 @@ async def audio_prompt(  # noqa: PLR0913
         ).strip()
         if not transcript:
             raise AudioError("I couldn't transcribe that voice note.")
-        if contains_non_latin_script(transcript):
-            normalized = (
-                await normalize_transcript_script(
-                    openai_client,
-                    transcript,
-                    model=normalization_model,
-                )
-            ).strip()
-            if normalized:
-                return normalized
+        if any(
+            any(start <= ord(char) <= end for start, end in NON_LATIN_SCRIPTS)
+            for char in transcript
+        ):
+            response = await openai_client.responses.create(
+                model=normalization_model,
+                input=transcript,
+                instructions=SCRIPT_NORMALIZATION_PROMPT,
+                store=False,
+            )
+            text = getattr(response, "output_text", "")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
         return transcript
     finally:
         await openai_client.close()
