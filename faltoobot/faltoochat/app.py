@@ -21,7 +21,6 @@ from .placeholders import get_random_placeholder
 from .stream import get_event_text
 from .widgets import QueueWidget
 
-TRANSCRIPT_BOTTOM_THRESHOLD = 4
 STARTUP_MESSAGES_LIMIT = 100
 
 
@@ -56,6 +55,24 @@ def decompose_local_message_item(
         ):
             attachments.append(part["image_path"])
     return question, attachments
+
+
+async def _write_stream_chunk(
+    block: Markdown,
+    classes: str,
+    text: str,
+    block_raw_text: str,
+    answer_stream: Any | None,
+) -> str:
+    if classes == "thinking":
+        block_raw_text += text
+        await block.update(visible_thinking_text(block_raw_text))
+        return block_raw_text
+    if classes == "answer" and answer_stream is not None:
+        await answer_stream.write(text)
+        return block_raw_text
+    await block.append(text)
+    return block_raw_text
 
 
 class FaltooChatApp(App[None]):
@@ -262,7 +279,9 @@ class FaltooChatApp(App[None]):
         attachments: list[sessions.Attachment] | None = None,
     ) -> None:
         block: Markdown | None = None
+        answer_stream: Any | None = None
         block_raw_text = ""
+        transcript.anchor()
         async for event in sessions.get_answer_streaming(
             session=self.session,
             question=question,
@@ -271,32 +290,30 @@ class FaltooChatApp(App[None]):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
+                    if answer_stream is not None:
+                        await answer_stream.stop()
+                        answer_stream = None
                     block = None
                     block_raw_text = ""
                 continue
-
-            should_continue = (
-                transcript.max_scroll_y - transcript.scroll_y
-                <= TRANSCRIPT_BOTTOM_THRESHOLD
-            )
-
             if block is None or is_new:
+                if answer_stream is not None:
+                    await answer_stream.stop()
+                    answer_stream = None
                 block = Markdown("", classes=classes)
                 block_raw_text = ""
                 await transcript.mount(block)
-
-            if classes == "thinking":
-                block_raw_text += text
-                await block.update(visible_thinking_text(block_raw_text))
-            else:
-                await block.append(text)
-
-            if should_continue:
-                self.call_after_refresh(
-                    transcript.scroll_end,
-                    animate=False,
-                    immediate=True,
-                )
+                if classes == "answer":
+                    answer_stream = Markdown.get_stream(block)
+            block_raw_text = await _write_stream_chunk(
+                block,
+                classes,
+                text,
+                block_raw_text,
+                answer_stream,
+            )
+        if answer_stream is not None:
+            await answer_stream.stop()
 
     async def submit_message(self, message_item: MessageItem):
         # render user message
