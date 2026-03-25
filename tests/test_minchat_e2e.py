@@ -28,7 +28,8 @@ def config_text(system_prompt: str) -> str:
             "[openai]",
             'api_key = ""',
             'model = "gpt-5.4-nano"',
-            'thinking = "high"',
+            'thinking = "none"',
+            "fast = true",
             "",
             "[bot]",
             "allow_groups = false",
@@ -60,6 +61,8 @@ async def test_minchat_streams_ls_and_follow_up_e2e(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if os.environ.get("RUN_FALTOOCHAT_E2E") != "1":
+        pytest.skip("Set RUN_FALTOOCHAT_E2E=1 to run the E2E test.")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY must be set to run this E2E test.")
 
@@ -89,13 +92,13 @@ async def test_minchat_streams_ls_and_follow_up_e2e(
     )
 
     async with app.run_test(size=(140, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
 
         composer.load_text("Run `ls` in the shell tool and reply with one filename.")
         await composer.action_composer_enter()
         await asyncio.wait_for(wait_for_idle(app), timeout=30)
-        await pilot.pause()
+        await pilot.pause(0)
 
         first_payload = sessions.get_messages(app.session)
         first_items = [
@@ -119,7 +122,7 @@ async def test_minchat_streams_ls_and_follow_up_e2e(
         composer.load_text("What command did you run?")
         await composer.action_composer_enter()
         await asyncio.wait_for(wait_for_idle(app), timeout=30)
-        await pilot.pause()
+        await pilot.pause(0)
 
         second_payload = sessions.get_messages(app.session)
         second_items = [

@@ -7,7 +7,7 @@ from textual import events, getters
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
-from textual.widgets import Markdown, Static, TextArea
+from textual.widgets import Footer, Markdown, Static, TabbedContent, TabPane, TextArea
 
 from faltoobot import sessions
 from faltoobot.config import load_textual_theme, save_textual_theme
@@ -20,6 +20,7 @@ from faltoobot.gpt_utils import MessageItem
 from .messages_rendering import get_item_text, visible_thinking_text
 from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
+from .review import ReviewView
 from .stream import get_event_text
 from .widgets import QueueWidget
 
@@ -78,6 +79,18 @@ async def _write_stream_chunk(
 
 
 class FaltooChatApp(App[None]):
+    BINDINGS = [
+        Binding("ctrl+1", "show_chat_tab", "Chat", priority=True, show=False),
+        Binding("ctrl+2", "show_review_tab", "Review", priority=True, show=False),
+        Binding(
+            "ctrl+r",
+            "toggle_review_tab",
+            "Toggle Review",
+            priority=True,
+            show=False,
+        ),
+    ]
+
     CSS = """
     App {
         color: $text;
@@ -96,6 +109,21 @@ class FaltooChatApp(App[None]):
 
     #shell {
         layer: content;
+        width: 1fr;
+        height: 1fr;
+    }
+
+    #tabs {
+        width: 1fr;
+        height: 1fr;
+    }
+
+    TabPane {
+        height: 1fr;
+        padding: 0;
+    }
+
+    #chat-shell {
         width: 1fr;
         height: 1fr;
     }
@@ -202,6 +230,7 @@ class FaltooChatApp(App[None]):
             self.theme = theme
         self._persist_theme_changes = True
         self.session = session
+        self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.initial_prompt = (initial_prompt or "").strip()
         self.is_answering = False
 
@@ -214,21 +243,64 @@ class FaltooChatApp(App[None]):
             return
         save_textual_theme(theme_name)
 
+    def tabs(self) -> TabbedContent:
+        return self.query_one("#tabs", TabbedContent)
+
+    def focus_composer(self) -> None:
+        self.set_focus(self.query_one("#composer", Composer), scroll_visible=False)
+
+    def action_show_chat_tab(self) -> None:
+        self.tabs().active = "chat-tab"
+        transcript = self.query_one("#transcript", VerticalScroll)
+        self.call_after_refresh(transcript.scroll_end, animate=False)
+        self.call_after_refresh(self.focus_composer)
+
+    def action_show_review_tab(self) -> None:
+        self.tabs().active = "review-tab"
+
+    def action_toggle_review_tab(self) -> None:
+        if self.tabs().active == "review-tab":
+            self.action_show_chat_tab()
+            return
+        self.action_show_review_tab()
+
+    async def on_tabbed_content_tab_activated(
+        self,
+        event: TabbedContent.TabActivated,
+    ) -> None:
+        if event.tabbed_content.id != "tabs":
+            return
+        if event.pane.id != "review-tab":
+            return
+        review = self.query_one(ReviewView)
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                review.refresh_files(),
+                group="review-refresh",
+                exclusive=True,
+            )
+        )
+
     def compose(self) -> ComposeResult:
         yield Static(id="backdrop")
         with Vertical(id="shell"):
-            yield VerticalScroll(id="transcript")
-            with Center():
-                with Vertical(id="footer"):
-                    yield QueueWidget()
-                    yield Composer(
-                        id="composer",
-                        text="",
-                        soft_wrap=True,
-                        show_line_numbers=False,
-                        highlight_cursor_line=False,
-                        placeholder=get_random_placeholder(),
-                    )
+            with TabbedContent(initial="chat-tab", id="tabs"):
+                with TabPane("Chat", id="chat-tab"):
+                    with Vertical(id="chat-shell"):
+                        yield VerticalScroll(id="transcript")
+                        with Center():
+                            with Vertical(id="footer"):
+                                yield QueueWidget()
+                                yield Composer(
+                                    id="composer",
+                                    text="",
+                                    soft_wrap=True,
+                                    show_line_numbers=False,
+                                    highlight_cursor_line=False,
+                                    placeholder=get_random_placeholder(),
+                                )
+                yield ReviewView()
+            yield Footer()
 
     async def on_mount(self) -> None:
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
@@ -350,7 +422,9 @@ class FaltooChatApp(App[None]):
         finally:
             self.is_answering = False
             composer.border_subtitle = ""
-            composer.focus()
+            # comment: finishing a reply while Review is active should not steal focus from that tab.
+            if self.tabs().active == "chat-tab":
+                composer.focus()
         await self.queue().submit_next_message()
 
 
@@ -404,12 +478,13 @@ class Composer(TextArea):
                 open_in_default_editor(sessions.get_messages_path(self.app.session))
                 return True
             case "/reset":
-                workspace = Path(sessions.get_messages(self.app.session)["workspace"])
+                workspace = self.app.workspace
                 self.app.session = sessions.get_session(
                     chat_key=self.app.session[0],
                     session_id=str(uuid4()),
                     workspace=workspace,
                 )
+                self.app.workspace = workspace
                 await self.app.load_messages()
                 await self.app.queue().refresh_queue()
                 return True

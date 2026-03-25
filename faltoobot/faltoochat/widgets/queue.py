@@ -5,9 +5,9 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from . import submit_queue
 from faltoobot.gpt_utils import MessageItem
-from .messages_rendering import get_item_text
+from .. import submit_queue
+from ..messages_rendering import get_item_text
 
 if TYPE_CHECKING:
     from faltoobot.faltoochat.app import FaltooChatApp

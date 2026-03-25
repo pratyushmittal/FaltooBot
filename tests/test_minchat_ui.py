@@ -12,15 +12,16 @@ from faltoobot.faltoochat.app import (
     FaltooChatApp,
     get_local_user_message_item,
 )
+from faltoobot.faltoochat.review import ReviewView
 from faltoobot.faltoochat.widgets import QueueWidget
-from textual.widgets import Markdown
+from textual.widgets import Markdown, TabbedContent
 
 
 async def wait_for_condition(check: Any) -> None:
     while True:
         if check():
             return
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0)
 
 
 def test_minchat_uses_terminal_theme_on_startup(
@@ -91,6 +92,104 @@ def build_app(
 
 
 @pytest.mark.anyio
+async def test_minchat_has_chat_and_review_tabs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        tabs = app.query_one(TabbedContent)
+        assert tabs.active == "chat-tab"
+        assert app.query_one(ReviewView)
+
+        tabs.active = "review-tab"
+        await pilot.pause(0)
+        assert tabs.active == "review-tab"
+
+
+@pytest.mark.anyio
+async def test_minchat_ctrl_2_opens_review_tab(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        tabs = app.query_one(TabbedContent)
+        assert tabs.active == "chat-tab"
+
+        await pilot.press("ctrl+2")
+        await pilot.pause(0)
+        assert tabs.active == "review-tab"
+
+
+@pytest.mark.anyio
+async def test_minchat_ctrl_r_opens_review_tab(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        tabs = app.query_one(TabbedContent)
+        assert tabs.active == "chat-tab"
+
+        await pilot.press("ctrl+r")
+        await pilot.pause(0)
+        assert tabs.active == "review-tab"
+
+
+@pytest.mark.anyio
+async def test_minchat_ctrl_r_toggles_back_to_chat_tab(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        tabs = app.query_one(TabbedContent)
+
+        await pilot.press("ctrl+r")
+        await pilot.pause(0)
+        assert tabs.active == "review-tab"
+
+        await pilot.press("ctrl+r")
+        await pilot.pause(0)
+        assert tabs.active == "chat-tab"
+
+
+@pytest.mark.anyio
+async def test_minchat_returning_to_chat_scrolls_transcript_to_bottom(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript")
+        await transcript.mount(
+            *(Markdown(f"line {index}\n\nmore") for index in range(40))
+        )
+        await pilot.pause(0)
+        transcript.scroll_home(animate=False)
+        await pilot.pause(0)
+        assert transcript.scroll_y == 0
+
+        await pilot.press("ctrl+2")
+        await pilot.pause(0)
+        await pilot.press("ctrl+1")
+        await wait_for_condition(lambda: transcript.scroll_y == transcript.max_scroll_y)
+
+        assert app.query_one(TabbedContent).active == "chat-tab"
+
+
+@pytest.mark.anyio
 async def test_minchat_shift_enter_keeps_multiline_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -98,7 +197,7 @@ async def test_minchat_shift_enter_keeps_multiline_text(
     _, app = build_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         await pilot.press("h", "i", "shift+enter", "t", "h", "e", "r", "e")
         composer = app.query_one("#composer", Composer)
         assert composer.text == "hi\nthere"
@@ -114,7 +213,7 @@ async def test_minchat_paste_attaches_local_image_paths(
     image.write_bytes(b"png")
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         await composer.on_paste(events.Paste(str(image)))
         assert composer.attachments == [image.resolve()]
@@ -134,9 +233,9 @@ async def test_minchat_ctrl_v_attaches_clipboard_image(
     )
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         await pilot.press("ctrl+v")
-        await pilot.pause()
+        await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         assert composer.attachments == [image]
         assert str(composer.border_title) == "1 attachment"
@@ -174,12 +273,12 @@ async def test_minchat_submits_composer_attachments(
     )
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         composer.load_text("What is this?")
         composer.attach_image(image.resolve())
         await composer.action_composer_enter()
-        await pilot.pause()
+        await pilot.pause(0)
         assert composer.attachments == []
 
     assert seen == [
@@ -197,7 +296,7 @@ async def test_minchat_load_all_button_loads_full_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
-    total_messages = 120
+    total_messages = 101
     startup_messages = 100
     messages_json = sessions.get_messages(app.session)
     messages_json["messages"] = [
@@ -207,12 +306,12 @@ async def test_minchat_load_all_button_loads_full_history(
     sessions.set_messages(app.session, messages_json)
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         transcript = app.query_one("#transcript")
         assert len(transcript.query(Markdown)) == startup_messages
 
         await app.action_load_all_messages()
-        await pilot.pause()
+        await pilot.pause(0)
         assert len(transcript.query(Markdown)) == total_messages
 
 
@@ -249,12 +348,12 @@ async def test_minchat_queues_messages_while_streaming(
         composer.load_text("hello")
         await composer.action_composer_enter()
         await asyncio.wait_for(started.wait(), timeout=3)
-        await pilot.pause()
+        await pilot.pause(0)
         assert str(composer.border_subtitle) == "answering"
 
         composer.load_text("later")
         await composer.action_composer_enter()
-        await pilot.pause()
+        await pilot.pause(0)
         queue = submit_queue.get_queue(app.session)
         assert [item["id"] for item in queue]
         assert queue[0]["auto_submit"] is True
@@ -262,9 +361,12 @@ async def test_minchat_queues_messages_while_streaming(
 
         release.set()
         await asyncio.wait_for(
-            wait_for_condition(lambda: not app.is_answering), timeout=3
+            wait_for_condition(
+                lambda: not app.is_answering and seen == ["hello", "later"]
+            ),
+            timeout=3,
         )
-        await pilot.pause()
+        await pilot.pause(0)
         assert str(composer.border_subtitle) == ""
         assert submit_queue.get_queue(app.session) == []
         assert seen == ["hello", "later"]
@@ -302,17 +404,17 @@ async def test_minchat_queue_widget_keybindings_update_queue(
     )
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         queue_widget = app.query_one(QueueWidget)
         queue_widget.focus()
 
         await pilot.press("shift+down")
-        await pilot.pause()
+        await pilot.pause(0)
         queue = submit_queue.get_queue(app.session)
         assert [item["content"] for item in queue] == ["second", "first"]
 
         await pilot.press("delete")
-        await pilot.pause()
+        await pilot.pause(0)
         queue = submit_queue.get_queue(app.session)
         assert [item["content"] for item in queue] == ["second"]
 
@@ -356,7 +458,7 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
     expected_blocks = 3
 
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         composer.load_text("hello")
         await composer.action_composer_enter()
@@ -366,7 +468,7 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
                 and len(app.query_one("#transcript").children) >= expected_blocks
             )
         )
-        await pilot.pause()
+        await pilot.pause(0)
         transcript = app.query_one("#transcript")
         blocks = [block for block in transcript.query(Markdown)]
         thinking = [block for block in blocks if block.has_class("thinking")]
@@ -375,3 +477,44 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
         assert answer
         assert "Final answer" not in thinking[-1]._markdown
         assert answer[-1]._markdown == "Final answer"
+
+
+@pytest.mark.anyio
+async def test_minchat_answer_completion_does_not_focus_composer_outside_chat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    release = asyncio.Event()
+
+    async def fake_get_answer_streaming(
+        *,
+        session: sessions.Session,
+        question: str,
+        attachments: list[sessions.Attachment] | None = None,
+    ):
+        yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
+        await release.wait()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: app.is_answering)
+        await pilot.press("ctrl+2")
+        await pilot.pause(0)
+
+        release.set()
+        await asyncio.wait_for(
+            wait_for_condition(lambda: not app.is_answering), timeout=3
+        )
+        await pilot.pause(0)
+
+        assert app.query_one(TabbedContent).active == "review-tab"
+        assert app.screen.focused is not composer
