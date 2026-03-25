@@ -38,6 +38,7 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:
             | "response.reasoning_summary_text.done"
             | "response.reasoning_text.done"
             | "response.web_search_call.completed"
+            | "response.output_text.annotation.added"
         ):
             is_new, classes, text = True, "", ""
         case "response.output_item.done":
