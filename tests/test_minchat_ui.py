@@ -36,6 +36,43 @@ def test_minchat_uses_terminal_theme_on_startup(
     assert app.theme == "textual-light"
 
 
+@pytest.mark.anyio
+async def test_minchat_persists_and_restores_selected_theme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.textual_theme_from_terminal",
+        lambda: "textual-dark",
+    )
+
+    first_app = FaltooChatApp(
+        session=sessions.get_session(
+            chat_key=sessions.get_dir_chat_key(workspace),
+            workspace=workspace,
+        )
+    )
+
+    async with first_app.run_test() as pilot:
+        await pilot.pause()
+        first_app.theme = "textual-light"
+        await pilot.pause()
+
+    second_app = FaltooChatApp(
+        session=sessions.get_session(
+            chat_key=sessions.get_dir_chat_key(workspace),
+            workspace=workspace,
+        )
+    )
+
+    assert second_app.theme == "textual-light"
+
+
 def build_app(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -10,11 +10,13 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import Markdown, Static, TextArea
 
 from faltoobot import sessions
+from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.terminal import (
     open_in_default_editor,
     textual_theme_from_terminal,
 )
 from faltoobot.gpt_utils import MessageItem
+
 from .messages_rendering import get_item_text, visible_thinking_text
 from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
@@ -192,15 +194,25 @@ class FaltooChatApp(App[None]):
         *,
         initial_prompt: str | None = None,
     ) -> None:
+        self._persist_theme_changes = False
         super().__init__()
-        if theme := textual_theme_from_terminal():
+        if (saved_theme := load_textual_theme()) in self.available_themes:
+            self.theme = saved_theme
+        elif theme := textual_theme_from_terminal():
             self.theme = theme
+        self._persist_theme_changes = True
         self.session = session
         self.initial_prompt = (initial_prompt or "").strip()
         self.is_answering = False
 
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)
+
+    def _watch_theme(self, theme_name: str) -> None:
+        super()._watch_theme(theme_name)
+        if not self._persist_theme_changes:
+            return
+        save_textual_theme(theme_name)
 
     def compose(self) -> ComposeResult:
         yield Static(id="backdrop")

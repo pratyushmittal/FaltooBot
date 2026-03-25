@@ -55,6 +55,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "fast": False,
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
+        "ui": {"theme": ""},
         "bot": {
             "allow_groups": False,
             "allowed_chats": [],
@@ -67,6 +68,7 @@ def default_config() -> dict[str, dict[str, Any]]:
 def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     defaults = default_config()
     openai = as_dict(data.get("openai"))
+    ui = as_dict(data.get("ui"))
     bot = as_dict(data.get("bot"))
     return {
         "openai": {
@@ -80,6 +82,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 TRANSCRIPTION_MODEL_OPTIONS,
             ),
         },
+        "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
         "bot": {
             "allow_groups": as_bool(
                 bot.get("allow_groups"), defaults["bot"]["allow_groups"]
@@ -121,8 +124,10 @@ def quote(value: str) -> str:
 
 
 def render_config(data: dict[str, dict[str, Any]]) -> str:
+    data = merge_config(data)
     bot = data["bot"]
     openai = data["openai"]
+    ui = data["ui"]
     allowed_chats = (
         bot["allowed_chats"] if isinstance(bot["allowed_chats"], list) else []
     )
@@ -137,6 +142,9 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"thinking = {quote(str(openai['thinking']))}",
             f"fast = {str(bool(openai['fast'])).lower()}",
             f"transcription_model = {quote(str(openai['transcription_model']))}",
+            "",
+            "[ui]",
+            f"theme = {quote(str(ui['theme']))}",
             "",
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
@@ -237,3 +245,18 @@ def build_config() -> Config:
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),
     )
+
+
+def save_textual_theme(theme: str) -> None:
+    path = ensure_config_file()
+    data = merge_config(load_toml(path))
+    data["ui"]["theme"] = theme.strip()
+    rendered = render_config(data)
+    if path.read_text(encoding="utf-8") == rendered:
+        return
+    path.write_text(rendered, encoding="utf-8")
+
+
+def load_textual_theme() -> str:
+    data = merge_config(load_toml(ensure_config_file()))
+    return as_str(data["ui"].get("theme"), "")
