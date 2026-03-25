@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.1.0 — 2026-03-25
+
+### Added
+- `faltoochat` now has a dedicated **Review** workspace for local git changes, with changed-file tabs, syntax-highlighted diffs, file/code search, inline review comments, and one-shot submission of review feedback back into chat.
+- Review mode can stage or unstage selected diff lines directly from the terminal, making it easier to curate work before sending follow-up prompts.
+
+### Changed
+- `faltoochat` now remembers the selected light or dark theme across launches.
+- Stream rendering in terminal chat is more reliable during richer replies, including web-search-heavy responses.
+
 ## 1.0.0 — 2026-03-23
 
 ### Changed
