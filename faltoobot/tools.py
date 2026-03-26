@@ -45,10 +45,10 @@ def run_shell_call_in_workspace(workspace: str, command: str, timeout_ms: int) -
     return json.dumps(result)
 
 
-def get_run_shell_call_tool(workspace: Path) -> Callable[[str, int], str]:
+def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
     workspace = workspace.expanduser().resolve()
 
-    def run_shell_call(command: str, timeout_ms: int) -> str:
+    def run_shell_call(command: str, command_summary: str, timeout_ms: int) -> str:
         return run_shell_call_in_workspace(str(workspace), command, timeout_ms)
 
     run_shell_call.__doc__ = f"""Returns the output of a shell command. Use it to inspect files and run CLI tasks.
@@ -57,6 +57,7 @@ def get_run_shell_call_tool(workspace: Path) -> Callable[[str, int], str]:
 
     Args:
         - command: Bash command to run.
+        - command_summary: A one-line summary describing what the command is doing and why.
         - timeout_ms: Kill the command after this timeout in milliseconds.
     """
     return run_shell_call

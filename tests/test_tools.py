@@ -27,12 +27,16 @@ def test_get_run_shell_call_tool_builds_valid_tool_definition(tmp_path: Path) ->
                 "type": "string",
                 "description": "Bash command to run.",
             },
+            "command_summary": {
+                "type": "string",
+                "description": "A one-line summary describing what the command is doing and why.",
+            },
             "timeout_ms": {
                 "type": "integer",
                 "description": "Kill the command after this timeout in milliseconds.",
             },
         },
-        "required": ["command", "timeout_ms"],
+        "required": ["command", "command_summary", "timeout_ms"],
         "additionalProperties": False,
     }
 

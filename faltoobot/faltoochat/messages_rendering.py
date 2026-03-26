@@ -9,6 +9,8 @@ SED_RANGE_RE = re.compile(r"(?P<start>\d+)(?:,(?P<end>\d+))?p$")
 MIN_CD_PREFIX_PARTS = 4
 BOLD_SPAN_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
 
+SHELL_COMMAND_SEPARATOR = "\n\n<!-- shell-command -->\n\n"
+
 RG_VALUE_FLAGS = frozenset(
     {
         "-A",
@@ -172,6 +174,13 @@ def _tool_call_text(name: str, arguments: str) -> str:
             pass
         if name == "run_shell_call" and isinstance(parsed_arguments, dict):
             command = parsed_arguments.get("command")
+            command_summary = parsed_arguments.get("command_summary")
+            if isinstance(command_summary, str) and command_summary.strip():
+                return (
+                    f"**Shell:** {command_summary.strip()}{SHELL_COMMAND_SEPARATOR}{command.strip()}"
+                    if isinstance(command, str) and command.strip()
+                    else f"**Shell:** {command_summary.strip()}"
+                )
             if isinstance(command, str) and command.strip():
                 summary = _shell_command_summary(command)
                 if summary != command:

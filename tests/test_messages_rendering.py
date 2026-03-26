@@ -73,3 +73,18 @@ def test_get_item_text_keeps_only_bold_thinking_summaries_from_multiple_parts() 
         "**Estimating sunset time**\n**Calculating sunset time**",
         "thinking",
     )
+
+
+def test_get_item_text_prefers_run_shell_call_command_summary() -> None:
+    rendering = get_item_text(
+        {
+            "type": "function_call",
+            "name": "run_shell_call",
+            "arguments": '{"command":"git status --short","command_summary":"checking git status","timeout_ms":10000}',
+        }
+    )
+
+    assert rendering == (
+        "**Shell:** checking git status\n\n<!-- shell-command -->\n\ngit status --short",
+        "tool",
+    )

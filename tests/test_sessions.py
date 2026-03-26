@@ -220,12 +220,16 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
                 "type": "string",
                 "description": "Bash command to run.",
             },
+            "command_summary": {
+                "type": "string",
+                "description": "A one-line summary describing what the command is doing and why.",
+            },
             "timeout_ms": {
                 "type": "integer",
                 "description": "Kill the command after this timeout in milliseconds.",
             },
         },
-        "required": ["command", "timeout_ms"],
+        "required": ["command", "command_summary", "timeout_ms"],
         "additionalProperties": False,
     }
     assert payload["message_ids"] == ["msg-1"]

@@ -17,7 +17,11 @@ from faltoobot.faltoochat.terminal import (
 )
 from faltoobot.gpt_utils import MessageItem
 
-from .messages_rendering import get_item_text, visible_thinking_text
+from .messages_rendering import (
+    SHELL_COMMAND_SEPARATOR,
+    get_item_text,
+    visible_thinking_text,
+)
 from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
 from .review import ReviewView
@@ -58,6 +62,21 @@ def decompose_local_message_item(
         ):
             attachments.append(part["image_path"])
     return question, attachments
+
+
+def _render_blocks(text: str, classes: str) -> list[Markdown]:
+    if classes != "tool" or SHELL_COMMAND_SEPARATOR not in text:
+        return [Markdown(text, classes=classes)]
+    summary, command = text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)
+    blocks = [Markdown(summary, classes="tool tool-summary")]
+    if command.strip():
+        blocks.append(Markdown(command.strip(), classes="tool tool-command"))
+    return blocks
+
+
+async def _stop_answer_stream(answer_stream: Any | None) -> None:
+    if answer_stream is not None:
+        await answer_stream.stop()
 
 
 async def _write_stream_chunk(
@@ -197,11 +216,23 @@ class FaltooChatApp(App[None]):
     }
 
     .tool {
-        max-height: 6;
-        overflow-y: hidden;
         background: $warning 8%;
         border-left: none;
         color: $text-muted;
+    }
+
+    .tool-summary {
+        background: $warning 32%;
+        color: $text;
+        margin: 0 0 0 0;
+        padding: 0 1;
+    }
+
+    .tool-command {
+        max-height: 4;
+        overflow-y: hidden;
+        margin: 0 0 1 0;
+        padding: 1 2 0 2;
     }
 
     .answer {
@@ -334,7 +365,7 @@ class FaltooChatApp(App[None]):
         for message in messages:
             if rendering := get_item_text(message):
                 text, classes = rendering
-                blocks.append(Markdown(text, classes=classes))
+                blocks.extend(_render_blocks(text, classes))
         if not blocks:
             blocks = [
                 Markdown(
@@ -374,16 +405,21 @@ class FaltooChatApp(App[None]):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
-                    if answer_stream is not None:
-                        await answer_stream.stop()
-                        answer_stream = None
+                    await _stop_answer_stream(answer_stream)
+                    answer_stream = None
                     block = None
                     block_raw_text = ""
                 continue
+            if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
+                await _stop_answer_stream(answer_stream)
+                answer_stream = None
+                block = None
+                block_raw_text = ""
+                await transcript.mount(*_render_blocks(text, classes))
+                continue
             if block is None or is_new:
-                if answer_stream is not None:
-                    await answer_stream.stop()
-                    answer_stream = None
+                await _stop_answer_stream(answer_stream)
+                answer_stream = None
                 block = Markdown("", classes=classes)
                 block_raw_text = ""
                 await transcript.mount(block)
@@ -396,14 +432,13 @@ class FaltooChatApp(App[None]):
                 block_raw_text,
                 answer_stream,
             )
-        if answer_stream is not None:
-            await answer_stream.stop()
+        await _stop_answer_stream(answer_stream)
 
     async def submit_message(self, message_item: MessageItem):
         # render user message
         transcript = self.query_one("#transcript", VerticalScroll)
         preview_text, preview_classes = get_item_text(message_item)  # type: ignore
-        await transcript.mount(Markdown(preview_text, classes=preview_classes))
+        await transcript.mount(*_render_blocks(preview_text, preview_classes))
         self.call_after_refresh(
             transcript.scroll_end,
             animate=False,

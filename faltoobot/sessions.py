@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, RLock
+from collections.abc import Sequence
 from typing import Any, AsyncIterator, TypeAlias, TypedDict
 from uuid import uuid4
 
@@ -311,7 +312,7 @@ async def _upload_attachment(
 
 
 async def _upload_attachments(
-    attachments: list[Attachment],
+    attachments: Sequence[Attachment],
     workspace: Path,
     api_key: str,
 ) -> list[dict[str, Any]]:
@@ -328,7 +329,7 @@ async def _upload_attachments(
 async def get_answer(
     session: Session,
     question: str,
-    attachments: list[Attachment] | None = None,
+    attachments: Sequence[Attachment] | None = None,
     message_id: str | None = None,
 ) -> MessagesJson:
     async for _ in get_answer_streaming(
@@ -344,7 +345,7 @@ async def get_answer(
 async def get_answer_streaming(
     session: Session,
     question: str,
-    attachments: list[Attachment] | None = None,
+    attachments: Sequence[Attachment] | None = None,
     message_id: str | None = None,
 ) -> AsyncIterator[StreamingReplyItem]:
     config = build_config()
