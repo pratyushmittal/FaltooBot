@@ -17,6 +17,7 @@ from faltoobot.faltoochat.widgets import (
     SearchProject,
     Telescope,
 )
+from faltoobot.faltoochat.widgets.search_project import _project_search_results
 from textual.widgets import Input, OptionList, TabPane, TabbedContent, TextArea
 from textual.widgets.option_list import Option
 
@@ -579,6 +580,29 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
         assert "Look closely" in seen[0]
         assert "alpha.py" in seen[0]
         assert app.query_one(ReviewView).reviews == []
+
+
+def test_project_search_falls_back_without_rg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "alpha.py").write_text('value = "alpha"\n', encoding="utf-8")
+    (workspace / "beta.py").write_text("answer = 50\n", encoding="utf-8")
+
+    def missing_rg(*_args, **_kwargs):
+        raise FileNotFoundError("rg")
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project.subprocess.run", missing_rg
+    )
+
+    blank_results = _project_search_results(workspace, "")
+    assert [item["title"] for item in blank_results] == ["alpha.py", "beta.py"]
+
+    search_results = _project_search_results(workspace, "50")
+    assert search_results[0]["path"] == Path("beta.py")
+    assert search_results[0]["line_number"] == 1
 
 
 @pytest.mark.anyio

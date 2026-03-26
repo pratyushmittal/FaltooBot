@@ -18,6 +18,24 @@
 uv tool install faltoobot
 ```
 
+For faster project and code search inside `faltoochat`, install `ripgrep` (`rg`) too:
+
+```bash
+# macOS
+brew install ripgrep
+
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y ripgrep
+
+# Fedora
+sudo dnf install ripgrep
+
+# Arch Linux
+sudo pacman -S ripgrep
+```
+
+`faltoochat` falls back without `rg`, but search is faster and more reliable when it is installed.
+
 Then you can run `faltoobot` and `faltoochat` from any folder.
 
 If uv asks you to add its tool bin directory to your `PATH`, run:
