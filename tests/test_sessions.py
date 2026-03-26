@@ -204,16 +204,17 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             "content": "Hi",
         }
     ]
-    assert len(tool_defs) == 1
-    tool_def = tool_defs[0]
-    assert tool_def["type"] == "function"
-    assert tool_def["name"] == "run_shell_call"
-    assert tool_def["strict"] is True
-    assert tool_def["description"].startswith(
+    tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
+    assert set(tool_defs_by_name) == {"run_shell_call", "search_skills"}
+
+    shell_tool = tool_defs_by_name["run_shell_call"]
+    assert shell_tool["type"] == "function"
+    assert shell_tool["strict"] is True
+    assert shell_tool["description"].startswith(
         "Returns the output of a shell command. Use it to inspect files and run CLI tasks."
     )
-    assert "Commands are run from" in tool_def["description"]
-    assert tool_def["parameters"] == {
+    assert "Commands are run from" in shell_tool["description"]
+    assert shell_tool["parameters"] == {
         "type": "object",
         "properties": {
             "command": {
@@ -230,6 +231,24 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             },
         },
         "required": ["command", "command_summary", "timeout_ms"],
+        "additionalProperties": False,
+    }
+
+    skills_tool = tool_defs_by_name["search_skills"]
+    assert skills_tool["type"] == "function"
+    assert skills_tool["strict"] is True
+    assert skills_tool["description"].startswith(
+        "Search local skill bundles and return the best matches."
+    )
+    assert skills_tool["parameters"] == {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Natural-language query describing the workflow, repo knowledge, or task help you need.",
+            },
+        },
+        "required": ["query"],
         "additionalProperties": False,
     }
     assert payload["message_ids"] == ["msg-1"]

@@ -95,7 +95,10 @@ Local skills are read from:
 
 ```text
 ~/.faltoobot/skills/
+<workspace>/.faltoobot/skills/
 ```
+
+Each skill lives in a folder like `<skill-name>/SKILL.md`. Workspace-local skills override home-level skills with the same folder name.
 
 ## Allowlist
 
