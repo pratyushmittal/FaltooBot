@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 from rich.console import Console
@@ -496,6 +497,11 @@ def configure_app(config: Config) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="faltoobot")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version('faltoobot')}",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("auth", help="authenticate the WhatsApp session")

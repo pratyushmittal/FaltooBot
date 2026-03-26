@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias, cast
 
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.binding import Binding
 from textual.widgets import Static, TabbedContent, TabPane, Tabs
 
@@ -272,7 +273,9 @@ class ReviewView(TabPane):
 
     async def refresh_files(self) -> None:
         # comment: review refresh can be queued before the nested review tabs finish mounting.
-        if not self.query("#review-tabs"):
+        try:
+            tabs = self.query_one("#review-tabs", TabbedContent)
+        except NoMatches:
             return
 
         # comment: keep the current file path so we can restore that tab after adding new tabs.
@@ -289,8 +292,6 @@ class ReviewView(TabPane):
             self.extra_paths,
         )
 
-        tabs = self.query_one("#review-tabs", TabbedContent)
-
         # comment: when there are no reviewable files, clear file tabs and return to the empty tab.
         if message is not None:
             await self.clear_all_tabs()
@@ -298,7 +299,11 @@ class ReviewView(TabPane):
             return
 
         # comment: once review files exist, hide the default empty tab and add any missing file tabs.
-        tabs.hide_tab(NO_CHANGES_PANE_ID)
+        # comment: nested tab internals can still be mounting during startup workers.
+        try:
+            tabs.hide_tab(NO_CHANGES_PANE_ID)
+        except (NoMatches, Tabs.TabError):
+            return
         await self._add_missing_file_tabs(files)
 
         # comment: keep the current file active when it still exists after the refresh.

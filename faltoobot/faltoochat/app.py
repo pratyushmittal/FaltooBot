@@ -1,4 +1,5 @@
 import argparse
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -652,6 +653,11 @@ class Composer(TextArea):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="faltoochat")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version('faltoobot')}",
+    )
     parser.add_argument("prompt", nargs="?", help="optional prompt to submit on launch")
     parser.add_argument(
         "--new-session",
