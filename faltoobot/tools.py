@@ -57,7 +57,7 @@ def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
 
     Args:
         - command: Bash command to run.
-        - command_summary: A one-line summary describing what the command is doing and why.
+        - command_summary: A short one-line summary of what the command is doing. Keep it brief.
         - timeout_ms: Kill the command after this timeout in milliseconds.
     """
     return run_shell_call

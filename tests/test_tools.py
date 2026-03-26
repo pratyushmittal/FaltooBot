@@ -29,7 +29,7 @@ def test_get_run_shell_call_tool_builds_valid_tool_definition(tmp_path: Path) ->
             },
             "command_summary": {
                 "type": "string",
-                "description": "A one-line summary describing what the command is doing and why.",
+                "description": "A short one-line summary of what the command is doing. Keep it brief.",
             },
             "timeout_ms": {
                 "type": "integer",

@@ -223,7 +223,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             },
             "command_summary": {
                 "type": "string",
-                "description": "A one-line summary describing what the command is doing and why.",
+                "description": "A short one-line summary of what the command is doing. Keep it brief.",
             },
             "timeout_ms": {
                 "type": "integer",
