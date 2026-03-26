@@ -14,7 +14,7 @@ from faltoobot.faltoochat.app import (
 )
 from faltoobot.faltoochat.review import ReviewView
 from faltoobot.faltoochat.widgets import QueueWidget
-from textual.widgets import Markdown, TabbedContent
+from textual.widgets import Markdown, OptionList, TabbedContent
 
 
 async def wait_for_condition(check: Any) -> None:
@@ -89,6 +89,48 @@ def build_app(
             workspace=workspace,
         )
     )
+
+
+@pytest.mark.anyio
+async def test_minchat_shows_slash_command_suggestions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.insert("/")
+        await pilot.pause(0)
+
+        option_list = app.query_one("#slash-commands", OptionList)
+        assert option_list.display
+        assert [str(option.prompt) for option in option_list.options] == [
+            "/reset — start a fresh session",
+            "/tree — open the current session messages file",
+        ]
+
+
+@pytest.mark.anyio
+async def test_minchat_enter_applies_highlighted_slash_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.insert("/re")
+        await pilot.pause(0)
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        assert composer.text == "/reset"
 
 
 @pytest.mark.anyio
