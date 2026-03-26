@@ -124,6 +124,20 @@ async def open_review(app: FaltooChatApp, pilot) -> TabbedContent:
 
 
 @pytest.mark.anyio
+async def test_review_search_project_opens_with_no_modified_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await open_review(app, pilot)
+        await pilot.press("@")
+        await pilot.pause(0)
+        assert isinstance(app.screen, SearchProject)
+
+
+@pytest.mark.anyio
 async def test_review_hides_staged_only_files_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -334,15 +348,27 @@ async def test_review_refresh_files_binding_reloads_unstaged_and_untracked_tabs(
             "beta.py",
         }
 
+        review = app.query_one(ReviewView)
+        await review.open_file(Path("gamma.py"))
+        await pilot.pause(0)
+        assert {pane._title for pane in review_file_panes(review_tabs)} == {
+            "alpha.py",
+            "beta.py",
+            "gamma.py",
+        }
+
         (workspace / "delta.py").write_text('value = "delta"\n', encoding="utf-8")
 
         await pilot.press("R")
         await wait_for_condition(
-            lambda: any(
-                pane._title == "delta.py"
-                for pane in review_file_panes(
-                    app.query_one("#review-tabs", TabbedContent)
-                )
+            lambda: (
+                {
+                    pane._title
+                    for pane in review_file_panes(
+                        app.query_one("#review-tabs", TabbedContent)
+                    )
+                }
+                == {"alpha.py", "beta.py", "delta.py"}
             )
         )
 
@@ -568,7 +594,7 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
                 "filename": Path("alpha.py"),
                 "line_number_start": 2,
                 "line_number_end": 2,
-                "code": "b = 2",
+                "code": "-b = 2",
                 "comment": "Look closely",
             }
         ]
@@ -794,7 +820,7 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
             "filename": Path("alpha.py"),
             "line_number_start": 2,
             "line_number_end": 4,
-            "code": "b = 2\nb = 20\nc = 3",
+            "code": "-b = 2\nb = 20\nc = 3",
             "comment": "Selected",
         }
 
@@ -878,7 +904,7 @@ async def test_review_add_prefills_existing_comment_and_overwrites_it(
                 "filename": Path("alpha.py"),
                 "line_number_start": 2,
                 "line_number_end": 2,
-                "code": "b = 2",
+                "code": "-b = 2",
                 "comment": "Second",
             }
         ]

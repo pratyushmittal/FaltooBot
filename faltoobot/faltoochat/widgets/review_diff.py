@@ -359,7 +359,10 @@ def _review_range(view: ReviewDiffView) -> tuple[int, int]:
 
 
 def _range_code(diff: Diff, start: int, end: int) -> str:
-    return "\n".join(line["text"] for line in diff[start : end + 1])
+    return "\n".join(
+        f"-{line['text']}" if line["type"] == "-" else line["text"]
+        for line in diff[start : end + 1]
+    )
 
 
 def _gutter_symbol(view: ReviewDiffView, line_index: int) -> str:

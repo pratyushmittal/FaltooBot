@@ -97,6 +97,10 @@ def _get_file_pane(tabs: TabbedContent, path: Path) -> TabPane | None:
     return next((pane for pane in tabs.query(TabPane) if pane.id == pane_id), None)
 
 
+class ReviewEmpty(Static):
+    can_focus = True
+
+
 class ReviewView(TabPane):
     BINDINGS = [
         Binding(
@@ -145,7 +149,7 @@ class ReviewView(TabPane):
     def compose(self) -> ComposeResult:
         with TabbedContent(initial=NO_CHANGES_PANE_ID, id="review-tabs"):
             with TabPane("Review", id=NO_CHANGES_PANE_ID):
-                yield Static("No modified files yet.", id="review-empty")
+                yield ReviewEmpty("No modified files yet.", id="review-empty")
 
     async def _add_file_pane(self, path: Path, title: str) -> None:
         await self.query_one("#review-tabs", TabbedContent).add_pane(
@@ -195,7 +199,7 @@ class ReviewView(TabPane):
 
     def action_review_refresh_files(self) -> None:
         self.app.run_worker(
-            self.refresh_files(),
+            self.refresh_files(close_unmodified=True),
             group="review-refresh",
             exclusive=True,
         )
@@ -248,16 +252,38 @@ class ReviewView(TabPane):
 
     async def _add_missing_file_tabs(self, files: ModifiedFiles) -> None:
         """Open review tabs for modified files that do not already have a tab."""
-        tabs = self.query_one("#review-tabs", TabbedContent)
+        try:
+            tabs = self.query_one("#review-tabs", TabbedContent)
+        except NoMatches:
+            return
         titles = _review_tab_titles(files)
         for path in files:
             if _get_file_pane(tabs, path) is not None:
                 continue
             await self._add_file_pane(path, titles[path])
 
+    async def _replace_file_tabs(self, files: ModifiedFiles) -> None:
+        """Make review file tabs match the given modified file list."""
+        try:
+            tabs = self.query_one("#review-tabs", TabbedContent)
+        except NoMatches:
+            return
+        keep_paths = set(files)
+        for pane in list(tabs.query(TabPane)):
+            if pane.id is None or pane.id == NO_CHANGES_PANE_ID:
+                continue
+            viewer = pane.query_one(ReviewDiffView)
+            if viewer.file_path in keep_paths:
+                continue
+            await tabs.remove_pane(pane.id)
+        await self._add_missing_file_tabs(files)
+
     async def clear_all_tabs(self) -> None:
         """Remove all file review tabs and show the default empty review tab."""
-        tabs = self.query_one("#review-tabs", TabbedContent)
+        try:
+            tabs = self.query_one("#review-tabs", TabbedContent)
+        except NoMatches:
+            return
         for pane in tabs.query(TabPane):
             if pane.id is None or pane.id == NO_CHANGES_PANE_ID:
                 continue
@@ -270,27 +296,34 @@ class ReviewView(TabPane):
             pass
         tabs.active = NO_CHANGES_PANE_ID
         self.active_pane = None
+        # comment: startup refresh can run before the empty placeholder finishes mounting.
+        if self.query("#review-empty"):
+            self.query_one("#review-empty", ReviewEmpty).focus()
 
-    async def refresh_files(self) -> None:
+    async def refresh_files(self, *, close_unmodified: bool = False) -> None:
+        """Refresh review tabs from git, optionally closing tabs without modifications."""
         # comment: review refresh can be queued before the nested review tabs finish mounting.
         try:
             tabs = self.query_one("#review-tabs", TabbedContent)
         except NoMatches:
             return
 
-        # comment: keep the current file path so we can restore that tab after adding new tabs.
         active_path = None if self.active_pane is None else self.active_pane.file_path
         workspace = self.app.workspace  # type: ignore[attr-defined]
 
-        # comment: manually opened files may be deleted outside the app, so drop missing paths.
-        self.extra_paths = [
-            path for path in self.extra_paths if (workspace / path).is_file()
-        ]
-        message, files = await asyncio.to_thread(
-            _get_modified_files,
-            workspace,
-            self.extra_paths,
-        )
+        if close_unmodified:
+            message, files = await asyncio.to_thread(_get_modified_files, workspace)
+            self.extra_paths = [path for path in self.extra_paths if path in files]
+        else:
+            # comment: manually opened files may be deleted outside the app, so drop missing paths.
+            self.extra_paths = [
+                path for path in self.extra_paths if (workspace / path).is_file()
+            ]
+            message, files = await asyncio.to_thread(
+                _get_modified_files,
+                workspace,
+                self.extra_paths,
+            )
 
         # comment: when there are no reviewable files, clear file tabs and return to the empty tab.
         if message is not None:
@@ -298,13 +331,16 @@ class ReviewView(TabPane):
             self.app.notify(message)
             return
 
-        # comment: once review files exist, hide the default empty tab and add any missing file tabs.
         # comment: nested tab internals can still be mounting during startup workers.
         try:
             tabs.hide_tab(NO_CHANGES_PANE_ID)
         except (NoMatches, Tabs.TabError):
             return
-        await self._add_missing_file_tabs(files)
+
+        if close_unmodified:
+            await self._replace_file_tabs(files)
+        else:
+            await self._add_missing_file_tabs(files)
 
         # comment: keep the current file active when it still exists after the refresh.
         if active_path is not None and self.set_active_tab(active_path):
