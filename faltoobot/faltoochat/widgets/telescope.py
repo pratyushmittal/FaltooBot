@@ -5,12 +5,15 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
+from textual.worker import Worker, WorkerState
 
 T = TypeVar("T")
 ItemSource: TypeAlias = list[T] | Callable[[str], list[T]]
 MAX_RESULTS = 200
+SEARCH_DEBOUNCE_SECONDS = 0.15
 
 
 class Telescope(ModalScreen[T | None], Generic[T]):
@@ -59,6 +62,8 @@ class Telescope(ModalScreen[T | None], Generic[T]):
         self.dialog_title = title
         self.placeholder = placeholder
         self.results: list[T] = []
+        self._search_timer: Timer | None = None
+        self._search_worker: Worker[list[T]] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="telescope-dialog"):
@@ -67,7 +72,7 @@ class Telescope(ModalScreen[T | None], Generic[T]):
             yield OptionList(id="telescope-options", markup=False)
 
     def on_mount(self) -> None:
-        self._refresh_options("")
+        self._start_search("")
         self.query_one("#telescope-input", Input).focus()
 
     def action_cancel(self) -> None:
@@ -80,7 +85,7 @@ class Telescope(ModalScreen[T | None], Generic[T]):
         self.query_one("#telescope-options", OptionList).action_cursor_up()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        self._refresh_options(event.value)
+        self._schedule_search(event.value)
 
     def on_input_submitted(self, _event: Input.Submitted) -> None:
         if not self.results:
@@ -93,17 +98,43 @@ class Telescope(ModalScreen[T | None], Generic[T]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(self.results[event.option_index])
 
-    def _refresh_options(self, query: str) -> None:
-        if callable(self.item_source):
-            load_items = cast(Callable[[str], list[T]], self.item_source)
-            self.results = load_items(query)
-        else:
-            self.results = _filter_items(self.item_source, query)
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is not self._search_worker:
+            return
+        if event.state is not WorkerState.SUCCESS or not self.is_mounted:
+            return
+        results = event.worker.result
+        if results is None:
+            return
+        self.results = results
         option_list = self.query_one("#telescope-options", OptionList)
         option_list.clear_options()
         option_list.add_options(Option(_item_label(result)) for result in self.results)
         if self.results:
             option_list.highlighted = 0
+
+    def _schedule_search(self, query: str) -> None:
+        if self._search_timer is not None:
+            self._search_timer.stop()
+        self._search_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self._start_search(query),
+        )
+
+    def _start_search(self, query: str) -> None:
+        self._search_worker = self.run_worker(
+            lambda: self._load_results(query),
+            group="telescope-search",
+            exclusive=True,
+            thread=True,
+        )
+
+    def _load_results(self, query: str) -> list[T]:
+        """Load search results for a query without blocking the TUI thread."""
+        if callable(self.item_source):
+            load_items = cast(Callable[[str], list[T]], self.item_source)
+            return load_items(query)
+        return _filter_items(self.item_source, query)
 
 
 def _filter_items(items: list[T], query: str) -> list[T]:

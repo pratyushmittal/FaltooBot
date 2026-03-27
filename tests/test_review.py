@@ -17,6 +17,9 @@ from faltoobot.faltoochat.widgets import (
     SearchProject,
     Telescope,
 )
+from faltoobot.faltoochat.widgets.search_project import (
+    SearchProject as SearchProjectModal,
+)
 from faltoobot.faltoochat.widgets.search_project import _project_search_results
 from textual.widgets import Input, OptionList, TabPane, TabbedContent, TextArea
 from textual.widgets.option_list import Option
@@ -274,6 +277,7 @@ async def test_review_grep_opens_modal_and_jumps_to_selected_line(
 
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
+        target_line = 5
 
         await pilot.press("@")
         await pilot.pause(0)
@@ -282,7 +286,13 @@ async def test_review_grep_opens_modal_and_jumps_to_selected_line(
         search_input = modal.query_one("#telescope-input")
         await pilot.click(search_input)
         await pilot.press("5", "0")
-        await wait_for_condition(lambda: bool(modal.results))
+        await wait_for_condition(
+            lambda: (
+                bool(modal.results)
+                and modal.results[0]["line_number"] is not None
+                and modal.results[0]["line_number"] == target_line
+            )
+        )
         await pilot.press("enter")
         await pilot.pause(0)
 
@@ -608,7 +618,31 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
         assert app.query_one(ReviewView).reviews == []
 
 
-def test_project_search_falls_back_without_rg(
+def test_search_project_caches_project_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[Path] = []
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project._project_files",
+        lambda workspace: calls.append(workspace) or [Path("alpha.py")],
+    )
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project._ripgrep_file_results",
+        lambda _workspace, _query, _files: [],
+    )
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project._ripgrep_results",
+        lambda _workspace, _query: [],
+    )
+
+    search = SearchProjectModal(workspace=Path("."))
+    assert search._search_results("") == [
+        {"title": "alpha.py", "path": Path("alpha.py"), "line_number": None, "text": ""}
+    ]
+    assert search._search_results("alpha") == []
+    assert calls == [Path(".")]
+
+
+def test_project_search_returns_empty_without_rg(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -623,12 +657,38 @@ def test_project_search_falls_back_without_rg(
         "faltoobot.faltoochat.widgets.search_project.subprocess.run", missing_rg
     )
 
-    blank_results = _project_search_results(workspace, "")
-    assert [item["title"] for item in blank_results] == ["alpha.py", "beta.py"]
+    assert _project_search_results(workspace, "") == []
+    assert _project_search_results(workspace, "50") == []
 
-    search_results = _project_search_results(workspace, "50")
-    assert search_results[0]["path"] == Path("beta.py")
-    assert search_results[0]["line_number"] == 1
+
+@pytest.mark.anyio
+async def test_search_project_warns_when_rg_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from textual.app import App, ComposeResult
+    from textual.widgets import Static
+
+    seen: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project.shutil.which",
+        lambda _name: None,
+    )
+
+    class ModalApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("ready")
+
+    app = ModalApp()
+    app.notify = lambda message, *, severity="information", **_kwargs: seen.append(  # type: ignore[method-assign]
+        (message, severity)
+    )
+
+    async with app.run_test() as pilot:
+        app.push_screen(SearchProject(workspace=Path(".")))
+        await pilot.pause(0)
+
+    assert seen == [("Install ripgrep (`rg`) to search project files.", "warning")]
 
 
 @pytest.mark.anyio
@@ -665,10 +725,47 @@ async def test_review_grep_modal_treats_results_as_plain_text(
         search_input = modal.query_one("#telescope-input", Input)
         await pilot.click(search_input)
         await pilot.press("x")
-        await pilot.pause(0)
+        await wait_for_condition(
+            lambda: len(modal.query_one("#telescope-options", OptionList).options) == 1
+        )
 
         option_list = modal.query_one("#telescope-options", OptionList)
         assert len(option_list.options) == 1
+
+
+@pytest.mark.anyio
+async def test_telescope_debounces_callable_searches() -> None:
+    from textual.app import App, ComposeResult
+    from textual.widgets import Static
+
+    seen: list[str] = []
+
+    class ModalApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("ready")
+
+    app = ModalApp()
+
+    async with app.run_test() as pilot:
+        app.push_screen(
+            Telescope[str](
+                items=lambda query: seen.append(query) or [query],
+                title="Search",
+                placeholder="Type",
+            )
+        )
+        await pilot.pause(0.05)
+
+        modal = app.screen
+        assert isinstance(modal, Telescope)
+        search_input = modal.query_one("#telescope-input", Input)
+        await pilot.click(search_input)
+        await pilot.press("a", "b")
+        await pilot.pause(0.3)
+
+        assert seen[0] == ""
+        assert seen[-1] == "ab"
+        assert "a" not in seen[1:-1]
 
 
 @pytest.mark.anyio

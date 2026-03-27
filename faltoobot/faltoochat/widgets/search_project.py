@@ -1,7 +1,8 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from .telescope import MAX_RESULTS, Telescope
 
@@ -17,15 +18,44 @@ class ProjectSearchResult(TypedDict):
 
 class SearchProject(Telescope[ProjectSearchResult]):
     def __init__(self, *, workspace: Path) -> None:
+        self.workspace = workspace
+        self._files: list[Path] | None = None
         super().__init__(
-            items=lambda query: _project_search_results(workspace, query),
+            items=self._search_results,
             title="Search files and code",
             placeholder="Type a filename, path, or code",
         )
 
+    def on_mount(self) -> None:
+        super().on_mount()
+        if _has_ripgrep():
+            return
+        self.app.notify(
+            "Install ripgrep (`rg`) to search project files.",
+            severity="warning",
+        )
 
-def _project_search_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
+    def _search_results(self, query: str) -> list[ProjectSearchResult]:
+        return _project_search_results(
+            self.workspace,
+            query,
+            files=self._cached_files(),
+        )
+
+    def _cached_files(self) -> list[Path]:
+        if self._files is None:
+            self._files = _project_files(self.workspace)
+        return self._files
+
+
+def _project_search_results(
+    workspace: Path,
+    query: str,
+    *,
+    files: list[Path] | None = None,
+) -> list[ProjectSearchResult]:
     needle = query.strip()
+    files = _project_files(workspace) if files is None else files
     if not needle:
         return [
             {
@@ -34,10 +64,10 @@ def _project_search_results(workspace: Path, query: str) -> list[ProjectSearchRe
                 "line_number": None,
                 "text": "",
             }
-            for path in _project_files(workspace)[:MAX_RESULTS]
+            for path in files[:MAX_RESULTS]
         ]
 
-    file_matches = _ripgrep_file_results(workspace, needle)
+    file_matches = _ripgrep_file_results(workspace, needle, files)
     grep_matches = _ripgrep_results(workspace, needle)
     grep_items: list[tuple[int, ProjectSearchResult]] = [
         (10_000 - index, result) for index, result in enumerate(grep_matches)
@@ -49,19 +79,9 @@ def _project_search_results(workspace: Path, query: str) -> list[ProjectSearchRe
 
 def _project_files(workspace: Path) -> list[Path]:
     result = _run_rg(["rg", "--files"], workspace)
-    if result is not None and result.returncode == 0:
-        return [Path(line) for line in result.stdout.splitlines() if line]
-    return cast(
-        list[Path],
-        sorted(
-            [
-                Path(str(path.relative_to(workspace)))
-                for path in workspace.rglob("*")
-                if path.is_file() and ".git" not in path.parts
-            ],
-            key=str,
-        ),
-    )
+    if result is None or result.returncode != 0:
+        return []
+    return [Path(line) for line in result.stdout.splitlines() if line]
 
 
 def _result_label(path: Path, line_number: int, text: str) -> str:
@@ -88,9 +108,7 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
         ],
         workspace,
     )
-    if result is None:
-        return _fallback_grep_results(workspace, needle)
-    if result.returncode not in {0, 1}:
+    if result is None or result.returncode not in {0, 1}:
         return []
 
     matches: list[ProjectSearchResult] = []
@@ -116,8 +134,8 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
 def _ripgrep_file_results(
     workspace: Path,
     query: str,
+    files: list[Path],
 ) -> list[tuple[int, ProjectSearchResult]]:
-    files = _project_files(workspace)
     if not files:
         return []
 
@@ -126,9 +144,7 @@ def _ripgrep_file_results(
         workspace,
         input="\n".join(str(path) for path in files),
     )
-    if result is None:
-        return _fallback_file_results(files, query)
-    if result.returncode not in {0, 1}:
+    if result is None or result.returncode not in {0, 1}:
         return []
 
     return [
@@ -165,55 +181,5 @@ def _run_rg(
         return None
 
 
-def _fallback_file_results(
-    files: list[Path],
-    query: str,
-) -> list[tuple[int, ProjectSearchResult]]:
-    return [
-        (
-            100_000 - index,
-            {
-                "title": str(path),
-                "path": path,
-                "line_number": None,
-                "text": "",
-            },
-        )
-        for index, path in enumerate(files)
-        if _matches_query(str(path), query)
-    ]
-
-
-def _fallback_grep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
-    matches: list[ProjectSearchResult] = []
-    for path in _project_files(workspace):
-        text = _read_text(workspace / path)
-        if text is None:
-            continue
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if not _matches_query(line, query):
-                continue
-            matches.append(
-                {
-                    "title": _result_label(path, line_number, line),
-                    "path": path,
-                    "line_number": line_number,
-                    "text": line,
-                }
-            )
-            if len(matches) >= MAX_RESULTS:
-                return matches
-    return matches
-
-
-def _matches_query(text: str, query: str) -> bool:
-    if any(char.isupper() for char in query):
-        return query in text
-    return query.lower() in text.lower()
-
-
-def _read_text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
+def _has_ripgrep() -> bool:
+    return shutil.which("rg") is not None
