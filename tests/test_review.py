@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 import pytest
@@ -20,11 +21,58 @@ from faltoobot.faltoochat.widgets import (
 from faltoobot.faltoochat.widgets.search_project import (
     SearchProject as SearchProjectModal,
 )
-from faltoobot.faltoochat.widgets.search_project import _project_search_results
+from faltoobot.faltoochat.widgets.search_project import (
+    _project_search_results,
+    _ripgrep_results,
+)
 from textual.widgets import Input, OptionList, TabPane, TabbedContent, TextArea
 from textual.widgets.option_list import Option
 
 EXPECTED_REVIEW_FILES = 2
+
+
+def test_project_search_stops_after_max_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from faltoobot.faltoochat.widgets.telescope import MAX_RESULTS
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = 0
+            self.killed = False
+            self.stdout = iter(
+                [
+                    json.dumps(
+                        {
+                            "type": "match",
+                            "data": {
+                                "path": {"text": "alpha.py"},
+                                "line_number": index + 1,
+                                "lines": {"text": f"line {index}\n"},
+                            },
+                        }
+                    )
+                    for index in range(MAX_RESULTS * 2)
+                ]
+            )
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self) -> int:
+            return self.returncode
+
+    process = FakeProcess()
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project._start_rg",
+        lambda *_args, **_kwargs: process,
+    )
+
+    results = _ripgrep_results(Path("."), "f")
+
+    assert len(results) == MAX_RESULTS
+    assert process.killed is True
 
 
 def review_file_panes(tabs: TabbedContent) -> list[TabPane]:
@@ -656,6 +704,9 @@ def test_project_search_returns_empty_without_rg(
     monkeypatch.setattr(
         "faltoobot.faltoochat.widgets.search_project.subprocess.run", missing_rg
     )
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.search_project.subprocess.Popen", missing_rg
+    )
 
     assert _project_search_results(workspace, "") == []
     assert _project_search_results(workspace, "50") == []
@@ -700,7 +751,7 @@ async def test_review_grep_modal_treats_results_as_plain_text(
 
     monkeypatch.setattr(
         "faltoobot.faltoochat.widgets.search_project._project_search_results",
-        lambda _workspace, _query: [
+        lambda _workspace, _query, **_kwargs: [
             {
                 "title": 'alpha.py:1: BINDINGS = [Binding("escape", show=False)]',
                 "path": Path("alpha.py"),

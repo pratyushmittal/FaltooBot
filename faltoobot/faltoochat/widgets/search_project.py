@@ -95,7 +95,7 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
     needle = query.strip()
     if not needle:
         return []
-    result = _run_rg(
+    process = _start_rg(
         [
             "rg",
             "--json",
@@ -108,26 +108,35 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
         ],
         workspace,
     )
-    if result is None or result.returncode not in {0, 1}:
+    if process is None or process.stdout is None:
         return []
 
     matches: list[ProjectSearchResult] = []
-    for raw_line in result.stdout.splitlines():
-        item = json.loads(raw_line)
-        if item.get("type") != "match":
-            continue
-        data = item["data"]
-        path = Path(data["path"]["text"])
-        line_number = int(data["line_number"])
-        text = data["lines"]["text"].rstrip("\n")
-        matches.append(
-            {
-                "title": _result_label(path, line_number, text),
-                "path": path,
-                "line_number": line_number,
-                "text": text,
-            }
-        )
+    try:
+        for raw_line in process.stdout:
+            item = json.loads(raw_line)
+            if item.get("type") != "match":
+                continue
+            data = item["data"]
+            path = Path(data["path"]["text"])
+            line_number = int(data["line_number"])
+            text = data["lines"]["text"].rstrip("\n")
+            matches.append(
+                {
+                    "title": _result_label(path, line_number, text),
+                    "path": path,
+                    "line_number": line_number,
+                    "text": text,
+                }
+            )
+            # comment: broad searches can return massive output, so stop after the UI limit.
+            if len(matches) >= MAX_RESULTS:
+                process.kill()
+                break
+    finally:
+        process.wait()
+    if process.returncode not in {0, 1} and len(matches) < MAX_RESULTS:
+        return []
     return matches
 
 
@@ -138,28 +147,39 @@ def _ripgrep_file_results(
 ) -> list[tuple[int, ProjectSearchResult]]:
     if not files:
         return []
-
-    result = _run_rg(
+    process = _start_rg(
         ["rg", "--smart-case", "--fixed-strings", query],
         workspace,
         input="\n".join(str(path) for path in files),
     )
-    if result is None or result.returncode not in {0, 1}:
+    if process is None or process.stdout is None:
         return []
 
-    return [
-        (
-            100_000 - index,
-            {
-                "title": line,
-                "path": Path(line),
-                "line_number": None,
-                "text": "",
-            },
-        )
-        for index, line in enumerate(result.stdout.splitlines())
-        if line
-    ]
+    matches: list[tuple[int, ProjectSearchResult]] = []
+    try:
+        for index, line in enumerate(process.stdout):
+            path = line.rstrip("\n")
+            if not path:
+                continue
+            matches.append(
+                (
+                    100_000 - index,
+                    {
+                        "title": path,
+                        "path": Path(path),
+                        "line_number": None,
+                        "text": "",
+                    },
+                )
+            )
+            if len(matches) >= MAX_RESULTS:
+                process.kill()
+                break
+    finally:
+        process.wait()
+    if process.returncode not in {0, 1} and len(matches) < MAX_RESULTS:
+        return []
+    return matches
 
 
 def _run_rg(
@@ -179,6 +199,29 @@ def _run_rg(
         )
     except FileNotFoundError:
         return None
+
+
+def _start_rg(
+    args: list[str],
+    workspace: Path,
+    *,
+    input: str | None = None,
+) -> subprocess.Popen[str] | None:
+    try:
+        process = subprocess.Popen(
+            args,
+            cwd=workspace,
+            stdin=subprocess.PIPE if input is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if input is not None and process.stdin is not None:
+        process.stdin.write(input)
+        process.stdin.close()
+    return process
 
 
 def _has_ripgrep() -> bool:
