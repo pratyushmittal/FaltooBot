@@ -390,32 +390,18 @@ class FaltooChatApp(App[None]):
         transcript = self.query_one("#transcript", VerticalScroll)
         blocks = []
         messages = messages_json["messages"]
-        if recent_limit is not None:
-            recent_chunks: list[list[Markdown]] = []
-            recent_count = 0
-            for message in reversed(messages):
-                if not (rendering := get_item_text(message)):
-                    continue
-                text, classes = rendering
-                chunk = _render_blocks(text, classes)
-                if recent_count and recent_count + len(chunk) > recent_limit:
-                    break
-                recent_chunks.append(chunk)
-                recent_count += len(chunk)
-            if recent_count < len(messages):
-                blocks.append(
-                    Static(
-                        f"Showing recent history from {len(messages)} messages. [@click=app.load_all_messages()]load all[/]",
-                        classes="history-summary",
-                    )
+        if recent_limit is not None and len(messages) > recent_limit:
+            blocks.append(
+                Static(
+                    f"Showing last {recent_limit} of {len(messages)} messages. [@click=app.load_all_messages()]load all[/]",
+                    classes="history-summary",
                 )
-            for chunk in reversed(recent_chunks):
-                blocks.extend(chunk)
-        else:
-            for message in messages:
-                if rendering := get_item_text(message):
-                    text, classes = rendering
-                    blocks.extend(_render_blocks(text, classes))
+            )
+            messages = messages[-recent_limit:]
+        for message in messages:
+            if rendering := get_item_text(message):
+                text, classes = rendering
+                blocks.extend(_render_blocks(text, classes))
         if not blocks:
             blocks = [
                 Markdown(
