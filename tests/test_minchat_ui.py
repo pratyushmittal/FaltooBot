@@ -384,6 +384,34 @@ async def test_minchat_load_all_button_loads_full_history(
 
 
 @pytest.mark.anyio
+async def test_minchat_startup_caps_rendered_blocks_for_tool_heavy_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    tool_messages = 60
+    startup_blocks = 100
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {
+            "type": "function_call",
+            "id": f"fc_{index}",
+            "call_id": f"call_{index}",
+            "name": "run_shell_call",
+            "arguments": '{"command": "git status --short", "command_summary": "checking git status", "timeout_ms": 1000}',
+            "status": "completed",
+        }
+        for index in range(tool_messages)
+    ]
+    sessions.set_messages(app.session, messages_json)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript")
+        assert len(transcript.query(Markdown)) == startup_blocks
+
+
+@pytest.mark.anyio
 async def test_minchat_queues_messages_while_streaming(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
