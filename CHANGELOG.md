@@ -2,6 +2,13 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.2.1 — 2026-03-27
+
+### Changed
+- Project search in `faltoochat` is much more responsive on large repos, with ripgrep results streamed and capped so broad queries don’t peg the CPU or hang the TUI.
+- Review diff navigation is smoother: `[` and `]` now jump between edit blocks, `V` supports linewise selection with `j`/`k`, and `Esc` cleanly exits selection mode.
+- Review search bindings in the footer now only show when a search is active, making the footer easier to scan.
+
 ## 1.2.0 — 2026-03-27
 
 ### Added
