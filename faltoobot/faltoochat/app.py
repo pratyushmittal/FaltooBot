@@ -616,6 +616,19 @@ class Composer(TextArea):
         if event.text_area is self:
             self.update_slash_commands()
 
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down"} or not self.slash_matches:
+            return
+        option_list = self.app.query_one("#slash-commands", OptionList)
+        if not option_list.display:
+            return
+        event.stop()
+        event.prevent_default()
+        if event.key == "up":
+            option_list.action_cursor_up()
+        else:
+            option_list.action_cursor_down()
+
     async def action_composer_enter(self) -> None:
         row, column = self.cursor_location
         prefix = str(self.get_line(row))[:column].lstrip()

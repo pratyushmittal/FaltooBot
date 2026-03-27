@@ -114,6 +114,32 @@ async def test_minchat_shows_slash_command_suggestions(
 
 
 @pytest.mark.anyio
+async def test_minchat_up_down_navigate_slash_command_suggestions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.insert("/")
+        await pilot.pause(0)
+
+        option_list = app.query_one("#slash-commands", OptionList)
+        assert option_list.highlighted == 0
+
+        await pilot.press("down")
+        await pilot.pause(0)
+        assert option_list.highlighted == 1
+
+        await pilot.press("up")
+        await pilot.pause(0)
+        assert option_list.highlighted == 0
+
+
+@pytest.mark.anyio
 async def test_minchat_enter_applies_highlighted_slash_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
