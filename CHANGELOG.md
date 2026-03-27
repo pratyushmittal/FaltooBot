@@ -2,6 +2,18 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.2.0 — 2026-03-27
+
+### Added
+- `faltoobot --version` and `faltoochat --version` now print the installed package version directly from the CLI.
+- `faltoobot` and `faltoochat` can now search local skill bundles from `~/.faltoobot/skills` and project-local `.faltoobot/skills` folders.
+- `faltoochat` now shows slash-command suggestions as you type, with keyboard navigation for quick selection.
+
+### Changed
+- Review mode in `faltoochat` is more polished: project search works even when review starts empty, `R` can close tabs that are no longer modified, and review snippets now mark deleted lines with `-`.
+- Project search now falls back cleanly when `ripgrep` is not installed, while still using `rg` when available.
+- Shell tool calls are easier to skim, with shorter summaries and clearer command rendering.
+
 ## 1.1.0 — 2026-03-25
 
 ### Added
