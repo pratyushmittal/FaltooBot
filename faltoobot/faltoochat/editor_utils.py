@@ -51,29 +51,55 @@ def word_under_cursor(text: str, column: int) -> str | None:
 
 
 def next_modification(diff: Diff, cursor_line: int) -> int | None:
-    """Return the next unstaged modified line, wrapping to the top."""
-    lines = [
-        index
-        for index, line in enumerate(diff)
-        if line["type"] in {"+", "-"} and not line["is_staged"]
-    ]
-    for line in lines:
-        if line > cursor_line:
-            return line
-    return None if not lines else lines[0]
+    """Return the next unstaged modification block start, wrapping to the top."""
+    blocks = _modification_blocks(diff)
+    if not blocks:
+        return None
+    current_start = _current_modification_block_start(blocks, cursor_line)
+    threshold = cursor_line if current_start is None else current_start
+    for start, _end in blocks:
+        if start > threshold:
+            return start
+    return blocks[0][0]
 
 
 def previous_modification(diff: Diff, cursor_line: int) -> int | None:
-    """Return the previous unstaged modified line, wrapping to the bottom."""
-    lines = [
-        index
-        for index, line in enumerate(diff)
-        if line["type"] in {"+", "-"} and not line["is_staged"]
-    ]
-    for line in reversed(lines):
-        if line < cursor_line:
-            return line
-    return None if not lines else lines[-1]
+    """Return the previous unstaged modification block start, wrapping to the bottom."""
+    blocks = _modification_blocks(diff)
+    if not blocks:
+        return None
+    current_start = _current_modification_block_start(blocks, cursor_line)
+    threshold = cursor_line if current_start is None else current_start
+    for start, _end in reversed(blocks):
+        if start < threshold:
+            return start
+    return blocks[-1][0]
+
+
+def _modification_blocks(diff: Diff) -> list[tuple[int, int]]:
+    blocks: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, line in enumerate(diff):
+        is_modified = line["type"] in {"+", "-"} and not line["is_staged"]
+        if is_modified and start is None:
+            start = index
+            continue
+        if not is_modified and start is not None:
+            blocks.append((start, index - 1))
+            start = None
+    if start is not None:
+        blocks.append((start, len(diff) - 1))
+    return blocks
+
+
+def _current_modification_block_start(
+    blocks: list[tuple[int, int]],
+    cursor_line: int,
+) -> int | None:
+    for start, end in blocks:
+        if start <= cursor_line <= end:
+            return start
+    return None
 
 
 def _search_match_columns(text: str, term: str, *, whole_word: bool) -> list[int]:

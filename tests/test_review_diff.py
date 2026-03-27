@@ -113,20 +113,22 @@ def test_review_range_uses_selected_text_to_include_last_selected_line() -> None
     assert _review_range(viewer) == (2, 7)
 
 
-def test_next_modification_skips_staged_lines_inside_mixed_hunks() -> None:
+def test_next_modification_jumps_to_next_block_start() -> None:
     diff: Diff = [
         {"is_staged": False, "type": "", "text": "ctx"},
         {"is_staged": True, "type": "-", "text": "staged old"},
         {"is_staged": False, "type": "+", "text": "unstaged new"},
+        {"is_staged": False, "type": "+", "text": "unstaged new 2"},
         {"is_staged": False, "type": "", "text": "ctx2"},
         {"is_staged": False, "type": "-", "text": "next old"},
     ]
 
-    first_unstaged_line = 2
-    second_unstaged_line = 4
+    first_block_start = 2
+    second_block_start = 5
 
-    assert next_modification(diff, 0) == first_unstaged_line
-    assert next_modification(diff, first_unstaged_line) == second_unstaged_line
+    assert next_modification(diff, 0) == first_block_start
+    assert next_modification(diff, first_block_start) == second_block_start
+    assert next_modification(diff, first_block_start + 1) == second_block_start
 
 
 def test_next_search_line_can_match_whole_words_only() -> None:
@@ -139,21 +141,18 @@ def test_next_search_line_can_match_whole_words_only() -> None:
     assert next_search_line(diff, "beta", -1, whole_word=False) == 0
 
 
-def test_previous_modification_skips_staged_lines_inside_mixed_hunks() -> None:
+def test_previous_modification_jumps_to_previous_block_start() -> None:
     diff: Diff = [
         {"is_staged": False, "type": "-", "text": "first old"},
+        {"is_staged": False, "type": "+", "text": "first new"},
         {"is_staged": False, "type": "", "text": "ctx"},
         {"is_staged": True, "type": "+", "text": "staged new"},
         {"is_staged": False, "type": "-", "text": "unstaged old"},
         {"is_staged": False, "type": "+", "text": "unstaged new"},
     ]
 
-    last_unstaged_line = 4
-    previous_unstaged_line = 3
-    first_unstaged_line = 0
-
-    assert previous_modification(diff, last_unstaged_line) == previous_unstaged_line
-    assert previous_modification(diff, previous_unstaged_line) == first_unstaged_line
+    assert previous_modification(diff, 5) == 0
+    assert previous_modification(diff, 4) == 0
 
 
 def test_jump_to_file_line_skips_deleted_lines() -> None:

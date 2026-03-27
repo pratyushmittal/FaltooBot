@@ -35,8 +35,8 @@ TAB_SWITCH_COOLDOWN = 0.2
 
 class ReviewDiffView(TextArea):
     BINDINGS = [
-        Binding("j,ctrl+n", "cursor_down", priority=True, show=False),
-        Binding("k,ctrl+p", "cursor_up", priority=True, show=False),
+        Binding("j,ctrl+n", "review_cursor_down", priority=True, show=False),
+        Binding("k,ctrl+p", "review_cursor_up", priority=True, show=False),
         Binding("h", "cursor_left", priority=True, show=False),
         Binding("l", "cursor_right", priority=True, show=False),
         Binding("g", "review_scroll_home", priority=True, show=False),
@@ -52,6 +52,7 @@ class ReviewDiffView(TextArea):
         Binding(
             "[", "review_previous_modification", "Prev Edit", priority=True, show=True
         ),
+        Binding("V", "review_select_line", "Select Line", priority=True, show=True),
         Binding("n", "review_jump_next", "Next Search", priority=True, show=True),
         Binding("N", "review_jump_previous", "Prev Search", priority=True, show=True),
         Binding("*", "review_search_word_under_cursor", priority=True, show=False),
@@ -74,6 +75,8 @@ class ReviewDiffView(TextArea):
         self.review_view = review_view
         self.diff = diff
         self.last_tab_switch_at = 0.0
+        self.line_selection_anchor: int | None = None
+        self.line_selection_cursor: int | None = None
         super().__init__(_diff_text(diff), **kwargs)
         self.border_title = "0 comments"
 
@@ -104,6 +107,9 @@ class ReviewDiffView(TextArea):
         scroll_x, scroll_y = self.scroll_offset
         self.diff = await asyncio.to_thread(get_diff, workspace / self.file_path)
         self.load_text(_diff_text(self.diff))
+        if self.selection.is_empty:
+            self.line_selection_anchor = None
+            self.line_selection_cursor = None
         target_line = min(cursor[0], self.document.line_count - 1)
         target_column = min(cursor[1], len(self.document.get_line(target_line)))
         self.move_cursor((target_line, target_column))
@@ -165,7 +171,33 @@ class ReviewDiffView(TextArea):
     def _move_cursor_lines(self, delta: int) -> None:
         line, column = self.cursor_location
         target_line = max(0, min(line + delta, self.document.line_count - 1))
-        self.move_cursor((target_line, column), record_width=False)
+        if self.line_selection_anchor is None or self.line_selection_cursor is None:
+            self.move_cursor((target_line, column), record_width=False)
+            return
+        self.line_selection_cursor = max(
+            0,
+            min(self.line_selection_cursor + delta, self.document.line_count - 1),
+        )
+        self.selection = _line_selection(
+            self,
+            self.line_selection_anchor,
+            self.line_selection_cursor,
+        )
+
+    def action_review_cursor_down(self) -> None:
+        self._move_cursor_lines(1)
+
+    def action_review_cursor_up(self) -> None:
+        self._move_cursor_lines(-1)
+
+    def action_review_select_line(self) -> None:
+        self.line_selection_anchor = self.cursor_location[0]
+        self.line_selection_cursor = self.cursor_location[0]
+        self.selection = _line_selection(
+            self,
+            self.line_selection_anchor,
+            self.line_selection_anchor,
+        )
 
     def action_review_scroll_home(self) -> None:
         self.move_cursor((0, 0), record_width=False)
@@ -274,6 +306,11 @@ class ReviewDiffView(TextArea):
         )
 
     def action_review_escape(self) -> None:
+        if self.line_selection_anchor is not None:
+            self.selection = type(self.selection).cursor(self.cursor_location)
+            self.line_selection_anchor = None
+            self.line_selection_cursor = None
+            return
         if not self.review_view.search_term:
             return
         self.review_view.search_term = ""
@@ -337,6 +374,8 @@ class ReviewDiffView(TextArea):
             self.app.notify(error, severity="warning")
             return
         self.selection = type(self.selection).cursor(self.cursor_location)
+        self.line_selection_anchor = None
+        self.line_selection_cursor = None
         await self.reload_in_place()
 
     async def action_review_submit_reviews(self) -> None:
@@ -345,6 +384,22 @@ class ReviewDiffView(TextArea):
 
 def _diff_text(diff: Diff) -> str:
     return "\n".join(line["text"] for line in diff)
+
+
+def _line_selection(
+    view: ReviewDiffView,
+    anchor_line: int,
+    current_line: int,
+):
+    selection_type = type(view.selection)
+    if current_line < anchor_line:
+        return selection_type((anchor_line + 1, 0), (current_line, 0))
+    if current_line + 1 < view.document.line_count:
+        return selection_type((anchor_line, 0), (current_line + 1, 0))
+    return selection_type(
+        (anchor_line, 0),
+        (current_line, len(view.document.get_line(current_line))),
+    )
 
 
 def _review_range(view: ReviewDiffView) -> tuple[int, int]:

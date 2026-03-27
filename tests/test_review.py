@@ -284,10 +284,6 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
 
         await pilot.press("]")
         await pilot.pause(0)
-        assert viewer.cursor_location == (2, 0)
-
-        await pilot.press("]")
-        await pilot.pause(0)
         assert viewer.cursor_location == (5, 0)
 
         deleted_strip = viewer.render_line(1)
@@ -300,11 +296,61 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
 
         await pilot.press("[")
         await pilot.pause(0)
-        assert viewer.cursor_location == (2, 0)
+        assert viewer.cursor_location == (1, 0)
 
         await pilot.press("[")
         await pilot.pause(0)
-        assert viewer.cursor_location == (1, 0)
+        assert viewer.cursor_location == (5, 0)
+
+
+@pytest.mark.anyio
+async def test_review_visual_line_selection_extends_with_j_and_k(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.press("j", "j")
+        await pilot.pause(0)
+        line = viewer.cursor_location[0]
+
+        await pilot.press("V")
+        await pilot.pause(0)
+        assert viewer.selection.start == (line, 0)
+        assert viewer.selection.end == (line + 1, 0)
+
+        await pilot.press("k")
+        await pilot.pause(0)
+        assert viewer.cursor_location == (line - 1, 0)
+        assert viewer.selection.start == (line + 1, 0)
+        assert viewer.selection.end == (line - 1, 0)
+
+        cursor = viewer.cursor_location
+        await pilot.press("escape")
+        await pilot.pause(0)
+        assert viewer.selection.is_empty
+        assert viewer.cursor_location == cursor
+
+        await pilot.press("V")
+        await pilot.pause(0)
+        assert viewer.selection.start == (cursor[0], 0)
+        assert viewer.selection.end == (cursor[0] + 1, 0)
+
+        await pilot.press("j")
+        await pilot.pause(0)
+        assert viewer.selection.start == (cursor[0], 0)
+        assert viewer.selection.end == (cursor[0] + 2, 0)
 
 
 @pytest.mark.anyio
