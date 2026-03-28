@@ -319,7 +319,7 @@ class ReviewDiffView(TextArea):
     async def action_review_add(self) -> None:
         await self.reload_in_place()
         start, end = _review_range(self)
-        code = _range_code(self.diff, start, end)
+        code = _get_code_for_review_submission(self.diff, start, end)
         existing = get_review(
             self.review_view.reviews,
             filename=self.file_path,
@@ -413,9 +413,15 @@ def _review_range(view: ReviewDiffView) -> tuple[int, int]:
     return start, end
 
 
-def _range_code(diff: Diff, start: int, end: int) -> str:
+def _get_code_for_review_submission(diff: Diff, start: int, end: int) -> str:
     return "\n".join(
-        f"-{line['text']}" if line["type"] == "-" else line["text"]
+        (
+            f"-{line['text']}"
+            if line["type"] == "-"
+            else f"+{line['text']}"
+            if line["type"] == "+"
+            else line["text"]
+        )
         for line in diff[start : end + 1]
     )
 

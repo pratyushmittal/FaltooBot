@@ -1014,7 +1014,7 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
             "filename": Path("alpha.py"),
             "line_number_start": 2,
             "line_number_end": 4,
-            "code": "-b = 2\nb = 20\nc = 3",
+            "code": "-b = 2\n+b = 20\nc = 3",
             "comment": "Selected",
         }
 
