@@ -1,5 +1,5 @@
 {
-  "name": "faltoobot-website",
+  "name": "mittals-website",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.2.8",
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.6",
     "astro": "^5.14.0"

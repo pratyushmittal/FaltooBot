@@ -3,108 +3,77 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/Header.astro';
 ---
 
-<BaseLayout title="Faltoobot — WhatsApp-first AI with terminal chat">
+<BaseLayout title="Mittals AI — A family of practical AI tools">
   <div class="page-shell">
     <section class="hero">
-      <div class="hero__backdrop" aria-hidden="true">
-        <div class="hero__terminal">
-          <p>$ uv tool install faltoobot</p>
-          <p>$ faltoobot configure</p>
-          <p>$ faltoobot auth</p>
-          <p>$ faltoobot install</p>
-          <p>$ faltoochat "draft a release note"</p>
-        </div>
-        <div class="hero__messages">
-          <p>WhatsApp → Explain MCP in 5 bullets</p>
-          <p>Faltoobot → concise, useful, ready to send</p>
-          <p>Terminal → queue prompts, review diffs, fix code</p>
-        </div>
-      </div>
-      <div class="hero__overlay"></div>
+      <img
+        class="hero__family"
+        src="/plushies/family.png"
+        alt="The Mittals AI family mascots"
+        width="740"
+        height="493"
+      />
+      <div class="hero__wash"></div>
       <Header />
       <div class="hero__content">
-        <p class="hero__brand">Faltoobot</p>
-        <h1>WhatsApp-first AI, with a terminal chat built for real work.</h1>
+        <p class="hero__brand">Mittals AI</p>
+        <h1>A small family of practical AI tools for chat, coding, and everyday work.</h1>
         <p class="hero__lede">
-          Run one assistant on its own WhatsApp account, or use the same model
-          locally with <code>faltoochat</code> for coding, review, and everyday work.
+          Install the family once, then reach for the Mittal you need: Claw for WhatsApp,
+          Coder for local coding work, and Recipes for the habits that make both sharper.
         </p>
         <div class="hero__actions">
           <a class="button button--primary" href="#install">Install with uv</a>
-          <a class="button button--secondary" href="/docs/guide/">Read the guide</a>
+          <a class="button button--secondary" href="/docs/family-guide/">Read the family guide</a>
+        </div>
+        <div class="hero__command" id="install" aria-label="Install command">
+          <span>$</span>
+          <code>uv tool install mittals</code>
         </div>
       </div>
     </section>
 
     <main>
-      <section class="section section--install" id="install">
-        <div class="section__intro">
-          <p class="section__eyebrow">Install</p>
-          <h2>Install it in one command.</h2>
+      <section class="feature feature--claw" id="claw">
+        <div class="feature__media">
+          <img src="/plushies/claw.png" alt="Claw Mittal plush mascot" width="740" height="493" />
+        </div>
+        <div class="feature__copy">
+          <p class="section__eyebrow">Claw Mittal</p>
+          <h2>The WhatsApp AI agent.</h2>
           <p>
-            Start with the CLI install, then pair the WhatsApp account once.
-            After that, you can run the bot in the background or open the local terminal chat.
+            Claw Mittal handles the quick everyday work from the phone: replies, summaries,
+            image-aware chats, and personal assistance from its own WhatsApp account.
           </p>
-        </div>
-        <div class="install-command" aria-label="Install command">
-          <span>$</span>
-          <code>uv tool install faltoobot</code>
-        </div>
-        <p class="section__note">
-          For faster project search in <code>faltoochat</code>, also install <code>ripgrep</code>.
-        </p>
-        <div class="command-list">
-          <div>
-            <h3>Then configure it</h3>
-            <pre><code>faltoobot configure</code></pre>
-          </div>
-          <div>
-            <h3>Pair the WhatsApp account</h3>
-            <pre><code>faltoobot auth</code></pre>
-          </div>
-          <div>
-            <h3>Run in the background</h3>
-            <pre><code>faltoobot install</code></pre>
-          </div>
+          <a class="text-link" href="/docs/claw-mittal/">Open the getting started guide</a>
         </div>
       </section>
 
-      <section class="section section--use">
-        <div class="section__intro">
-          <p class="section__eyebrow">Use it your way</p>
-          <h2>One assistant, two surfaces.</h2>
+      <section class="feature feature--coder" id="coder">
+        <div class="feature__copy">
+          <p class="section__eyebrow">Coder Mittal</p>
+          <h2>The coding agent with review mode.</h2>
           <p>
-            Keep Faltoobot on WhatsApp for quick requests, and use <code>faltoochat</code>
-            when you want a local workspace with tools, images, queued prompts, and review mode.
+            Coder Mittal works in the terminal. Its edge is review mode: inspect diffs, leave
+            review comments, stage lines, and send the whole review back into chat.
           </p>
+          <a class="text-link" href="/docs/coder-mittal/">Open the getting started guide</a>
         </div>
-        <div class="split-copy">
-          <div>
-            <h3>On WhatsApp</h3>
-            <p>
-              Private replies, image support, and simple slash commands like <code>/help</code>
-              and <code>/reset</code>.
-            </p>
-          </div>
-          <div>
-            <h3>In the terminal</h3>
-            <p>
-              Use <code>faltoochat</code> for coding workflows, session history, local skills,
-              and git-aware review tabs.
-            </p>
-          </div>
+        <div class="feature__media">
+          <img src="/plushies/coder.png" alt="Coder Mittal plush mascot" width="493" height="740" />
         </div>
       </section>
 
-      <section class="section section--docs">
+      <section class="section section--recipes" id="recipes">
         <div class="section__intro">
-          <p class="section__eyebrow">Documentation</p>
-          <h2>Need the full setup guide?</h2>
+          <p class="section__eyebrow">Recipes</p>
+          <h2>Workflows that make the family sharper.</h2>
           <p>
-            Start with the guide for commands, config, allowlists, file layout, and development notes.
+            Recipes are short playbooks: prompts, conventions, and workflows that help Claw
+            Mittal and Coder Mittal do better work together.
           </p>
+          <a class="text-link" href="/docs/recipes/">Read the recipes guide</a>
         </div>
-        <a class="docs-link" href="/docs/guide/">Open the Faltoobot guide</a>
       </section>
     </main>
   </div>
