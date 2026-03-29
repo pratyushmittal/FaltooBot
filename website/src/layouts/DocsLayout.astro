@@ -1,0 +1,42 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from './BaseLayout.astro';
+import Header from '../components/Header.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const docs = (await getCollection('docs')).sort(
+  (left, right) => left.data.order - right.data.order,
+);
+const currentPath = Astro.url.pathname;
+const { title = 'Docs — Faltoobot', description } = Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <div class="page-shell page-shell--docs">
+    <Header />
+    <main class="docs-frame">
+      <aside class="docs-sidebar" aria-label="Documentation">
+        <p class="docs-sidebar__label">Documentation</p>
+        <ul class="docs-sidebar__list">
+          {docs.map((entry) => {
+            const href = `/docs/${entry.slug}/`;
+            return (
+              <li>
+                <a class:list={{ active: currentPath === href }} href={href}>
+                  {entry.data.title}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </aside>
+      <article class="docs-content">
+        <slot />
+      </article>
+    </main>
+  </div>
+</BaseLayout>

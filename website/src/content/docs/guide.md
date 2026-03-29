@@ -1,4 +1,8 @@
-# Faltoobot guide
+---
+title: Faltoobot guide
+description: Commands, setup, config, and development notes.
+order: 1
+---
 
 ## Overview
 
@@ -73,12 +77,13 @@ Example:
 ```toml
 [openai]
 api_key = "your_key_here"
-model = "gpt-5.2"
-thinking = "none"
+model = "gpt-5.4"
+thinking = "high"
+fast = false
 
 [bot]
 allow_groups = false
-allowed_chats = []
+allowed_chats = ["15551234567@s.whatsapp.net"]
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
 ```
 
@@ -178,10 +183,6 @@ uv run ruff check .
 uv run ruff format .
 ```
 
-The repo currently uses:
-- `ruff` for linting and formatting
-- `pre-commit` for local git hooks
-
 ## Notes
 
 - Phase 1 supports text everywhere plus image input in both `faltoochat` and WhatsApp chats, including multi-image WhatsApp albums.
@@ -193,13 +194,3 @@ The repo currently uses:
 - `faltoobot update` expects a clean git working tree.
 - `faltoobot install` writes a `launchd` runner that uses `uv run faltoobot run`.
 - This repo currently implements `install` as a macOS-only command.
-
-## Future phase ideas
-
-- support multiple model providers
-- media understanding
-- allow voice notes
-- contact routing / policies
-- better prompt templates
-- admin commands from WhatsApp
-- webhooks / observability

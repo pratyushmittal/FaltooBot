@@ -138,6 +138,23 @@ In terminal chat:
 
 `faltoochat` supports image input, queued prompts while answering, and `Shift+Enter` for multiline input. Paste an image file path or use `Ctrl+V` to attach the current macOS clipboard image. WhatsApp chats now also support incoming image messages, including captioned images, image-only prompts, and multi-image albums.
 
+### Development
+
+Run the Astro docs site locally:
+
+```bash
+cd website
+npm install
+npm run dev
+```
+
+Build the static site locally:
+
+```bash
+cd website
+npm run build
+```
+
 ### Tests
 
 Run the test suite (parallel):
@@ -152,4 +169,4 @@ uv run pytest -n auto
 uv tool upgrade faltoobot
 ```
 
-Need more details? See `docs/guide.md`.
+Need more details? See the Astro docs site in `website/`.

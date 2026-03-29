@@ -1,0 +1,27 @@
+---
+import { getCollection } from 'astro:content';
+import DocsLayout from '../../layouts/DocsLayout.astro';
+
+const docs = (await getCollection('docs')).sort(
+  (left, right) => left.data.order - right.data.order,
+);
+---
+
+<DocsLayout title="Docs — Faltoobot">
+  <header class="docs-header">
+    <p class="section__eyebrow">Documentation</p>
+    <h1>Faltoobot docs</h1>
+    <p>Everything you need to install, configure, and run Faltoobot.</p>
+  </header>
+
+  <ul class="docs-index-list">
+    {docs.map((entry) => (
+      <li>
+        <a href={`/docs/${entry.slug}/`}>
+          <strong>{entry.data.title}</strong>
+          {entry.data.description && <span>{entry.data.description}</span>}
+        </a>
+      </li>
+    ))}
+  </ul>
+</DocsLayout>

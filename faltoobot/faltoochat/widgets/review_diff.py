@@ -5,6 +5,9 @@ from typing import TYPE_CHECKING
 
 from rich.segment import Segment
 from rich.style import Style
+from tree_sitter import Language
+import tree_sitter_lua
+import tree_sitter_typescript
 from textual import events
 from textual.binding import Binding
 from textual.strip import Strip
@@ -71,13 +74,20 @@ class ReviewDiffView(TextArea):
         review_view: "ReviewView",
         **kwargs,
     ) -> None:
+        requested_language = kwargs.pop("language", None)
         self.file_path = file_path
         self.review_view = review_view
         self.diff = diff
         self.last_tab_switch_at = 0.0
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
-        super().__init__(_diff_text(diff), **kwargs)
+        self.missing_language_package: str | None = None
+        super().__init__(_diff_text(diff), language=None, **kwargs)
+        _register_extra_languages(self)
+        if requested_language in self.available_languages:
+            self.language = requested_language
+        elif requested_language is not None:
+            self.missing_language_package = _language_package(requested_language)
         self.border_title = "0 comments"
 
     @property
@@ -86,6 +96,14 @@ class ReviewDiffView(TextArea):
         if not self.show_line_numbers:
             return 0
         return super().gutter_width + 1
+
+    def on_mount(self) -> None:
+        if self.missing_language_package is None:
+            return
+        self.app.notify(
+            f"Install `{self.missing_language_package}` for {self.file_path.suffix} syntax highlighting.",
+            severity="warning",
+        )
 
     def on_show(self, _event: events.Show) -> None:
         self.focus()
@@ -380,6 +398,36 @@ class ReviewDiffView(TextArea):
 
     async def action_review_submit_reviews(self) -> None:
         await self.review_view.submit_reviews()
+
+
+def _register_extra_languages(view: ReviewDiffView) -> None:
+    view.register_language(
+        "lua",
+        Language(tree_sitter_lua.language()),
+        tree_sitter_lua.HIGHLIGHTS_QUERY,
+    )
+    highlight_query = tree_sitter_typescript.HIGHLIGHTS_QUERY
+    view.register_language(
+        "typescript",
+        Language(tree_sitter_typescript.language_typescript()),
+        highlight_query,
+    )
+    view.register_language(
+        "tsx",
+        Language(tree_sitter_typescript.language_tsx()),
+        highlight_query,
+    )
+
+
+def _language_package(language: str) -> str:
+    return {
+        "c": "tree-sitter-c",
+        "cpp": "tree-sitter-cpp",
+        "lua": "tree-sitter-lua",
+        "ruby": "tree-sitter-ruby",
+        "tsx": "tree-sitter-typescript",
+        "typescript": "tree-sitter-typescript",
+    }.get(language, f"tree-sitter-{language}")
 
 
 def _diff_text(diff: Diff) -> str:

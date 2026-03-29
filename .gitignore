@@ -8,3 +8,6 @@ __pycache__/
 .pytest_cache/
 .envrc
 build
+website/node_modules/
+website/dist/
+website/.astro/

@@ -102,6 +102,29 @@ def test_review_diff_gutter_width_reserves_space_for_diff_symbol() -> None:
     assert viewer.gutter_width == EXPECTED_GUTTER_WIDTH
 
 
+def test_review_diff_falls_back_to_plain_text_for_missing_language() -> None:
+    viewer = ReviewDiffView(
+        [],
+        file_path=Path("alpha.rb"),
+        review_view=review_view_stub(),  # type: ignore[arg-type]
+        language="ruby",
+    )
+
+    assert viewer.language is None
+    assert viewer.missing_language_package == "tree-sitter-ruby"
+
+
+def test_review_diff_registers_typescript_languages() -> None:
+    viewer = ReviewDiffView(
+        [],
+        file_path=Path("alpha.ts"),
+        review_view=review_view_stub(),  # type: ignore[arg-type]
+    )
+
+    assert "typescript" in viewer.available_languages
+    assert "tsx" in viewer.available_languages
+
+
 def test_review_range_uses_selected_text_to_include_last_selected_line() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(10)],
