@@ -39,6 +39,7 @@ from .stream import get_event_text
 from .widgets import QueueWidget
 
 STARTUP_MESSAGES_LIMIT = 100
+AUTO_SCROLL_NEAR_BOTTOM_LINES = 3
 SLASH_COMMANDS = {
     "/reset": "start a fresh session",
     "/tree": "open the current session messages file",
@@ -431,8 +432,9 @@ class FaltooChatApp(App[None]):
     ) -> None:
         block: Markdown | None = None
         answer_stream: Any | None = None
-        block_raw_text = ""
+        raw_text = ""
         transcript.anchor()
+
         async for event in sessions.get_answer_streaming(
             session=self.session,
             question=question,
@@ -442,32 +444,40 @@ class FaltooChatApp(App[None]):
             if not text:
                 if is_new:
                     await _stop_answer_stream(answer_stream)
-                    answer_stream = None
-                    block = None
-                    block_raw_text = ""
+                    answer_stream, block, raw_text = None, None, ""
                 continue
+
+            follow = (
+                transcript.max_scroll_y - transcript.scroll_y
+                <= AUTO_SCROLL_NEAR_BOTTOM_LINES
+            )
+
             if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
                 await _stop_answer_stream(answer_stream)
-                answer_stream = None
-                block = None
-                block_raw_text = ""
+                answer_stream, block, raw_text = None, None, ""
                 await transcript.mount(*_render_blocks(text, classes))
+                if follow:
+                    transcript.scroll_end(animate=False, immediate=True)
                 continue
+
             if block is None or is_new:
                 await _stop_answer_stream(answer_stream)
-                answer_stream = None
+                answer_stream, raw_text = None, ""
                 block = Markdown("", classes=classes)
-                block_raw_text = ""
                 await transcript.mount(block)
                 if classes == "answer":
                     answer_stream = Markdown.get_stream(block)
-            block_raw_text = await _write_stream_chunk(
+
+            raw_text = await _write_stream_chunk(
                 block,
                 classes,
                 text,
-                block_raw_text,
+                raw_text,
                 answer_stream,
             )
+            if follow:
+                transcript.scroll_end(animate=False, immediate=True)
+
         await _stop_answer_stream(answer_stream)
 
     async def submit_message(self, message_item: MessageItem):
@@ -605,16 +615,13 @@ class Composer(TextArea):
         self.update_slash_commands()
         return True
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if event.text_area is self:
-            self.update_slash_commands()
-
-    def on_text_area_selection_changed(
+    def on_text_area_changed(
         self,
-        event: TextArea.SelectionChanged,
+        _event: TextArea.Changed | TextArea.SelectionChanged,
     ) -> None:
-        if event.text_area is self:
-            self.update_slash_commands()
+        self.update_slash_commands()
+
+    on_text_area_selection_changed = on_text_area_changed
 
     def on_key(self, event: events.Key) -> None:
         if event.key not in {"up", "down"} or not self.slash_matches:
