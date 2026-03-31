@@ -39,7 +39,7 @@ from .stream import get_event_text
 from .widgets import QueueWidget
 
 STARTUP_MESSAGES_LIMIT = 100
-AUTO_SCROLL_NEAR_BOTTOM_LINES = 3
+AUTO_SCROLL_RESUME_LINES = 3
 SLASH_COMMANDS = {
     "/reset": "start a fresh session",
     "/tree": "open the current session messages file",
@@ -449,7 +449,7 @@ class FaltooChatApp(App[None]):
 
             follow = (
                 transcript.max_scroll_y - transcript.scroll_y
-                <= AUTO_SCROLL_NEAR_BOTTOM_LINES
+                <= AUTO_SCROLL_RESUME_LINES
             )
 
             if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
@@ -457,7 +457,7 @@ class FaltooChatApp(App[None]):
                 answer_stream, block, raw_text = None, None, ""
                 await transcript.mount(*_render_blocks(text, classes))
                 if follow:
-                    transcript.scroll_end(animate=False, immediate=True)
+                    transcript.anchor()
                 continue
 
             if block is None or is_new:
@@ -476,7 +476,7 @@ class FaltooChatApp(App[None]):
                 answer_stream,
             )
             if follow:
-                transcript.scroll_end(animate=False, immediate=True)
+                transcript.anchor()
 
         await _stop_answer_stream(answer_stream)
 
