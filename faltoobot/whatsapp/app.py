@@ -23,15 +23,25 @@ __all__ = [
 ]
 
 
+def _quiet_whatsapp_logs() -> None:
+    for name in (
+        "whatsmeow",
+        "whatsmeow.Client",
+        "whatsmeow.Client.Socket",
+        "Whatsmeow.Database",
+    ):
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+
 def configure_logging(log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    if logging.getLogger().handlers:
-        return
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[logging.StreamHandler()],
+        force=True,
     )
+    _quiet_whatsapp_logs()
 
 
 async def wait_for_login(client: NewAClient) -> None:
