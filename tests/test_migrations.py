@@ -23,8 +23,6 @@ def make_config(tmp_path: Path) -> Config:
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        system_prompt="",
-        transcription_prompt="",
         allow_groups=False,
         allowed_chats=set(),
     )

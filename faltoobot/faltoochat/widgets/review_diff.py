@@ -23,7 +23,7 @@ from ..editor_utils import (
     previous_word_location,
     word_under_cursor,
 )
-from ..git import apply_selected_diff_lines, get_selected_change_state
+from ..git import apply_selected_diff_lines, get_selected_change_state, stage_file
 from ..review_api import get_review
 
 
@@ -63,6 +63,7 @@ class ReviewDiffView(TextArea):
         Binding("escape", "review_escape", "Leave Search", priority=True, show=True),
         Binding("a,c", "review_add", priority=True, show=True),
         Binding("s", "review_stage_lines", priority=True, show=True),
+        Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
         Binding("shift+enter", "review_submit_reviews", priority=True, show=True),
     ]
 
@@ -389,6 +390,16 @@ class ReviewDiffView(TextArea):
             (start, end),
             is_staged=target,
         ):
+            self.app.notify(error, severity="warning")
+            return
+        self.selection = type(self.selection).cursor(self.cursor_location)
+        self.line_selection_anchor = None
+        self.line_selection_cursor = None
+        await self.reload_in_place()
+
+    async def action_review_stage_file(self) -> None:
+        workspace = self.app.workspace  # type: ignore[attr-defined]
+        if error := await asyncio.to_thread(stage_file, workspace, self.file_path):
             self.app.notify(error, severity="warning")
             return
         self.selection = type(self.selection).cursor(self.cursor_location)

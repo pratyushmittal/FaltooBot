@@ -5,6 +5,20 @@ from typing import Any
 from .diff import Diff
 
 
+def stage_file(workspace: Path, file_path: Path) -> str | None:
+    """Stage the full file in git."""
+    result = subprocess.run(
+        ["git", "add", "--", str(file_path)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return None
+    return (result.stderr or result.stdout or "Could not stage the file.").strip()
+
+
 def apply_selected_diff_lines(
     diff: Diff,
     file_path: Path,

@@ -480,14 +480,6 @@ def configure_app(config: Config) -> None:
                 "allowed_chats": prompt_allowed_chats(
                     list(bot.get("allowed_chats") or []),
                 ),
-                "system_prompt": prompt_text(
-                    "System prompt",
-                    str(bot.get("system_prompt") or ""),
-                ),
-                "transcription_prompt": prompt_text(
-                    "Transcription prompt",
-                    str(bot.get("transcription_prompt") or ""),
-                ),
             },
         }
     )

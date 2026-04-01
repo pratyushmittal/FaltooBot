@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual import events
 from textual.binding import Binding
@@ -6,11 +6,12 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from faltoobot.gpt_utils import MessageItem
+from faltoobot.session_utils import decompose_local_message_item
 from .. import submit_queue
 from ..messages_rendering import get_item_text
 
 if TYPE_CHECKING:
-    from faltoobot.faltoochat.app import FaltooChatApp
+    from faltoobot.faltoochat.app import Composer, FaltooChatApp
 
 QUEUE_PREVIEW_CHARS = 72
 
@@ -46,6 +47,7 @@ class QueueWidget(Vertical):
     BINDINGS = [
         Binding("up", "queue_previous", "Previous", priority=True),
         Binding("down", "queue_next", "Next", priority=True),
+        Binding("enter", "edit_selected", "Edit", priority=True),
         Binding("space", "toggle_auto_submit", "Toggle auto", priority=True),
         Binding("delete", "remove_selected", "Remove", priority=True),
         Binding("backspace", "remove_selected", "Remove", priority=True),
@@ -176,6 +178,31 @@ class QueueWidget(Vertical):
             return
         submit_queue.remove_from_queue(self.app.session, message_id)
         await self.refresh_queue()
+
+    async def action_edit_selected(self) -> None:
+        message_id = self.selected_message_id()
+        # comment: hidden or empty queues can still briefly receive key presses during refresh.
+        if message_id is None:
+            return
+        message_item = self.messages[self.selected]
+        submit_queue.remove_from_queue(self.app.session, message_id)
+        await self.refresh_queue()
+
+        composer = cast("Composer", self.app.query_one("#composer"))
+        question, attachments = decompose_local_message_item(message_item)
+        composer.load_text(question)
+        last_row = composer.document.line_count - 1
+        composer.move_cursor((last_row, len(composer.document.get_line(last_row))))
+        composer.attachments = list(attachments)
+        count = len(attachments)
+        composer.border_title = (
+            f"{count} attachment"
+            if count == 1
+            else f"{count} attachments"
+            if count
+            else ""
+        )
+        self.app.focus_composer()
 
     async def action_move_selected_up(self) -> None:
         message_id = self.selected_message_id()

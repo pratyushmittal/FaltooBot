@@ -20,7 +20,7 @@ from faltoobot.gpt_utils import (
     StreamingReplyItem,
     get_streaming_reply,
 )
-from faltoobot.instructions import system_instructions
+from faltoobot.instructions import get_system_instructions
 from faltoobot.skills import get_search_skills_tool
 from faltoobot.tools import get_run_shell_call_tool
 
@@ -381,7 +381,7 @@ async def get_answer_streaming(
         set_messages(session, messages_json)
 
         async for event in get_streaming_reply(
-            instructions=system_instructions(config, workspace),
+            instructions=get_system_instructions(config, session[0], workspace),
             input=messages_json["messages"],
             tools=[
                 get_run_shell_call_tool(Path(messages_json["workspace"])),

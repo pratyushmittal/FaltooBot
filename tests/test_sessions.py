@@ -62,7 +62,7 @@ def test_get_session_creates_messages_json_and_workspace(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-    chat_key = "123@lid"
+    chat_key = "code@test"
 
     session = sessions.get_session(chat_key=chat_key)
     payload = sessions.get_messages(session)
@@ -80,7 +80,6 @@ def test_get_session_creates_messages_json_and_workspace(
 def _config(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         root=tmp_path / ".faltoobot",
-        system_prompt="system prompt",
         openai_model="gpt-5-mini",
         openai_api_key="test",
         openai_thinking="low",
@@ -138,6 +137,11 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "build_config",
         lambda: _config(tmp_path),
     )
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
     calls: list[MessageHistory] = []
     tool_defs: list[Any] = []
 
@@ -182,7 +186,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         )
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
-    chat_key = "123@lid"
+    chat_key = "code@test"
 
     session = sessions.get_session(chat_key=chat_key)
     payload = await sessions.get_answer(
@@ -284,6 +288,11 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         "build_config",
         lambda: _config(tmp_path),
     )
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
     client = FakeClient()
     monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
 
@@ -301,7 +310,7 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
     image = tmp_path / "large.png"
     Image.new("RGB", (2000, 1200), color="red").save(image)
 
-    chat_key = "123@lid"
+    chat_key = "code@test"
     session = sessions.get_session(
         chat_key=chat_key,
         workspace=tmp_path / "workspace",
@@ -335,6 +344,11 @@ async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
     client = FakeClient()
     monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
 
@@ -356,7 +370,7 @@ async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
 
     attachments = [first, second]
     session = sessions.get_session(
-        chat_key="123@lid",
+        chat_key="code@test",
         workspace=tmp_path / "workspace",
     )
     payload = await sessions.get_answer(

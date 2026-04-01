@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 from pathlib import Path
 
@@ -20,7 +19,7 @@ async def wait_for_idle(app: FaltooChatApp) -> None:
         await asyncio.sleep(0.05)
 
 
-def config_text(system_prompt: str) -> str:
+def config_text() -> str:
     return "\n".join(
         [
             "# Faltoobot config",
@@ -34,7 +33,6 @@ def config_text(system_prompt: str) -> str:
             "[bot]",
             "allow_groups = false",
             "allowed_chats = []",
-            f"system_prompt = {json.dumps(system_prompt)}",
             "",
         ]
     )
@@ -75,10 +73,7 @@ async def test_minchat_streams_ls_and_follow_up_e2e(
     config_path = home / ".faltoobot" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        config_text(
-            "If the user asks to run a shell command, use the shell tool. "
-            "When asked what command you ran, reply with only the command."
-        ),
+        config_text(),
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))

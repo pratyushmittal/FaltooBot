@@ -7,11 +7,8 @@ from textual import events
 
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
-from faltoobot.faltoochat.app import (
-    Composer,
-    FaltooChatApp,
-    get_local_user_message_item,
-)
+from faltoobot.faltoochat.app import Composer, FaltooChatApp
+from faltoobot.session_utils import get_local_user_message_item
 from faltoobot.faltoochat.review import ReviewView
 from faltoobot.faltoochat.widgets import QueueWidget
 from textual.widgets import Markdown, OptionList, TabbedContent
@@ -353,7 +350,7 @@ async def test_minchat_submits_composer_attachments(
         {
             "session": app.session,
             "question": "What is this?",
-            "attachments": [str(image.resolve())],
+            "attachments": [image.resolve()],
         }
     ]
 
@@ -485,6 +482,32 @@ async def test_minchat_queue_widget_keybindings_update_queue(
         await pilot.pause(0)
         queue = submit_queue.get_queue(app.session)
         assert [item["content"] for item in queue] == ["second"]
+
+
+@pytest.mark.anyio
+async def test_minchat_queue_enter_loads_selected_message_back_into_composer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    submit_queue.add_to_queue(
+        app.session,
+        get_local_user_message_item("draft this again", ["/tmp/cat.png"]),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        queue_widget = app.query_one(QueueWidget)
+        queue_widget.focus()
+
+        await pilot.press("enter")
+        await pilot.pause(0)
+
+        composer = app.query_one("#composer", Composer)
+        assert composer.text == "draft this again"
+        assert composer.attachments == [Path("/tmp/cat.png")]
+        assert composer.border_title == "1 attachment"
+        assert submit_queue.get_queue(app.session) == []
 
 
 @pytest.mark.anyio

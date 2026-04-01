@@ -12,6 +12,7 @@ from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
 from faltoobot.config import Config, normalize_chat
+from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
     get_answer,
@@ -234,7 +235,7 @@ async def process_turn_locked(
                 client,
                 event,
                 openai_api_key=config.openai_api_key,
-                transcription_prompt=config.transcription_prompt,
+                transcription_prompt=TRANSCRIPTION_PROMPT,
                 model=config.openai_transcription_model,
                 normalization_model=config.openai_model,
             )

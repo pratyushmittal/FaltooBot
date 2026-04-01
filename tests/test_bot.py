@@ -49,8 +49,6 @@ def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        system_prompt="",
-        transcription_prompt="Prefer English script.",
         allow_groups=False,
         allowed_chats=allowed_chats,
     )
@@ -290,6 +288,7 @@ async def test_process_message_transcribes_voice_notes(
         }
 
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr(runtime, "TRANSCRIPTION_PROMPT", "Prefer English script.")
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=7)
@@ -318,7 +317,9 @@ async def test_process_message_rejects_long_voice_notes(
     client = FakePresenceClient()
 
     async def fake_get_answer(*args: object, **kwargs: object) -> dict[str, object]:
-        raise AssertionError("get_answer should not run for oversized voice notes")
+        raise AssertionError(
+            "get_answer_for_whatsapp should not run for oversized voice notes"
+        )
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 

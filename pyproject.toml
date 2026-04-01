@@ -26,6 +26,7 @@ faltoochat = "faltoobot.faltoochat.app:main"
 [tool.setuptools.packages.find]
 include = ["faltoobot*"]
 
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",

@@ -647,6 +647,35 @@ async def test_review_stage_lines_updates_diff_and_shows_staged_prefix(
 
 
 @pytest.mark.anyio
+async def test_review_stage_file_stages_current_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await viewer.action_review_stage_file()
+        await pilot.pause(0)
+
+        diff = get_diff(workspace / "alpha.py")
+        assert any(line["is_staged"] for line in diff if line["type"] in {"+", "-"})
+        assert not any(
+            not line["is_staged"] for line in diff if line["type"] in {"+", "-"}
+        )
+        assert viewer.selection.is_empty
+
+
+@pytest.mark.anyio
 async def test_review_adds_review_via_modal_and_submits_in_chat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

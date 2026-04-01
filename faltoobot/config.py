@@ -10,15 +10,6 @@ MODEL_OPTIONS = ("gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-code
 TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
-DEFAULT_SYSTEM_PROMPT = (
-    "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. "
-    "Keep replies practical and readable on mobile."
-)
-DEFAULT_TRANSCRIPTION_PROMPT = (
-    "Transcribe clearly and faithfully. Output English script only. Never output Urdu script. "
-    "For Hindi, Urdu, and Hinglish speech, use phonetic transliteration in English letters "
-    "instead of native script."
-)
 
 
 @dataclass(slots=True)
@@ -36,8 +27,6 @@ class Config:
     openai_thinking: str
     openai_fast: bool
     openai_transcription_model: str
-    system_prompt: str
-    transcription_prompt: str
     allow_groups: bool
     allowed_chats: set[str]
 
@@ -59,8 +48,6 @@ def default_config() -> dict[str, dict[str, Any]]:
         "bot": {
             "allow_groups": False,
             "allowed_chats": [],
-            "system_prompt": DEFAULT_SYSTEM_PROMPT,
-            "transcription_prompt": DEFAULT_TRANSCRIPTION_PROMPT,
         },
     }
 
@@ -88,13 +75,6 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 bot.get("allow_groups"), defaults["bot"]["allow_groups"]
             ),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
-            "system_prompt": as_str(
-                bot.get("system_prompt"), defaults["bot"]["system_prompt"]
-            ),
-            "transcription_prompt": as_str(
-                bot.get("transcription_prompt"),
-                defaults["bot"]["transcription_prompt"],
-            ),
         },
     }
 
@@ -149,8 +129,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
             f"allowed_chats = [{allowed}]",
-            f"system_prompt = {quote(str(bot['system_prompt']))}",
-            f"transcription_prompt = {quote(str(bot['transcription_prompt']))}",
             "",
         ]
     )
@@ -236,11 +214,6 @@ def build_config() -> Config:
             openai.get("transcription_model"),
             TRANSCRIPTION_MODEL_OPTIONS[1],
             TRANSCRIPTION_MODEL_OPTIONS,
-        ),
-        system_prompt=as_str(bot.get("system_prompt"), DEFAULT_SYSTEM_PROMPT),
-        transcription_prompt=as_str(
-            bot.get("transcription_prompt"),
-            DEFAULT_TRANSCRIPTION_PROMPT,
         ),
         allow_groups=as_bool(bot.get("allow_groups"), False),
         allowed_chats=as_chat_set(bot.get("allowed_chats")),
