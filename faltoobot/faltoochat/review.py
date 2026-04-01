@@ -284,6 +284,9 @@ class ReviewView(TabPane):
             tabs = self.query_one("#review-tabs", TabbedContent)
         except NoMatches:
             return
+        # comment: TabbedContent builds its internal tab strip asynchronously during startup.
+        if not tabs.query(Tabs):
+            return
         for pane in tabs.query(TabPane):
             if pane.id is None or pane.id == NO_CHANGES_PANE_ID:
                 continue
@@ -331,7 +334,9 @@ class ReviewView(TabPane):
             self.app.notify(message)
             return
 
-        # comment: nested tab internals can still be mounting during startup workers.
+        # comment: TabbedContent builds its internal tab strip asynchronously during startup.
+        if not tabs.query(Tabs):
+            return
         try:
             tabs.hide_tab(NO_CHANGES_PANE_ID)
         except (NoMatches, Tabs.TabError):

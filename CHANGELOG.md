@@ -2,6 +2,18 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.3.0 — 2026-04-01
+
+### Added
+- The project now includes an Astro-powered website and docs site, with a new Mittals AI landing page and GitHub Pages deployment workflow.
+- Queue items in `faltoochat` can now be pulled back into the composer with `Enter`, making it easier to edit and resend queued prompts.
+- Review mode can now stage the full current file with `S`, in addition to line-level staging.
+
+### Changed
+- Agent prompts are now hard-coded in Python modules and selected automatically by session type, so coding sessions and WhatsApp chats use separate built-in instructions without prompt fields in `config.toml`.
+- Review submission snippets now preserve both deleted and added lines with `-` and `+` prefixes.
+- WhatsApp auth keeps the important success logs while hiding noisy reconnect and socket-close chatter.
+
 ## 1.2.1 — 2026-03-27
 
 ### Changed
