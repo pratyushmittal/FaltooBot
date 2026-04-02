@@ -20,6 +20,7 @@ def make_config(tmp_path: Path) -> Config:
         launch_agent=home / "Library" / "LaunchAgents" / "com.faltoobot.agent.plist",
         run_script=root / "run.sh",
         openai_api_key="",
+        openai_oauth="",
         openai_model="gpt-5.4",
         openai_thinking="high",
         openai_fast=False,
@@ -101,6 +102,27 @@ def test_render_log_line_uses_level_colors() -> None:
     assert cli.render_log_line("Traceback (most recent call last):").style == "bold red"
 
 
+def test_render_config_includes_oauth_path() -> None:
+    text = cli.render_config(
+        {
+            "openai": {
+                "api_key": "",
+                "oauth": "~/.faltoobot/auth.json",
+                "model": "gpt-5.4",
+                "thinking": "high",
+                "fast": False,
+                "transcription_model": "gpt-4o-mini-transcribe",
+            },
+            "bot": {
+                "allow_groups": False,
+                "allowed_chats": [],
+            },
+        }
+    )
+
+    assert 'oauth = "~/.faltoobot/auth.json"' in text
+
+
 def test_render_config_includes_transcription_model() -> None:
     text = cli.render_config(
         {
@@ -130,6 +152,19 @@ def test_merge_config_clamps_invalid_transcription_model() -> None:
     )
 
     assert merged["openai"]["transcription_model"] == "gpt-4o-transcribe"
+
+
+def test_handle_command_runs_login(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        cli, "run_openai_login", lambda console=None: calls.append("ran")
+    )
+
+    cli.handle_command(cli.argparse.Namespace(command="login"), config)
+
+    assert calls == ["ran"]
 
 
 def test_handle_command_runs_makemigrations(monkeypatch, tmp_path: Path) -> None:

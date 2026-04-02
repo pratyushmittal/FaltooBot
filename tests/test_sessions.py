@@ -82,6 +82,7 @@ def _config(tmp_path: Path) -> SimpleNamespace:
         root=tmp_path / ".faltoobot",
         openai_model="gpt-5-mini",
         openai_api_key="test",
+        openai_oauth="",
         openai_thinking="low",
         openai_fast=False,
     )
@@ -335,6 +336,64 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         }
     ]
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(
+        sessions,
+        "build_config",
+        lambda: SimpleNamespace(
+            root=tmp_path / ".faltoobot",
+            openai_model="gpt-5-mini",
+            openai_api_key="",
+            openai_oauth="",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
+    monkeypatch.setattr(sessions, "uses_chatgpt_oauth", lambda config: True)
+    client = FakeClient()
+    monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+    ):
+        assert instructions.startswith("system prompt")
+        if False:
+            yield FakeCompletedEvent([], {})
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+
+    image = tmp_path / "small.png"
+    Image.new("RGB", (8, 8), color="red").save(image)
+
+    session = sessions.get_session(
+        chat_key="code@test",
+        workspace=tmp_path / "workspace",
+    )
+    payload = await sessions.get_answer(
+        session=session,
+        question="Look",
+        attachments=[image],
+    )
+
+    assert client.files.calls == []
+    assert payload["messages"][0]["content"][1]["type"] == "input_image"
+    assert payload["messages"][0]["content"][1]["image_url"].startswith(
+        "data:image/png;base64,"
+    )
 
 
 @pytest.mark.anyio

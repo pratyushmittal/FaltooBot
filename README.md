@@ -55,6 +55,7 @@ Example `~/.faltoobot/config.toml`:
 ```toml
 [openai]
 api_key = "your_key_here"
+oauth = ""
 model = "gpt-5.4"
 thinking = "high"
 fast = false
@@ -65,7 +66,7 @@ allowed_chats = ["15551234567@s.whatsapp.net"]
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
 ```
 
-If `api_key` is left blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
+If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oauth` is blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
 Set `allowed_chats` to your own WhatsApp JID or phone number to keep the bot private. Leave it empty only if you want Faltoobot to reply to anyone who can message that account.
 
@@ -75,6 +76,14 @@ Pair the WhatsApp account once:
 
 ```bash
 faltoobot auth
+```
+
+### Sign in to OpenAI Codex
+
+For `faltoochat`, you can also bootstrap a Codex OAuth login directly. This saves Faltoobot's own auth file under `~/.faltoobot/auth.json` by default and writes that path into `openai.oauth` in your config:
+
+```bash
+faltoobot login
 ```
 
 ### Run in background

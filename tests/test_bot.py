@@ -45,6 +45,7 @@ def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
         launch_agent=root / "launch-agent.plist",
         run_script=root / "run.sh",
         openai_api_key="",
+        openai_oauth="",
         openai_model="gpt-5.4",
         openai_thinking="high",
         openai_fast=False,

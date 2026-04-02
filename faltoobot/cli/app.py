@@ -32,6 +32,7 @@ from faltoobot.config import (
     render_config,
 )
 from faltoobot.cli.migrations import run_release_migrations
+from faltoobot.openai_login import run_openai_login
 from faltoobot.cli.migrations import main as run_makemigrations_command
 
 console = Console()
@@ -460,6 +461,10 @@ def configure_app(config: Config) -> None:
                     str(openai.get("api_key") or ""),
                     secret=True,
                 ),
+                "oauth": prompt_text(
+                    "OpenAI OAuth auth.json path",
+                    str(openai.get("oauth") or ""),
+                ),
                 "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
                 "thinking": prompt_thinking(
                     str(openai.get("thinking") or DEFAULT_THINKING)
@@ -497,6 +502,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("auth", help="authenticate the WhatsApp session")
+    sub.add_parser("login", help="sign in to OpenAI Codex for faltoochat")
     sub.add_parser("configure", help="create or update the config file interactively")
     sub.add_parser("run", help="run the WhatsApp bot in the foreground")
     sub.add_parser("install", help="install the background service")
@@ -550,6 +556,7 @@ def handle_command(args: argparse.Namespace, config: Config) -> None:
         "configure": lambda: (ensure_config_file(), configure_app(config)),
         "install": lambda: install_service(config),
         "makemigrations": lambda: run_makemigrations_command(),
+        "login": lambda: run_openai_login(console),
         "logs": lambda: tail_file(
             config.log_file, lines=args.lines, follow=args.follow
         ),

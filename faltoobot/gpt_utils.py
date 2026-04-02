@@ -14,7 +14,8 @@ from openai.types.responses import (
     ResponsesServerEvent,
 )
 
-from faltoobot.config import build_config
+from faltoobot.config import Config, build_config
+from faltoobot.openai_auth import get_openai_client_options
 
 COMPACT_THRESHOLD = 210_000
 
@@ -42,6 +43,16 @@ def _parse_docs(docs: str) -> dict[str, Any]:
 
 def _callable_name(function: Callable[..., Any]) -> str:
     return getattr(function, "__name__", type(function).__name__)
+
+
+def get_openai_client(config: Config) -> AsyncOpenAI:
+    api_key, base_url, default_headers = get_openai_client_options(config)
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    if default_headers:
+        kwargs["default_headers"] = default_headers
+    return AsyncOpenAI(**kwargs)
 
 
 def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
@@ -196,7 +207,7 @@ async def get_streaming_reply(
     tools: list[Tool],
 ) -> AsyncIterator[StreamingReplyItem]:
     config = build_config()
-    client = AsyncOpenAI(api_key=config.openai_api_key)
+    client = get_openai_client(config)
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
 

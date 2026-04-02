@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import json
 import mimetypes
@@ -13,7 +14,8 @@ from uuid import uuid4
 from openai import AsyncOpenAI
 from PIL import Image
 
-from faltoobot.config import app_root, build_config
+from faltoobot.config import Config, app_root, build_config
+from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.gpt_utils import (
     MessageHistory,
     MessageItem,
@@ -312,12 +314,34 @@ async def _upload_attachment(
     return {"type": "input_image", "file_id": uploaded.id, "detail": "auto"}
 
 
+def _inline_image_item(workspace: Path, source: Attachment) -> dict[str, Any]:
+    path = _attachment_path(source, workspace)
+    if not path.exists():
+        raise ValueError(f"Attachment not found: {source}")
+    if not _is_image_path(path):
+        raise ValueError(f"Unsupported attachment: {source}")
+    upload = _resized_image_upload(path)
+    if upload is None:
+        data = path.read_bytes()
+        mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    else:
+        data = upload.getvalue()
+        mime_type = mimetypes.guess_type(upload.name)[0] or "image/png"
+    encoded = base64.b64encode(data).decode("ascii")
+    return {"type": "input_image", "image_url": f"data:{mime_type};base64,{encoded}"}
+
+
 async def _upload_attachments(
     attachments: Sequence[Attachment],
     workspace: Path,
-    api_key: str,
+    config: Config,
 ) -> list[dict[str, Any]]:
-    client = AsyncOpenAI(api_key=api_key)
+    if uses_chatgpt_oauth(config):
+        # comment: ChatGPT Codex OAuth requests go straight to chatgpt.com responses, so
+        # platform file uploads are unavailable. Inline images keep attachments working there.
+        return [_inline_image_item(workspace, source) for source in attachments]
+
+    client = AsyncOpenAI(api_key=config.openai_api_key)
     try:
         return [
             await _upload_attachment(client, workspace, source)
@@ -362,9 +386,7 @@ async def get_answer_streaming(
             content: str | list[dict[str, Any]] = []
             if text:
                 content.append({"type": "input_text", "text": text})
-            content.extend(
-                await _upload_attachments(attachments, workspace, config.openai_api_key)
-            )
+            content.extend(await _upload_attachments(attachments, workspace, config))
         else:
             content = text
         if not content:

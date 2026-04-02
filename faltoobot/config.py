@@ -23,6 +23,7 @@ class Config:
     launch_agent: Path
     run_script: Path
     openai_api_key: str
+    openai_oauth: str
     openai_model: str
     openai_thinking: str
     openai_fast: bool
@@ -39,6 +40,7 @@ def default_config() -> dict[str, dict[str, Any]]:
     return {
         "openai": {
             "api_key": "",
+            "oauth": "",
             "model": MODEL_OPTIONS[0],
             "thinking": DEFAULT_THINKING,
             "fast": False,
@@ -60,6 +62,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         "openai": {
             "api_key": as_str(openai.get("api_key"), defaults["openai"]["api_key"]),
+            "oauth": as_str(openai.get("oauth"), defaults["openai"]["oauth"]),
             "model": as_str(openai.get("model"), defaults["openai"]["model"]),
             "thinking": as_str(openai.get("thinking"), defaults["openai"]["thinking"]),
             "fast": as_bool(openai.get("fast"), defaults["openai"]["fast"]),
@@ -118,6 +121,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "",
             "[openai]",
             f"api_key = {quote(str(openai['api_key']))}",
+            f"oauth = {quote(str(openai['oauth']))}",
             f"model = {quote(str(openai['model']))}",
             f"thinking = {quote(str(openai['thinking']))}",
             f"fast = {str(bool(openai['fast'])).lower()}",
@@ -207,6 +211,7 @@ def build_config() -> Config:
         openai_api_key=as_str(
             openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")
         ),
+        openai_oauth=as_str(openai.get("oauth"), ""),
         openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
         openai_thinking=as_str(openai.get("thinking"), DEFAULT_THINKING),
         openai_fast=as_bool(openai.get("fast"), False),

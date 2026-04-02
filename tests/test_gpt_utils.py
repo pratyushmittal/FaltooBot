@@ -287,13 +287,14 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
             },
         ]
     )
-    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
     monkeypatch.setattr(
         gpt_utils,
         "build_config",
         lambda: SimpleNamespace(
             openai_model="gpt-5-mini",
             openai_api_key="test-key",
+            openai_oauth="",
             openai_thinking="low",
             openai_fast=False,
         ),
@@ -370,13 +371,14 @@ async def test_get_streaming_reply_yields_all_stream_events(
             }
         ]
     )
-    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
     monkeypatch.setattr(
         gpt_utils,
         "build_config",
         lambda: SimpleNamespace(
             openai_model="gpt-5-mini",
             openai_api_key="test-key",
+            openai_oauth="",
             openai_thinking="low",
             openai_fast=False,
         ),
@@ -410,13 +412,14 @@ async def test_get_streaming_reply_trims_input(
             }
         ]
     )
-    monkeypatch.setattr(gpt_utils, "AsyncOpenAI", lambda api_key=None: client)
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
     monkeypatch.setattr(
         gpt_utils,
         "build_config",
         lambda: SimpleNamespace(
             openai_model="gpt-5-mini",
             openai_api_key="test-key",
+            openai_oauth="",
             openai_thinking="low",
             openai_fast=False,
         ),
