@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.4.0 — 2026-04-02
+
+### Added
+- `faltoobot login` now starts the OpenAI Codex OAuth flow in your browser, saves the returned auth file, and wires `config.toml` to use it automatically.
+- `faltoochat` can now use a ChatGPT/Codex subscription through an explicit `openai.oauth` auth file, so terminal coding sessions no longer require an API key.
+
+### Changed
+- OpenAI client setup is now explicit and config-driven: when both `openai.oauth` and `openai.api_key` are set, OAuth takes priority.
+- Image attachments keep working in OAuth-backed coding sessions by sending inline image data instead of relying on file uploads.
+
 ## 1.3.0 — 2026-04-01
 
 ### Added
