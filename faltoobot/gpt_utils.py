@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 from typing import Any, TypeAlias, cast
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.responses import (
     FunctionToolParam,
     ResponseCompletedEvent,
@@ -234,11 +234,11 @@ async def get_streaming_reply(
             parallel_tool_calls=True,
             instructions=instructions,
             reasoning={"summary": "auto", "effort": config.openai_thinking},  # type: ignore
-            service_tier="priority" if config.openai_fast else "default",
             include=["reasoning.encrypted_content", "web_search_call.action.sources"],
             context_management=[
                 {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
             ],
+            service_tier="priority" if config.openai_fast else omit,
         ) as stream:
             async for event in stream:
                 if event.type == "response.completed":
