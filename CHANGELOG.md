@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.4.1 — 2026-04-02
+
+### Fixed
+- Chat requests now omit `service_tier` unless fast mode is enabled, which fixes OpenAI Codex OAuth sessions failing against the ChatGPT backend with `Unsupported service_tier: default`.
+
 ## 1.4.0 — 2026-04-02
 
 ### Added
