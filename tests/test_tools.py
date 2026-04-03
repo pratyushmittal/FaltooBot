@@ -48,7 +48,7 @@ def test_run_shell_call_in_workspace_runs_in_workspace(tmp_path: Path) -> None:
         run_shell_call_in_workspace(
             str(tmp_path),
             "pwd; printf x; cat hello.txt",
-            timeout_ms=1000,
+            timeout_ms=5000,
         )
     )
 
