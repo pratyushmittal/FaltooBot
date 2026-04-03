@@ -123,12 +123,12 @@ def get_load_skill_tool(workspace: Path) -> tuple[list[Skill], Callable[[str], s
     load_skill_tool.__name__ = "load_skill"
     load_skill_tool.__doc__ = f"""Load the contents of a local skill by name.
 
-    Skills are loaded from `{app_root() / "skills"}`, `{Path.home() / ".agents" / "skills"}`, and `{workspace / ".skills"}`.
+Skills are loaded from `{app_root() / "skills"}`, `{Path.home() / ".agents" / "skills"}`, and `{workspace / ".skills"}`.
 
-    Available skills:
-    {available or "- (none)"}
+Available skills:
+{available or "- (none)"}
 
-    Args:
-        - skill_name: Exact local skill name to load.
-    """
+Args:
+    - skill_name: Exact local skill name to load.
+"""
     return skills, load_skill_tool

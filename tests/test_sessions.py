@@ -190,6 +190,12 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     chat_key = "code@test"
 
     session = sessions.get_session(chat_key=chat_key)
+    workspace = Path(sessions.get_messages(session)["workspace"])
+    (workspace / ".skills").mkdir(parents=True, exist_ok=True)
+    (workspace / ".skills" / "pytest-helper.md").write_text(
+        "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
+        encoding="utf-8",
+    )
     payload = await sessions.get_answer(
         session=session,
         question="Hi",
