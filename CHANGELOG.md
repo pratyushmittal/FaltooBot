@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.5.0 — 2026-04-02
+
+### Added
+- Review mode now has an `add` view you can toggle with `m`, so you can inspect the current file without deleted lines getting in the way.
+- Local skills are now loaded from `~/.faltoobot/skills`, `~/.agents/skills`, and `<workspace>/.skills`, and `faltoochat` only exposes the `load_skill` tool when skills are available.
+
+### Changed
+- WhatsApp login code now lives in a dedicated login module, which makes the auth flow easier to maintain and test.
+- The README now publishes test and coverage badges, and pre-commit enforces the repo coverage threshold.
+
 ## 1.4.1 — 2026-04-02
 
 ### Fixed
