@@ -92,6 +92,14 @@ def load_skills(workspace: Path) -> list[Skill]:
     return sorted(skills_by_name.values(), key=lambda skill: skill["name"].lower())
 
 
+def _available_skills_text(skills: list[Skill]) -> str:
+    ordered = sorted(skills, key=lambda skill: skill["name"].lower())
+    return "\n".join(
+        f"- {skill['name']}: {skill['description'] or '(no description)'}"
+        for skill in ordered
+    )
+
+
 def load_skill(workspace: Path, skill_name: str) -> str:
     skills = load_skills(workspace)
     by_name = {_skill_key(skill["name"]): skill for skill in skills}
@@ -99,10 +107,7 @@ def load_skill(workspace: Path, skill_name: str) -> str:
     if skill is not None:
         return skill["content"]
 
-    available = "\n".join(
-        f"- {skill['name']}: {skill['description'] or '(no description)'}"
-        for skill in skills
-    )
+    available = _available_skills_text(skills)
     return (
         f"Local skill not found: {skill_name!r}.\n\nAvailable skills:\n"
         f"{available or '(none)'}"
@@ -112,10 +117,7 @@ def load_skill(workspace: Path, skill_name: str) -> str:
 def get_load_skill_tool(workspace: Path) -> tuple[list[Skill], Callable[[str], str]]:
     workspace = workspace.expanduser().resolve()
     skills = load_skills(workspace)
-    available = "\n".join(
-        f"- {skill['name']}: {skill['description'] or '(no description)'}"
-        for skill in skills
-    )
+    available = _available_skills_text(skills)
 
     def load_skill_tool(skill_name: str) -> str:
         return load_skill(workspace, skill_name)

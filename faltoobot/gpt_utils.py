@@ -205,6 +205,7 @@ async def get_streaming_reply(
     instructions: str,
     input: MessageHistory,
     tools: list[Tool],
+    prompt_cache_key: str | None = None,
 ) -> AsyncIterator[StreamingReplyItem]:
     config = build_config()
     client = get_openai_client(config)
@@ -238,6 +239,7 @@ async def get_streaming_reply(
             context_management=[
                 {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
             ],
+            prompt_cache_key=prompt_cache_key or omit,
             service_tier="priority" if config.openai_fast else omit,
         ) as stream:
             async for event in stream:

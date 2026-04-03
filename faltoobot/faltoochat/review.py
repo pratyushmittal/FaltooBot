@@ -220,6 +220,14 @@ class ReviewView(TabPane):
         app = cast("FaltooChatApp", self.app)
         app.push_screen(SearchProject(workspace=workspace), on_result)
 
+    def get_file_paths_of_review_file_tabs(self) -> list[Path]:
+        tabs = self.query_one("#review-tabs", TabbedContent)
+        return [
+            pane.query_one(ReviewDiffView).file_path
+            for pane in tabs.query(TabPane)
+            if pane.id not in {None, NO_CHANGES_PANE_ID} and pane.query(ReviewDiffView)
+        ]
+
     def set_active_tab(self, path: Path) -> bool:
         tabs = self.query_one("#review-tabs", TabbedContent)
         pane = _get_file_pane(tabs, path)

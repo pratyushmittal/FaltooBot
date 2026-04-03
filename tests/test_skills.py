@@ -152,3 +152,28 @@ def test_get_load_skill_tool_builds_valid_tool_definition(
         "required": ["skill_name"],
         "additionalProperties": False,
     }
+
+
+def test_get_load_skill_tool_lists_skills_in_stable_name_order(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    _write_file_skill(
+        home_root / "skills",
+        "zeta-helper",
+        "---\ndescription: last\n---\nZeta.\n",
+    )
+    _write_file_skill(
+        home_root / "skills",
+        "alpha-helper",
+        "---\ndescription: first\n---\nAlpha.\n",
+    )
+
+    _loaded, tool = skills.get_load_skill_tool(tmp_path / "workspace")
+
+    assert tool.__doc__ is not None
+    assert tool.__doc__.index("- alpha-helper: first") < tool.__doc__.index(
+        "- zeta-helper: last"
+    )

@@ -150,9 +150,11 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
+        prompt_cache_key: str | None = None,
     ):
         assert instructions.startswith("system prompt")
         calls.append(list(input))
+        assert prompt_cache_key == f"session:{session[1]}"
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         input.append(
             cast(
@@ -307,6 +309,7 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
+        prompt_cache_key: str | None = None,
     ):
         assert instructions.startswith("system prompt")
         if False:
@@ -375,6 +378,7 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
+        prompt_cache_key: str | None = None,
     ):
         assert instructions.startswith("system prompt")
         if False:
@@ -421,6 +425,7 @@ async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
+        prompt_cache_key: str | None = None,
     ):
         assert instructions.startswith("system prompt")
         if False:

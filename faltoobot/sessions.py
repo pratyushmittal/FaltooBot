@@ -50,6 +50,10 @@ Attachment = str | Path
 Session: TypeAlias = tuple[str, str]
 
 
+def _prompt_cache_key(messages_json: MessagesJson) -> str:
+    return f"session:{messages_json['id']}"
+
+
 def _sessions_dir() -> Path:
     return app_root() / "sessions"
 
@@ -415,6 +419,7 @@ async def get_answer_streaming(
             instructions=get_system_instructions(config, session[0], workspace),
             input=messages_json["messages"],
             tools=tools,
+            prompt_cache_key=_prompt_cache_key(messages_json),
         ):
             if event.type in {"function_call_output", "response.completed"}:
                 set_messages(session, messages_json)

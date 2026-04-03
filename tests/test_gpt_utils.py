@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from openai import omit
 from openai.types.responses import (
     ResponseCompactionItem,
     ResponseFunctionCallArgumentsDeltaEvent,
@@ -329,6 +330,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
     assert client.responses.calls[0]["context_management"] == [
         {"type": "compaction", "compact_threshold": 210_000}
     ]
+    assert client.responses.calls[0]["prompt_cache_key"] == omit
     assert client.responses.calls[1]["input"][-1] == {
         "id": "fco_call_1",
         "type": "function_call_output",

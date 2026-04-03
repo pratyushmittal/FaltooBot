@@ -12,11 +12,20 @@ from faltoobot.faltoochat.review import (
     _review_tab_titles,
     _syntax_highlight_theme,
 )
+from faltoobot.faltoochat.xray import (
+    ChangeFileOverview,
+    ChangeOverview,
+    FileOverview,
+    FileSymbolOverview,
+    XrayReference,
+)
+from faltoobot.faltoochat.widgets import xray_modal
 from faltoobot.faltoochat.widgets import (
     ReviewCommentModal,
     ReviewDiffView,
     SearchProject,
     Telescope,
+    XrayModal,
 )
 from faltoobot.faltoochat.widgets.search_project import (
     SearchProject as SearchProjectModal,
@@ -25,10 +34,14 @@ from faltoobot.faltoochat.widgets.search_project import (
     _project_search_results,
     _ripgrep_results,
 )
-from textual.widgets import Input, OptionList, TabPane, TabbedContent, TextArea
+from textual.app import App, ComposeResult
+from textual.widgets import Input, OptionList, TabPane, TabbedContent, TextArea, Tree
 from textual.widgets.option_list import Option
 
 EXPECTED_REVIEW_FILES = 2
+XRAY_ROOT_CHILDREN = 2
+XRAY_MODAL_CHILDREN = 2
+XRAY_TARGET_LINE = 5
 
 
 def test_project_search_stops_after_max_results(
@@ -673,6 +686,7 @@ async def test_review_stage_file_stages_current_file(
             not line["is_staged"] for line in diff if line["type"] in {"+", "-"}
         )
         assert viewer.selection.is_empty
+        assert {pane._title for pane in review_file_panes(review_tabs)} == {"beta.py"}
 
 
 @pytest.mark.anyio
@@ -1311,3 +1325,138 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
         await pilot.pause(0)
 
         assert app.query_one(ReviewView).search_term == ""
+
+
+class XrayApp(App[None]):
+    def __init__(self, modal: XrayModal) -> None:
+        super().__init__()
+        self.modal = modal
+        self.result = None
+
+    def compose(self) -> ComposeResult:
+        yield ReviewView()
+
+    def on_mount(self) -> None:
+        self.push_screen(self.modal, lambda result: setattr(self, "result", result))
+
+
+@pytest.mark.anyio
+async def test_file_overview_modal_enter_toggles_and_shift_enter_opens_reference() -> (
+    None
+):
+    modal = XrayModal(
+        title="File overview",
+        nodes=[
+            xray_modal.XrayTreeNode(
+                label="Important changes",
+                expand=True,
+                children=[
+                    xray_modal.XrayTreeNode(
+                        label="function target (line 5) — Jump here",
+                        reference=XrayReference(
+                            path="alpha.py",
+                            line_number=5,
+                            label="target",
+                            summary="Jump here",
+                        ),
+                        children=[xray_modal.XrayTreeNode(label="nested detail")],
+                    ),
+                    xray_modal.XrayTreeNode(label="second target"),
+                ],
+            ),
+        ],
+    )
+    app = XrayApp(modal)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        tree = app.screen.query_one(Tree)
+        assert str(tree.root.children[0].label) == "Important changes"
+        assert len(tree.root.children[0].children) == XRAY_MODAL_CHILDREN
+        await pilot.press("enter")
+        await pilot.pause(0)
+
+        assert app.result is None
+        assert tree.cursor_node is not None
+        assert tree.cursor_node.is_expanded is True
+
+        await pilot.press("shift+enter")
+        await pilot.pause(0)
+
+        assert app.result == XrayReference(
+            path="alpha.py",
+            line_number=5,
+            label="target",
+            summary="Jump here",
+        )
+
+
+def test_file_overview_nodes_show_multiple_top_level_changes() -> None:
+    workspace = Path("workspace")
+    nodes = xray_modal._file_overview_nodes(
+        workspace,
+        workspace / "alpha.py",
+        FileOverview(
+            important_changes=[
+                FileSymbolOverview(name="first", summary="First change", line_number=1),
+                FileSymbolOverview(
+                    name="second", summary="Second change", line_number=7
+                ),
+            ]
+        ),
+    )
+
+    assert len(nodes) == 1
+    assert nodes[0].label == "Important changes"
+    assert [child.label for child in nodes[0].children] == [
+        "first — First change",
+        "",
+        "second — Second change",
+    ]
+    assert [child.reference.path for child in nodes[0].children if child.reference] == [
+        "alpha.py",
+        "alpha.py",
+    ]
+
+
+@pytest.mark.anyio
+async def test_change_overview_modal_builds_file_tree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def fake_get_change_overview(
+        workspace: Path,
+        paths: list[Path],
+    ) -> ChangeOverview:
+        return ChangeOverview(
+            summary="Overview",
+            files=[
+                ChangeFileOverview(
+                    path="beta.py",
+                    about="Beta changed",
+                    references=[
+                        XrayReference(
+                            path="beta.py",
+                            line_number=2,
+                            label="beta change",
+                            summary="Jump to beta",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    monkeypatch.setattr(xray_modal, "get_change_overview", fake_get_change_overview)
+    modal = xray_modal.change_overview_modal(tmp_path, [tmp_path / "beta.py"])
+    app = XrayApp(modal)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        await wait_for_condition(
+            lambda: len(app.screen.query_one(Tree).root.children) == XRAY_ROOT_CHILDREN
+        )
+        tree = app.screen.query_one(Tree)
+        labels = [str(child.label) for child in tree.root.children]
+        assert labels == ["Summary — Overview", "Files"]
+        files_node = tree.root.children[1]
+        assert str(files_node.children[0].label) == "beta.py — Beta changed"

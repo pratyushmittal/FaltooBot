@@ -5,6 +5,7 @@ from .search_file import SearchFile
 from .search_project import SearchProject
 from .search_in_file import SearchInFile
 from .telescope import Telescope
+from .xray_modal import XrayModal
 
 __all__ = [
     "QueueWidget",
@@ -14,4 +15,5 @@ __all__ = [
     "SearchInFile",
     "SearchProject",
     "Telescope",
+    "XrayModal",
 ]

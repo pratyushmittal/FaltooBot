@@ -17,6 +17,7 @@ dependencies = [
   'pyobjc-framework-Cocoa>=11.1; sys_platform == "darwin"',
   "tree-sitter-lua>=0.5.0",
   "tree-sitter-typescript>=0.23.2",
+  "pydantic>=2.12.5",
 ]
 
 [project.scripts]
