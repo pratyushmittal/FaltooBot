@@ -210,7 +210,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         }
     ]
     tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
-    assert set(tool_defs_by_name) == {"run_shell_call", "search_skills"}
+    assert set(tool_defs_by_name) == {"run_shell_call", "load_skill"}
 
     shell_tool = tool_defs_by_name["run_shell_call"]
     assert shell_tool["type"] == "function"
@@ -239,21 +239,21 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "additionalProperties": False,
     }
 
-    skills_tool = tool_defs_by_name["search_skills"]
+    skills_tool = tool_defs_by_name["load_skill"]
     assert skills_tool["type"] == "function"
     assert skills_tool["strict"] is True
     assert skills_tool["description"].startswith(
-        "Search local skill bundles and return the best matches."
+        "Load the contents of a local skill by name."
     )
     assert skills_tool["parameters"] == {
         "type": "object",
         "properties": {
-            "query": {
+            "skill_name": {
                 "type": "string",
-                "description": "Natural-language query describing the workflow, repo knowledge, or task help you need.",
+                "description": "Exact local skill name to load.",
             },
         },
-        "required": ["query"],
+        "required": ["skill_name"],
         "additionalProperties": False,
     }
     assert payload["message_ids"] == ["msg-1"]

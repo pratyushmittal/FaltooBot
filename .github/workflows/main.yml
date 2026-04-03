@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RUN_FALTOOCHAT_E2E: "1"
     steps:
       - uses: actions/checkout@v4
 

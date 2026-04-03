@@ -1,94 +1,154 @@
 from pathlib import Path
 from typing import Any, cast
 
-from faltoobot.gpt_utils import get_tools_definition
 from faltoobot import skills
+from faltoobot.gpt_utils import get_tools_definition
 
 
-def _write_skill(root: Path, name: str, text: str) -> None:
+def _write_folder_skill(root: Path, name: str, text: str) -> None:
     skill_dir = root / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(text, encoding="utf-8")
 
 
-def test_load_skills_prefers_workspace_skill(monkeypatch, tmp_path: Path) -> None:
+def _write_file_skill(root: Path, name: str, text: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f"{name}.md").write_text(text, encoding="utf-8")
+
+
+def test_load_skills_reads_all_roots_and_prefers_workspace(
+    monkeypatch, tmp_path: Path
+) -> None:
     home_root = tmp_path / ".faltoobot"
+    agents_root = tmp_path / ".agents"
     monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
     workspace = tmp_path / "workspace"
-    _write_skill(
+
+    _write_file_skill(
         home_root / "skills",
         "pytest-helper",
-        "---\nname: Pytest Helper\ndescription: home version\nkeywords: pytest, tests\n---\nUse home rules.\n",
+        "---\ndescription: home version\n---\nUse home rules.\n",
     )
-    _write_skill(
-        workspace / ".faltoobot" / "skills",
+    _write_folder_skill(
+        agents_root / "skills",
+        "sql-helper",
+        "---\nname: SQL Helper\ndescription: Query sqlite data\n---\nUse sqlite3 for quick inspection.\n",
+    )
+    _write_file_skill(
+        workspace / ".skills",
         "pytest-helper",
-        "---\nname: Pytest Helper\ndescription: workspace version\nkeywords:\n- pytest\n- e2e\n---\nUse workspace rules.\n",
+        "---\ndescription: workspace version\n---\nUse workspace rules.\n",
     )
 
     loaded = skills.load_skills(workspace)
 
-    assert len(loaded) == 1
-    assert loaded[0]["source"] == "workspace"
-    assert loaded[0]["description"] == "workspace version"
-    assert loaded[0]["keywords"] == ("pytest", "e2e")
-    assert loaded[0]["content"] == "Use workspace rules."
+    assert loaded == [
+        {
+            "name": "pytest-helper",
+            "description": "workspace version",
+            "content": "Use workspace rules.",
+        },
+        {
+            "name": "SQL Helper",
+            "description": "Query sqlite data",
+            "content": "Use sqlite3 for quick inspection.",
+        },
+    ]
 
 
-def test_search_skills_returns_best_match_with_content(
-    monkeypatch, tmp_path: Path
+def test_load_skills_skips_direct_file_with_conflicting_name(
+    monkeypatch, tmp_path: Path, capsys
 ) -> None:
     home_root = tmp_path / ".faltoobot"
     monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
     workspace = tmp_path / "workspace"
-    _write_skill(
+
+    _write_file_skill(
         home_root / "skills",
         "pytest-helper",
-        "---\nname: Pytest Helper\ndescription: Write small pytest e2e checks\nkeywords: pytest, tests, e2e\n---\nAlways keep tests small and prefer e2e coverage.\n",
+        "---\nname: Totally Different\ndescription: mismatch\n---\nIgnored.\n",
     )
-    _write_skill(
+
+    assert skills.load_skills(workspace) == []
+    assert "frontmatter name does not match filename" in capsys.readouterr().err
+
+
+def test_load_skill_returns_exact_skill_content(monkeypatch, tmp_path: Path) -> None:
+    home_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    workspace = tmp_path / "workspace"
+    _write_file_skill(
         home_root / "skills",
-        "sql-helper",
-        "---\nname: SQL Helper\ndescription: Query sqlite data\nkeywords: sqlite, sql\n---\nUse sqlite3 for quick inspection.\n",
+        "pytest-helper",
+        "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small and prefer e2e coverage.\n",
     )
 
-    result = skills.search_skills(workspace, "need pytest e2e test help")
+    result = skills.load_skill(workspace, "pytest-helper")
 
-    assert "Matched 1 local skill(s)" in result
-    assert "## Pytest Helper" in result
-    assert "keywords: pytest, tests, e2e" in result
-    assert "Always keep tests small and prefer e2e coverage." in result
-    assert str(home_root / "skills" / "pytest-helper") in result
-    assert "SQL Helper" not in result
+    assert result == "Always keep tests small and prefer e2e coverage."
 
 
-def test_get_search_skills_tool_builds_valid_tool_definition(
+def test_load_skill_lists_available_skills_when_missing(
     monkeypatch, tmp_path: Path
 ) -> None:
     home_root = tmp_path / ".faltoobot"
     monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    workspace = tmp_path / "workspace"
+    _write_file_skill(
+        home_root / "skills",
+        "pytest-helper",
+        "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
+    )
 
-    tool = skills.get_search_skills_tool(tmp_path / "workspace")
+    result = skills.load_skill(workspace, "missing")
+
+    assert "Local skill not found" in result
+    assert "pytest-helper: Write small pytest e2e checks" in result
+
+
+def test_get_load_skill_tool_builds_valid_tool_definition(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    _write_file_skill(
+        home_root / "skills",
+        "pytest-helper",
+        "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
+    )
+
+    loaded, tool = skills.get_load_skill_tool(tmp_path / "workspace")
     definition = get_tools_definition(tool)
+
+    assert loaded == [
+        {
+            "name": "pytest-helper",
+            "description": "Write small pytest e2e checks",
+            "content": "Always keep tests small.",
+        }
+    ]
 
     description = cast(str, definition["description"])
     parameters = cast(dict[str, Any], definition["parameters"])
 
     assert definition["type"] == "function"
-    assert definition["name"] == "search_skills"
+    assert definition["name"] == "load_skill"
     assert definition["strict"] is True
-    assert description.startswith(
-        "Search local skill bundles and return the best matches."
-    )
-    assert "Project-local skills override home-level skills" in description
+    assert description.startswith("Load the contents of a local skill by name.")
+    assert "pytest-helper: Write small pytest e2e checks" in description
     assert parameters == {
         "type": "object",
         "properties": {
-            "query": {
+            "skill_name": {
                 "type": "string",
-                "description": "Natural-language query describing the workflow, repo knowledge, or task help you need.",
+                "description": "Exact local skill name to load.",
             }
         },
-        "required": ["query"],
+        "required": ["skill_name"],
         "additionalProperties": False,
     }

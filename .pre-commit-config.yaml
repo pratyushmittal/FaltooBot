@@ -29,6 +29,6 @@ repos:
         types_or: [python, pyi]
       - id: pytest
         name: pytest
-        entry: uv run pytest -n auto
+        entry: bash -lc 'RUN_FALTOOCHAT_E2E=1 uv run pytest -n auto'
         language: system
         pass_filenames: false

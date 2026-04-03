@@ -20,10 +20,11 @@ from faltoobot.gpt_utils import (
     MessageHistory,
     MessageItem,
     StreamingReplyItem,
+    Tool,
     get_streaming_reply,
 )
 from faltoobot.instructions import get_system_instructions
-from faltoobot.skills import get_search_skills_tool
+from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_run_shell_call_tool
 
 MESSAGES_FILE = "messages.json"
@@ -402,13 +403,18 @@ async def get_answer_streaming(
             messages_json["message_ids"].append(message_id)
         set_messages(session, messages_json)
 
+        tools: list[Tool] = [get_run_shell_call_tool(Path(messages_json["workspace"]))]
+        available_skills, load_skill_tool = get_load_skill_tool(
+            Path(messages_json["workspace"])
+        )
+        if available_skills:
+            # comment: only expose the skill-loading tool when there is at least one local skill to load.
+            tools.append(load_skill_tool)
+
         async for event in get_streaming_reply(
             instructions=get_system_instructions(config, session[0], workspace),
             input=messages_json["messages"],
-            tools=[
-                get_run_shell_call_tool(Path(messages_json["workspace"])),
-                get_search_skills_tool(Path(messages_json["workspace"])),
-            ],
+            tools=tools,
         ):
             if event.type in {"function_call_output", "response.completed"}:
                 set_messages(session, messages_json)
