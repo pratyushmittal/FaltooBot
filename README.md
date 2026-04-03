@@ -1,5 +1,8 @@
 # faltoobot
 
+[![tests](https://img.shields.io/github/actions/workflow/status/pratyushmittal/FaltooBot/main.yml?branch=main&label=tests)](https://github.com/pratyushmittal/FaltooBot/actions/workflows/main.yml)
+![coverage](https://img.shields.io/badge/coverage-78%25-brightgreen)
+
 `faltoobot` is a personal assistant that lives on its own WhatsApp account.
 
 ## How it works
@@ -166,11 +169,13 @@ npm run build
 
 ### Tests
 
-Run the test suite (parallel):
+Run the full test suite with coverage:
 
 ```bash
-uv run pytest -n auto
+uv run pytest -n auto --cov=faltoobot --cov-report=term-missing:skip-covered
 ```
+
+Coverage is published in the badge above, and pre-commit enforces a minimum of **78%** line coverage.
 
 ### Update
 

@@ -161,7 +161,7 @@ class ReviewView(TabPane):
                     review_view=self,
                     language=LANGUAGES_BY_SUFFIX.get(path.suffix.lower()),
                     theme=_syntax_highlight_theme(self.app.theme),
-                    soft_wrap=True,
+                    soft_wrap=False,
                     read_only=True,
                     show_cursor=True,
                     show_line_numbers=True,

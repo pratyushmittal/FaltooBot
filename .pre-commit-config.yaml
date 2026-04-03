@@ -27,8 +27,8 @@ repos:
         entry: uv run ty check
         language: system
         types_or: [python, pyi]
-      - id: pytest
-        name: pytest
-        entry: bash -lc 'RUN_FALTOOCHAT_E2E=1 uv run pytest -n auto'
+      - id: coverage
+        name: coverage
+        entry: bash -lc 'RUN_FALTOOCHAT_E2E=1 uv run pytest -n auto --cov=faltoobot --cov-report=term-missing:skip-covered --cov-fail-under=78'
         language: system
         pass_filenames: false

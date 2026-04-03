@@ -15,7 +15,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from faltoobot.whatsapp.app import run_auth, run_bot
+from faltoobot.whatsapp.app import run_bot
+from faltoobot.whatsapp.login import run_auth
 from faltoobot.config import (
     APP_LABEL,
     DEFAULT_THINKING,
