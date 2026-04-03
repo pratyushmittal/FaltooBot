@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.5.1 — 2026-04-02
+
+### Fixed
+- Local skill tool tests are now deterministic across environments, and the `load_skill` tool docstring is formatted correctly for tool schema parsing.
+
 ## 1.5.0 — 2026-04-02
 
 ### Added
