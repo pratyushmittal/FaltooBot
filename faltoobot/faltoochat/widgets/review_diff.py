@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from ..review import ReviewView
 
 TAB_SWITCH_COOLDOWN = 0.2
+DIFF_MODE = "diff"
+ADD_MODE = "add"
 
 
 class ReviewDiffView(TextArea):
@@ -61,6 +63,7 @@ class ReviewDiffView(TextArea):
         Binding("*", "review_search_word_under_cursor", priority=True, show=False),
         Binding("slash", "review_search", "Search", priority=True, show=True),
         Binding("escape", "review_escape", "Leave Search", priority=True, show=True),
+        Binding("m", "review_cycle_mode", "Mode", priority=True, show=True),
         Binding("a,c", "review_add", priority=True, show=True),
         Binding("s", "review_stage_lines", priority=True, show=True),
         Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
@@ -79,11 +82,14 @@ class ReviewDiffView(TextArea):
         self.file_path = file_path
         self.review_view = review_view
         self.diff = diff
+        self.mode = DIFF_MODE
+        self.visible_diff_lines: list[int] = []
         self.last_tab_switch_at = 0.0
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
         self.missing_language_package: str | None = None
-        super().__init__(_diff_text(diff), language=None, **kwargs)
+        super().__init__("", language=None, **kwargs)
+        self._load_diff_text()
         _register_extra_languages(self)
         if requested_language in self.available_languages:
             self.language = requested_language
@@ -125,7 +131,7 @@ class ReviewDiffView(TextArea):
         selection = self.selection
         scroll_x, scroll_y = self.scroll_offset
         self.diff = await asyncio.to_thread(get_diff, workspace / self.file_path)
-        self.load_text(_diff_text(self.diff))
+        self._load_diff_text()
         if self.selection.is_empty:
             self.line_selection_anchor = None
             self.line_selection_cursor = None
@@ -139,10 +145,11 @@ class ReviewDiffView(TextArea):
     def render_line(self, y: int):
         strip = super().render_line(y)
         absolute_y = self.scroll_offset[1] + y
-        if absolute_y >= len(self.diff):
+        if absolute_y >= len(self.visible_diff_lines):
             return strip
 
-        line_type = self.diff[absolute_y]["type"]
+        diff_line = self._visible_diff_line(absolute_y)
+        line_type = self.diff[diff_line]["type"]
         if self.show_line_numbers:
             content = strip.crop(self.gutter_width)
             gutter = self._gutter_strip(absolute_y)
@@ -172,17 +179,20 @@ class ReviewDiffView(TextArea):
         )
 
     def _display_line_number(self, line_index: int) -> int | None:
-        if self.diff[line_index]["type"] == "-":
+        diff_line = self._visible_diff_line(line_index)
+        if self.diff[diff_line]["type"] == "-":
             return None
         visible_lines = sum(
-            1 for line in self.diff[: line_index + 1] if line["type"] != "-"
+            1 for line in self.diff[: diff_line + 1] if line["type"] != "-"
         )
         return self.line_number_start + visible_lines - 1
 
     def jump_to_file_line(self, line_number: int) -> None:
         if not self.diff:
             return
-        target_line = _diff_line_for_file_line(self.diff, line_number)
+        target_line = self._display_line(
+            _diff_line_for_file_line(self.diff, line_number)
+        )
         self.move_cursor((target_line, 0), record_width=False)
         if self.is_mounted:
             self.scroll_cursor_visible(animate=False)
@@ -217,6 +227,42 @@ class ReviewDiffView(TextArea):
             self.line_selection_anchor,
             self.line_selection_anchor,
         )
+
+    def _update_mode_subtitle(self) -> None:
+        self.border_subtitle = "" if self.mode == DIFF_MODE else self.mode
+
+    def _visible_diff_line(self, line_index: int) -> int:
+        """Return the backing diff line for a currently visible editor row."""
+        if not self.visible_diff_lines:
+            return 0
+        line_index = max(0, min(line_index, len(self.visible_diff_lines) - 1))
+        return self.visible_diff_lines[line_index]
+
+    def _display_line(self, diff_line: int) -> int:
+        """Return the visible editor row for a backing diff line."""
+        if not self.visible_diff_lines:
+            return 0
+        for line_index, current in enumerate(self.visible_diff_lines):
+            if current >= diff_line:
+                return line_index
+        return len(self.visible_diff_lines) - 1
+
+    def _load_diff_text(self) -> None:
+        diff_line = (
+            self._visible_diff_line(self.cursor_location[0])
+            if self.visible_diff_lines
+            else 0
+        )
+        self.visible_diff_lines = _visible_diff_lines(self.diff, self.mode)
+        self._update_mode_subtitle()
+        self.load_text(_diff_text(self.diff, self.visible_diff_lines))
+        if self.document.line_count == 0:
+            return
+        self.move_cursor((self._display_line(diff_line), 0), record_width=False)
+
+    def action_review_cycle_mode(self) -> None:
+        self.mode = ADD_MODE if self.mode == DIFF_MODE else DIFF_MODE
+        self._load_diff_text()
 
     def action_review_scroll_home(self) -> None:
         self.move_cursor((0, 0), record_width=False)
@@ -265,12 +311,18 @@ class ReviewDiffView(TextArea):
         tabs.get_pane(next_id).query_one(ReviewDiffView).focus()
 
     def action_review_next_modification(self) -> None:
-        if line := next_modification(self.diff, self.cursor_location[0]):
-            self.move_cursor((line, 0), center=True, record_width=False)
+        if line := next_modification(
+            self.diff, self._visible_diff_line(self.cursor_location[0])
+        ):
+            target = self._display_line(line)
+            self.move_cursor((target, 0), center=True, record_width=False)
 
     def action_review_previous_modification(self) -> None:
-        if line := previous_modification(self.diff, self.cursor_location[0]):
-            self.move_cursor((line, 0), center=True, record_width=False)
+        if line := previous_modification(
+            self.diff, self._visible_diff_line(self.cursor_location[0])
+        ):
+            target = self._display_line(line)
+            self.move_cursor((target, 0), center=True, record_width=False)
 
     def action_review_jump_next(self) -> None:
         if not self.review_view.search_term:
@@ -278,10 +330,11 @@ class ReviewDiffView(TextArea):
         if location := next_search_location(
             self.diff,
             self.review_view.search_term,
-            self.cursor_location,
+            (self._visible_diff_line(self.cursor_location[0]), self.cursor_location[1]),
             whole_word=self.review_view.search_whole_word,
         ):
-            self.move_cursor(location, center=True, record_width=False)
+            target = self._display_line(location[0])
+            self.move_cursor((target, location[1]), center=True, record_width=False)
 
     def action_review_jump_previous(self) -> None:
         if not self.review_view.search_term:
@@ -289,10 +342,11 @@ class ReviewDiffView(TextArea):
         if location := previous_search_location(
             self.diff,
             self.review_view.search_term,
-            self.cursor_location,
+            (self._visible_diff_line(self.cursor_location[0]), self.cursor_location[1]),
             whole_word=self.review_view.search_whole_word,
         ):
-            self.move_cursor(location, center=True, record_width=False)
+            target = self._display_line(location[0])
+            self.move_cursor((target, location[1]), center=True, record_width=False)
 
     async def action_review_refresh_current_file(self) -> None:
         await self.reload_in_place()
@@ -300,7 +354,8 @@ class ReviewDiffView(TextArea):
     async def action_review_search_word_under_cursor(self) -> None:
         await self.reload_in_place()
         term = word_under_cursor(
-            self.diff[self.cursor_location[0]]["text"], self.cursor_location[1]
+            self.diff[self._visible_diff_line(self.cursor_location[0])]["text"],
+            self.cursor_location[1],
         )
         if term is None:
             self.app.notify("No word under cursor.", severity="warning")
@@ -376,7 +431,7 @@ class ReviewDiffView(TextArea):
         start, end = _review_range(self)
         workspace = self.app.workspace  # type: ignore[attr-defined]
         target = get_selected_change_state(
-            self.diff, self.cursor_location[0], start, end
+            self.diff, self._visible_diff_line(self.cursor_location[0]), start, end
         )
         if target is None:
             self.app.notify(
@@ -441,8 +496,15 @@ def _language_package(language: str) -> str:
     }.get(language, f"tree-sitter-{language}")
 
 
-def _diff_text(diff: Diff) -> str:
-    return "\n".join(line["text"] for line in diff)
+def _visible_diff_lines(diff: Diff, mode: str) -> list[int]:
+    """Return backing diff line indexes for rows visible in the current mode."""
+    if mode == ADD_MODE:
+        return [index for index, line in enumerate(diff) if line["type"] != "-"]
+    return list(range(len(diff)))
+
+
+def _diff_text(diff: Diff, visible_diff_lines: list[int]) -> str:
+    return "\n".join(diff[index]["text"] for index in visible_diff_lines)
 
 
 def _line_selection(
@@ -469,7 +531,10 @@ def _review_range(view: ReviewDiffView) -> tuple[int, int]:
     # comment: Textual selections ending at column 0 point at the start of the next line.
     if view.selection.end[1] == 0 and end > start:
         end -= 1
-    return start, end
+    return (
+        view._visible_diff_line(start),
+        view._visible_diff_line(end),
+    )
 
 
 def _get_code_for_review_submission(diff: Diff, start: int, end: int) -> str:
@@ -486,9 +551,10 @@ def _get_code_for_review_submission(diff: Diff, start: int, end: int) -> str:
 
 
 def _gutter_symbol(view: ReviewDiffView, line_index: int) -> str:
-    if line_index in _commented_lines(view):
+    diff_line = view._visible_diff_line(line_index)
+    if diff_line in _commented_lines(view):
         return "*"
-    line = view.diff[line_index]
+    line = view.diff[diff_line]
     if line["is_staged"] and line["type"] in {"+", "-"}:
         return "|"
     return line["type"] or " "
