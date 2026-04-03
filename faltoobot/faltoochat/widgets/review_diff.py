@@ -28,7 +28,6 @@ from ..review_api import get_review
 
 from .review_comment_modal import ReviewCommentModal
 from .search_in_file import SearchInFile
-from .xray_modal import change_overview_modal, file_overview_modal
 
 if TYPE_CHECKING:
     from ..review import ReviewView
@@ -64,10 +63,6 @@ class ReviewDiffView(TextArea):
         Binding("slash", "review_search", "Search", priority=True, show=True),
         Binding("escape", "review_escape", "Leave Search", priority=True, show=True),
         Binding("m", "review_cycle_mode", "Mode", priority=True, show=True),
-        Binding("x", "review_file_overview", "File X-Ray", priority=True, show=True),
-        Binding(
-            "X", "review_change_overview", "Changes X-Ray", priority=True, show=True
-        ),
         Binding("a,c", "review_add", priority=True, show=True),
         Binding("s", "review_stage_lines", priority=True, show=True),
         Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
@@ -381,46 +376,6 @@ class ReviewDiffView(TextArea):
         self.app.push_screen(
             SearchInFile(initial_term=self.review_view.search_term),
             on_term,
-        )
-
-    async def action_review_file_overview(self) -> None:
-        workspace = self.app.workspace  # type: ignore[attr-defined]
-
-        def on_reference(reference) -> None:
-            if reference is None:
-                return
-            asyncio.create_task(
-                self.review_view.open_file(
-                    Path(reference.path),
-                    line_number=reference.line_number,
-                )
-            )
-
-        self.app.push_screen(
-            file_overview_modal(workspace, workspace / self.file_path),
-            on_reference,
-        )
-
-    async def action_review_change_overview(self) -> None:
-        workspace = self.app.workspace  # type: ignore[attr-defined]
-        paths = self.review_view.get_file_paths_of_review_file_tabs()
-        if not paths:
-            self.app.notify("No modified files yet.", severity="warning")
-            return
-
-        def on_reference(reference) -> None:
-            if reference is None:
-                return
-            asyncio.create_task(
-                self.review_view.open_file(
-                    Path(reference.path),
-                    line_number=reference.line_number,
-                )
-            )
-
-        self.app.push_screen(
-            change_overview_modal(workspace, [workspace / path for path in paths]),
-            on_reference,
         )
 
     def action_review_escape(self) -> None:
