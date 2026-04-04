@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.5.2 — 2026-04-04
+
+### Fixed
+- Review now closes files after you stage the whole file.
+- Improved input token cache hits when using Codex OAuth. Provide skill names sorted alphabetically. Added `session_id` to requests.
+
+### Changed
+- `faltoochat` has a refreshed set of rotating chat placeholders.
+
 ## 1.5.1 — 2026-04-02
 
 ### Fixed

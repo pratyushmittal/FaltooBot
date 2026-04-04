@@ -154,7 +154,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     ):
         assert instructions.startswith("system prompt")
         calls.append(list(input))
-        assert prompt_cache_key == f"session:{session[1]}"
+        assert prompt_cache_key == session[1]
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         input.append(
             cast(

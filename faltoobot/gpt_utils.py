@@ -15,7 +15,7 @@ from openai.types.responses import (
 )
 
 from faltoobot.config import Config, build_config
-from faltoobot.openai_auth import get_openai_client_options
+from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 210_000
 
@@ -53,6 +53,22 @@ def get_openai_client(config: Config) -> AsyncOpenAI:
     if default_headers:
         kwargs["default_headers"] = default_headers
     return AsyncOpenAI(**kwargs)
+
+
+def _request_extra_headers(
+    config: Config, prompt_cache_key: str | None
+) -> dict[str, str] | None:
+    # comment: only ChatGPT Codex uses these sticky-routing headers. Keep them aligned with
+    # prompt_cache_key so follow-up requests have the same cache-affinity/session id signal.
+    if not prompt_cache_key:
+        return None
+    # comment: API-key requests go to the public OpenAI API, which does not use Codex session
+    # routing headers from the ChatGPT backend.
+    if not uses_chatgpt_oauth(config):
+        return None
+    return {
+        "session_id": prompt_cache_key,
+    }
 
 
 def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
@@ -240,6 +256,7 @@ async def get_streaming_reply(
                 {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
             ],
             prompt_cache_key=prompt_cache_key or omit,
+            extra_headers=_request_extra_headers(config, prompt_cache_key),
             service_tier="priority" if config.openai_fast else omit,
         ) as stream:
             async for event in stream:

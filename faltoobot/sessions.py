@@ -51,7 +51,7 @@ Session: TypeAlias = tuple[str, str]
 
 
 def _prompt_cache_key(messages_json: MessagesJson) -> str:
-    return f"session:{messages_json['id']}"
+    return messages_json["id"]
 
 
 def _sessions_dir() -> Path:
