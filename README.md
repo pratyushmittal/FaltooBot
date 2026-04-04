@@ -10,15 +10,22 @@
 - Get a separate SIM / WhatsApp account for Faltoobot.
 - Sign in to that account on a spare phone.
 - Install `faltoobot` on a computer that will stay online.
-- Run `faltoobot auth` and scan the QR code from that phone.
+- Run `faltoobot configure` to set up OpenAI and WhatsApp.
+- Run `faltoobot whatsapp` to keep the bot running.
 - Message that WhatsApp number from your own number.
 
-## Usage
-
-### Install
+## Install
 
 ```bash
 uv tool install faltoobot
+```
+
+Then you can run `faltoobot` and `faltoochat` from any folder.
+
+If uv asks you to add its tool bin directory to your `PATH`, run:
+
+```bash
+uv tool update-shell
 ```
 
 For faster project and code search inside `faltoochat`, install `ripgrep` (`rg`) too:
@@ -39,19 +46,23 @@ sudo pacman -S ripgrep
 
 `faltoochat` falls back without `rg`, but search is faster and more reliable when it is installed.
 
-Then you can run `faltoobot` and `faltoochat` from any folder.
+## Quick start
 
-If uv asks you to add its tool bin directory to your `PATH`, run:
-
-```bash
-uv tool update-shell
-```
-
-### Configure
+### 1. Configure
 
 ```bash
 faltoobot configure
 ```
+
+The configure flow shows a simple menu:
+- Wizard
+- WhatsApp
+- Codex / OpenAI
+
+The wizard is the default. It helps you:
+- sign in with Codex / ChatGPT OAuth, or set an OpenAI API key
+- choose model / thinking / transcription settings
+- pair the WhatsApp account
 
 Example `~/.faltoobot/config.toml`:
 
@@ -73,56 +84,74 @@ If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oa
 
 Set `allowed_chats` to your own WhatsApp JID or phone number to keep the bot private. Leave it empty only if you want Faltoobot to reply to anyone who can message that account.
 
-### Pair once
-
-Pair the WhatsApp account once:
+### 2. Start WhatsApp service
 
 ```bash
-faltoobot auth
+faltoobot whatsapp
 ```
 
-### Sign in to OpenAI Codex
+This is the main command for running Faltoobot. It:
+- upgrades the installed tool with uv
+- ensures config exists
+- runs migrations
+- stops any old Faltoobot service
+- installs the service
+- starts the service
+- follows logs in the current terminal
 
-For `faltoochat`, you can also bootstrap a Codex OAuth login directly. This saves Faltoobot's own auth file under `~/.faltoobot/auth.json` by default and writes that path into `openai.oauth` in your config:
+Press `Ctrl+C` any time. The service keeps running in the background.
+
+### 3. Watch logs later
 
 ```bash
-faltoobot login
+faltoobot logs
 ```
 
-### Run in background
+## Commands
 
-Install Faltoobot as a background service:
+### `faltoobot update`
 
 ```bash
-faltoobot install
+faltoobot update
 ```
 
-Check whether it is running:
+Upgrades the installed tool with uv, ensures config exists, and runs migrations.
+
+If uv installs a newer version, Faltoobot asks you to rerun the command so the rest of the flow continues with the newer installed version.
+
+### `faltoobot whatsapp`
 
 ```bash
-faltoobot status
+faltoobot whatsapp
 ```
 
-Watch logs live:
+Best command for normal use. It runs update, refreshes the background service, and follows logs.
+
+### `faltoobot logs`
 
 ```bash
-faltoobot logs -f
+faltoobot logs
 ```
 
-Notes:
-- macOS installs a `launchd` agent.
-- Linux installs a `systemd --user` service.
-- If you want the Linux service to stay up after logout, enable lingering for your user.
+Shows log output in follow mode.
 
-### Run in foreground
-
-If you want to run it in the current terminal instead:
+### `faltoobot configure`
 
 ```bash
-faltoobot run
+faltoobot configure
 ```
 
-### Terminal chat
+Opens the setup menu and restarts the service if it is already installed.
+
+### `faltoobot makemigrations`
+
+```bash
+faltoobot makemigrations
+```
+
+Dev-only command for creating release migration scripts inside this repo.
+
+## Terminal chat
 
 You can also use Faltoobot locally in the terminal:
 
@@ -132,7 +161,7 @@ faltoochat "draft a release note"
 faltoochat --new-session
 ```
 
-### Commands
+## Commands inside chat
 
 On WhatsApp:
 
@@ -150,7 +179,7 @@ In terminal chat:
 
 `faltoochat` supports image input, queued prompts while answering, and `Shift+Enter` for multiline input. Paste an image file path or use `Ctrl+V` to attach the current macOS clipboard image. WhatsApp chats now also support incoming image messages, including captioned images, image-only prompts, and multi-image albums.
 
-### Development
+## Development
 
 Run the Astro docs site locally:
 
@@ -167,7 +196,7 @@ cd website
 npm run build
 ```
 
-### Tests
+## Tests
 
 Run the full test suite with coverage:
 
@@ -177,10 +206,4 @@ uv run pytest -n auto --cov=faltoobot --cov-report=term-missing:skip-covered
 
 Coverage is published in the badge above, and pre-commit enforces a minimum of **78%** line coverage.
 
-### Update
-
-```bash
-uv tool upgrade faltoobot
-```
-
-Need more details? See the Astro docs site in `website/`.
+Need more details? See `docs/cli.md` and the Astro docs site in `website/`.
