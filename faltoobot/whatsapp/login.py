@@ -47,7 +47,7 @@ async def wait_for_login(client: NewAClient) -> None:
     await client.connect()
     await ready.wait()
     logger.info("Auth successful. Session saved.")
-    logger.info("Next step: run `faltoobot run`")
+    logger.info("Next step: run `faltoobot whatsapp`")
     await asyncio.sleep(AUTH_STOP_DELAY)
     await client.stop()
 

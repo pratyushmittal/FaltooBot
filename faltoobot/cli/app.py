@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
-import getpass
 import os
 import plistlib
 import shlex
@@ -10,13 +11,14 @@ import sys
 import time
 from importlib.metadata import version as package_version
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
-from rich.table import Table
+from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.text import Text
 
-from faltoobot.whatsapp.app import run_bot
-from faltoobot.whatsapp.login import run_auth
+from faltoobot.cli.migrations import main as run_makemigrations_command
+from faltoobot.cli.migrations import run_release_migrations
 from faltoobot.config import (
     APP_LABEL,
     DEFAULT_THINKING,
@@ -24,6 +26,7 @@ from faltoobot.config import (
     THINKING_OPTIONS,
     TRANSCRIPTION_MODEL_OPTIONS,
     Config,
+    app_root,
     build_config,
     ensure_config_file,
     load_toml,
@@ -32,68 +35,100 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
-from faltoobot.cli.migrations import run_release_migrations
 from faltoobot.openai_login import run_openai_login
-from faltoobot.cli.migrations import main as run_makemigrations_command
+from faltoobot.whatsapp.app import run_bot
+from faltoobot.whatsapp.login import run_auth
 
 console = Console()
-
-
 LOG_STYLES = {
     "ERROR": "bold red",
     "WARNING": "yellow",
     "INFO": "cyan",
     "DEBUG": "dim",
 }
+LINUX_SERVICE_NAME = "faltoobot.service"
+SERVICE_COMMAND = "whatsapp-service"
 
 
-def require_service_platform() -> None:
+def _require_service_platform() -> None:
     if sys.platform not in {"darwin", "linux"}:
         raise SystemExit("This command supports macOS and Linux only.")
 
 
-def project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+def _project_root() -> Path:
+    """Return the best available root for release migrations.
+
+    Editable checkouts keep the `migrations/` folder at the repo root, while
+    installed packages only have the package tree available.
+    """
+    package_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
+    # comment: editable checkouts keep release migrations at the repo root, but installed
+    # packages only have the package tree available.
+    if (repo_root / "migrations").is_dir():
+        return repo_root
+    return package_root
 
 
-def uid() -> str:
+def _uv_bin() -> str:
+    uv = shutil.which("uv")
+    if not uv:
+        raise SystemExit("uv is required. Install it first: https://docs.astral.sh/uv/")
+    return uv
+
+
+def _run_cmd(*args: str) -> None:
+    """Run a command and stream its output directly to the terminal."""
+    subprocess.run(list(args), check=True, text=True)
+
+
+def _run_capture(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run a command and return its captured stdout/stderr to the caller."""
+    return subprocess.run(list(args), check=check, text=True, capture_output=True)
+
+
+def _uid() -> str:
     return str(os.getuid())
 
 
-def service_target() -> str:
-    return f"gui/{uid()}/{APP_LABEL}"
+def _darwin_service_target() -> str:
+    """Return the `launchctl` target name for the current macOS user session."""
+    return f"gui/{_uid()}/{APP_LABEL}"
 
 
-def linux_service_name() -> str:
-    return "faltoobot.service"
+def _linux_service_file(config: Config) -> Path:
+    return config.home / ".config" / "systemd" / "user" / LINUX_SERVICE_NAME
 
 
-def linux_service_file(config: Config) -> Path:
-    return config.home / ".config" / "systemd" / "user" / linux_service_name()
-
-
-def service_file(config: Config) -> Path:
+def _service_file(config: Config) -> Path:
     if sys.platform == "darwin":
         return config.launch_agent
-    return linux_service_file(config)
+    return _linux_service_file(config)
 
 
-def run_entrypoint() -> list[str]:
-    return [sys.executable, "-m", "faltoobot.cli.app", "run"]
+def _service_installed(config: Config) -> bool:
+    if sys.platform not in {"darwin", "linux"}:
+        return False
+    return _service_file(config).exists()
 
 
-def shell_join(parts: list[str]) -> str:
+def _run_entrypoint() -> list[str]:
+    """Return the foreground bot command used by both macOS and Linux services."""
+    return [sys.executable, "-m", "faltoobot.cli.app", SERVICE_COMMAND]
+
+
+def _shell_join(parts: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def write_run_script(config: Config) -> None:
+def _write_run_script(config: Config) -> None:
     config.root.mkdir(parents=True, exist_ok=True)
     config.run_script.write_text(
         "\n".join(
             [
                 "#!/bin/sh",
                 f"cd {shlex.quote(config.root.as_posix())}",
-                f"exec {shell_join(run_entrypoint())}",
+                f"exec {_shell_join(_run_entrypoint())}",
                 "",
             ]
         ),
@@ -102,7 +137,7 @@ def write_run_script(config: Config) -> None:
     config.run_script.chmod(0o755)
 
 
-def write_launch_agent(config: Config) -> None:
+def _write_darwin_launch_agent(config: Config) -> None:
     config.launch_agent.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "Label": APP_LABEL,
@@ -116,12 +151,12 @@ def write_launch_agent(config: Config) -> None:
     config.launch_agent.write_bytes(plistlib.dumps(data))
 
 
-def systemd_command(config: Config) -> str:
+def _systemd_command(config: Config) -> str:
     return f"exec {shlex.quote(config.run_script.as_posix())} >> {shlex.quote(config.log_file.as_posix())} 2>&1"
 
 
-def write_systemd_service(config: Config) -> None:
-    unit_file = linux_service_file(config)
+def _write_systemd_service(config: Config) -> None:
+    unit_file = _linux_service_file(config)
     unit_file.parent.mkdir(parents=True, exist_ok=True)
     unit_file.write_text(
         "\n".join(
@@ -132,7 +167,7 @@ def write_systemd_service(config: Config) -> None:
                 "[Service]",
                 "Type=simple",
                 "Environment=PYTHONUNBUFFERED=1",
-                f"ExecStart=/bin/sh -lc {shlex.quote(systemd_command(config))}",
+                f"ExecStart=/bin/sh -lc {shlex.quote(_systemd_command(config))}",
                 "Restart=always",
                 "RestartSec=2",
                 "",
@@ -145,147 +180,65 @@ def write_systemd_service(config: Config) -> None:
     )
 
 
-def run_launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["launchctl", *args], check=check, text=True, capture_output=True
-    )
+def _run_darwin_launchctl(
+    *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return _run_capture("launchctl", *args, check=check)
 
 
-def run_cmd(*args: str, cwd: Path | None = None) -> None:
-    subprocess.run(list(args), check=True, text=True, cwd=cwd)
-
-
-def run_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _run_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(
-            ["systemctl", "--user", *args],
-            check=check,
-            text=True,
-            capture_output=True,
-        )
+        return _run_capture("systemctl", "--user", *args, check=check)
     except (
         FileNotFoundError
-    ) as exc:  # comment: systemctl is required for Linux background installs.
-        raise SystemExit(
-            "systemctl is required for `faltoobot install` on Linux."
-        ) from exc
+    ) as exc:  # comment: systemctl is required for Linux services.
+        raise SystemExit("systemctl is required on Linux.") from exc
 
 
-def read_cmd(*args: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(
-        list(args), check=True, text=True, cwd=cwd, capture_output=True
-    )
-    return result.stdout
-
-
-def uv_bin() -> str:
-    uv = shutil.which("uv")
-    if not uv:
-        raise SystemExit("uv is required. Install it first: https://docs.astral.sh/uv/")
-    return uv
-
-
-def has_service(config: Config) -> bool:
-    if sys.platform not in {"darwin", "linux"}:
-        return False
-    return service_file(config).exists()
-
-
-async def run_migrations(config: Config) -> list[str]:
-    changes: list[str] = []
-    if migrate_config_file(config.config_file):
-        changes.append("config")
-    config.sessions_dir.mkdir(parents=True, exist_ok=True)
-    changes.append("sessions")
-    for version in run_release_migrations(config, project_root()):
-        changes.append(f"migration:{version}")
-    if has_service(config):
-        install_service(config)
-        changes.append("service")
-    return changes
-
-
-def update_app(config: Config, migrate_only: bool) -> None:
-    if migrate_only:
-        changes = asyncio.run(run_migrations(config))
-        console.print(f"[green]Migrations:[/] {', '.join(changes)}")
-        return
-
-    repo = project_root()
-    if not (repo / ".git").exists():
-        raise SystemExit("`faltoobot update` only works from a git clone of the repo.")
-    status = read_cmd("git", "status", "--short", cwd=repo).strip()
-    if status:
-        raise SystemExit(
-            "Commit or stash local changes before running `faltoobot update`."
-        )
-    run_cmd("git", "pull", "--ff-only", cwd=repo)
-    run_cmd(uv_bin(), "sync", cwd=repo)
-    run_cmd(uv_bin(), "run", "faltoobot", "update", "--migrate-only", cwd=repo)
-
-
-def install_service(config: Config) -> None:
-    require_service_platform()
+def _install_service(config: Config) -> None:
+    _require_service_platform()
     ensure_config_file()
-    config.root.mkdir(parents=True, exist_ok=True)
-    write_run_script(config)
+    _write_run_script(config)
     if sys.platform == "darwin":
-        write_launch_agent(config)
-        run_launchctl(
-            "bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False
+        _write_darwin_launch_agent(config)
+        return
+    _write_systemd_service(config)
+    _run_systemctl("daemon-reload")
+    _run_systemctl("enable", LINUX_SERVICE_NAME)
+
+
+def _stop_service(config: Config) -> None:
+    if not _service_installed(config):
+        return
+    _require_service_platform()
+    if sys.platform == "darwin":
+        _run_darwin_launchctl(
+            "bootout", f"gui/{_uid()}", config.launch_agent.as_posix(), check=False
         )
-        run_launchctl("bootstrap", f"gui/{uid()}", config.launch_agent.as_posix())
-        run_launchctl("enable", service_target(), check=False)
-        run_launchctl("kickstart", "-k", service_target())
-    else:
-        write_systemd_service(config)
-        run_systemctl("daemon-reload")
-        run_systemctl("enable", "--now", linux_service_name())
-        run_systemctl("restart", linux_service_name())
-    console.print(f"[green]Installed[/] {APP_LABEL}")
-    console.print(f"service: [cyan]{service_file(config)}[/]")
-    console.print(f"config: [cyan]{config.config_file}[/]")
-    console.print(f"logs: [cyan]{config.log_file}[/]")
+        return
+    _run_systemctl("stop", LINUX_SERVICE_NAME, check=False)
 
 
-def uninstall_service(config: Config) -> None:
-    require_service_platform()
+def _start_service(config: Config) -> None:
+    _require_service_platform()
     if sys.platform == "darwin":
-        run_launchctl(
-            "bootout", f"gui/{uid()}", config.launch_agent.as_posix(), check=False
+        _run_darwin_launchctl(
+            "bootstrap", f"gui/{_uid()}", config.launch_agent.as_posix()
         )
-        if config.launch_agent.exists():
-            config.launch_agent.unlink()
-    else:
-        run_systemctl("disable", "--now", linux_service_name(), check=False)
-        unit_file = linux_service_file(config)
-        if unit_file.exists():
-            unit_file.unlink()
-        run_systemctl("daemon-reload", check=False)
-    if config.run_script.exists():
-        config.run_script.unlink()
-    console.print(f"[green]Removed[/] {APP_LABEL}")
+        _run_darwin_launchctl("enable", _darwin_service_target(), check=False)
+        _run_darwin_launchctl("kickstart", "-k", _darwin_service_target())
+        return
+    _run_systemctl("start", LINUX_SERVICE_NAME)
 
 
-def service_status(config: Config) -> None:
-    require_service_platform()
-    if sys.platform == "darwin":
-        result = run_launchctl("print", service_target(), check=False)
-        if result.returncode == 0:
-            console.print(f"[green]{APP_LABEL}: loaded[/]")
-            return
-        console.print(f"[yellow]{APP_LABEL}: not loaded[/]")
-    else:
-        result = run_systemctl("is-active", linux_service_name(), check=False)
-        if result.returncode == 0 and result.stdout.strip() == "active":
-            console.print(f"[green]{linux_service_name()}: active[/]")
-            return
-        console.print(f"[yellow]{linux_service_name()}: inactive[/]")
-    if service_file(config).exists():
-        console.print(f"service: [cyan]{service_file(config)}[/]")
+def _restart_service(config: Config) -> None:
+    if not _service_installed(config):
+        return
+    _stop_service(config)
+    _start_service(config)
 
 
-def log_style(line: str) -> str:
+def _log_style(line: str) -> str:
     if "Traceback" in line or "Exception" in line:
         return "bold red"
     for level, style in LOG_STYLES.items():
@@ -301,17 +254,17 @@ def log_style(line: str) -> str:
     return ""
 
 
-def render_log_line(line: str) -> Text:
-    return Text(line.rstrip("\n"), style=log_style(line))
+def _render_log_line(line: str) -> Text:
+    return Text(line.rstrip("\n"), style=_log_style(line))
 
 
-def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
+def _tail_file(path: Path, *, lines: int = 100, follow: bool = True) -> None:
     if not path.exists():
         console.print(f"[yellow]No log file at[/] [cyan]{path}[/]")
         return
     data = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for line in data[-lines:]:
-        console.print(render_log_line(line))
+        console.print(_render_log_line(line))
     if not follow:
         return
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -319,117 +272,58 @@ def tail_file(path: Path, lines: int = 100, follow: bool = False) -> None:
         while True:
             line = handle.readline()
             if line:
-                console.print(render_log_line(line))
+                console.print(_render_log_line(line))
                 continue
             time.sleep(0.5)
 
 
-def prompt_text(label: str, current: str, *, secret: bool = False) -> str:
+def _prompt_text(label: str, current: str, *, secret: bool = False) -> str:
+    """Prompt for a text value while showing the current value or secret marker."""
     current_text = (
         "[set]" if secret and current else f"[{current}]" if current else "[empty]"
     )
-    raw = (
-        getpass.getpass(f"{label} {current_text} (blank keeps current): ")
-        if secret
-        else console.input(f"[bold]{label}[/] {current_text} (blank keeps current): ")
+    console.print()
+    raw = Prompt.ask(
+        f"[bold]{label}[/] {current_text} (blank keeps current)",
+        console=console,
+        password=secret,
+        default=current,
+        show_default=False,
     ).strip()
-    if not raw:
-        return current
     return "" if raw == "-" else raw
 
 
-def prompt_bool(label: str, current: bool) -> bool:
-    current_text = "y" if current else "n"
-    while True:
-        raw = (
-            console.input(f"[bold]{label}[/] [y/n] (blank keeps {current_text}): ")
-            .strip()
-            .lower()
-        )
-        if not raw:
-            return current
-        if raw in {"y", "yes"}:
-            return True
-        if raw in {"n", "no"}:
-            return False
-        console.print("[yellow]Enter y or n.[/]")
-
-
-def prompt_choice(
-    label: str,
-    current: str,
-    options: tuple[str, ...],
-    *,
-    allow_custom: bool = True,
-) -> str:
-    console.print(f"[bold]{label}[/]")
+def _prompt_menu(label: str, options: list[str], *, default: int = 1) -> int:
+    """Render a numbered menu and return the selected option index."""
+    console.print()
+    console.rule(f"[bold cyan]{label}[/]", style="dim")
     for index, option in enumerate(options, start=1):
-        current_marker = " (current)" if option == current else ""
-        console.print(f"  [cyan]{index}.[/] {option}{current_marker}")
-    custom_index = len(options) + 1
-    if allow_custom:
-        custom_marker = " (current)" if current and current not in options else ""
-        console.print(f"  [cyan]{custom_index}.[/] custom{custom_marker}")
+        console.print(f"  [cyan]{index}.[/] {option}")
     while True:
-        default_choice = (
-            str(options.index(current) + 1)
-            if current in options
-            else ("1" if not allow_custom else str(custom_index))
+        choice = IntPrompt.ask(
+            "Select",
+            console=console,
+            default=default,
         )
-        choice = (
-            console.input(f"Select {label.lower()} [{default_choice}]: ").strip()
-            or default_choice
-        )
-        if choice.isdigit():
-            index = int(choice)
-            if 1 <= index <= len(options):
-                return options[index - 1]
-            if allow_custom and index == custom_index:
-                return prompt_text(
-                    f"Custom {label.lower()}",
-                    current if current not in options else "",
-                )
-        limit = custom_index if allow_custom else len(options)
-        console.print(f"[yellow]Enter a number between 1 and {limit}.[/]")
+        if 1 <= choice <= len(options):
+            return choice
+        console.print(f"[yellow]Enter a number between 1 and {len(options)}.[/]")
 
 
-def prompt_model(current: str) -> str:
-    return prompt_choice("OpenAI model", current, MODEL_OPTIONS)
+def _prompt_choice(label: str, current: str, options: tuple[str, ...]) -> str:
+    """Prompt for a choice from a fixed tuple of string options."""
+    default = options.index(current) + 1 if current in options else 1
+    menu_options = [
+        f"{option} [dim](current)[/]" if option == current else option
+        for option in options
+    ]
+    return options[_prompt_menu(label, menu_options, default=default) - 1]
 
 
-def prompt_transcription_model(current: str) -> str:
-    return prompt_choice(
-        "Transcription model",
-        current,
-        TRANSCRIPTION_MODEL_OPTIONS,
-        allow_custom=False,
-    )
-
-
-def prompt_thinking(current: str) -> str:
-    console.print("[bold]Thinking mode[/]")
-    for index, value in enumerate(THINKING_OPTIONS, start=1):
-        current_marker = " (current)" if value == current else ""
-        console.print(f"  [cyan]{index}.[/] {value}{current_marker}")
-    while True:
-        default_choice = (
-            str(THINKING_OPTIONS.index(current) + 1)
-            if current in THINKING_OPTIONS
-            else "1"
-        )
-        raw = console.input(f"Select thinking mode [{default_choice}]: ").strip()
-        choice = default_choice if not raw else raw
-        if choice.isdigit():
-            index = int(choice)
-            if 1 <= index <= len(THINKING_OPTIONS):
-                return THINKING_OPTIONS[index - 1]
-        console.print(
-            f"[yellow]Enter a number between 1 and {len(THINKING_OPTIONS)}.[/]"
-        )
-
-
-def prompt_allowed_chats(current: list[str]) -> list[str]:
+def _prompt_allowed_chats(current: list[str]) -> list[str]:
+    """Prompt for allowed WhatsApp chats and normalize the resulting chat ids."""
     current_text = ", ".join(current) if current else "<none>"
+    console.print()
     raw = console.input(
         f"[bold]Allowed chats[/] [{current_text}] (comma-separated, blank keeps current, '-' clears): "
     ).strip()
@@ -446,51 +340,170 @@ def prompt_allowed_chats(current: list[str]) -> list[str]:
     )
 
 
-def configure_app(config: Config) -> None:
-    data = merge_config(load_toml(config.config_file))
+def _write_config(data: dict[str, dict[str, Any]], config_file: Path) -> None:
+    config_file.write_text(render_config(data), encoding="utf-8")
+
+
+def _configure_openai(config: Config) -> None:
+    console.print()
+    console.rule("[bold cyan]OpenAI[/]", style="dim")
+    choice = _prompt_menu(
+        "OpenAI setup",
+        ["Codex / ChatGPT login", "OpenAI API key"],
+        default=1 if config.openai_oauth or not config.openai_api_key else 2,
+    )
+    if choice == 1:
+        run_openai_login(console)
+        config = build_config()
+        data = merge_config(load_toml(config.config_file))
+    else:
+        data = merge_config(load_toml(config.config_file))
+        openai = data["openai"]
+        data["openai"]["api_key"] = _prompt_text(
+            "OpenAI API key",
+            str(openai.get("api_key") or ""),
+            secret=True,
+        )
+        data["openai"]["oauth"] = ""
     openai = data["openai"]
+    data["openai"]["model"] = _prompt_choice(
+        "OpenAI model",
+        str(openai.get("model") or MODEL_OPTIONS[0]),
+        MODEL_OPTIONS,
+    )
+    data["openai"]["thinking"] = _prompt_choice(
+        "Thinking mode",
+        str(openai.get("thinking") or DEFAULT_THINKING),
+        THINKING_OPTIONS,
+    )
+    console.print()
+    data["openai"]["fast"] = Confirm.ask(
+        "[bold]OpenAI fast mode[/]",
+        console=console,
+        default=bool(openai.get("fast")),
+        show_default=False,
+    )
+    data["openai"]["transcription_model"] = _prompt_choice(
+        "Transcription model",
+        str(openai.get("transcription_model") or TRANSCRIPTION_MODEL_OPTIONS[1]),
+        TRANSCRIPTION_MODEL_OPTIONS,
+    )
+    _write_config(data, config.config_file)
+    console.print(f"[green]✓ Saved[/] [cyan]{config.config_file}[/]")
+
+
+def _configure_whatsapp(config: Config) -> None:
+    console.print()
+    console.rule("[bold cyan]WhatsApp[/]", style="dim")
+    data = merge_config(load_toml(config.config_file))
     bot = data["bot"]
-    console.print(f"[bold]Config file:[/] [cyan]{config.config_file}[/]")
-    console.print(
-        "Press Enter to keep the current value. Enter '-' to clear text fields."
+    console.print()
+    data["bot"]["allow_groups"] = Confirm.ask(
+        "[bold]Allow WhatsApp groups[/]",
+        console=console,
+        default=bool(bot.get("allow_groups")),
+        show_default=False,
     )
-    updated = merge_config(
-        {
-            "openai": {
-                "api_key": prompt_text(
-                    "OpenAI API key",
-                    str(openai.get("api_key") or ""),
-                    secret=True,
-                ),
-                "oauth": prompt_text(
-                    "OpenAI OAuth auth.json path",
-                    str(openai.get("oauth") or ""),
-                ),
-                "model": prompt_model(str(openai.get("model") or MODEL_OPTIONS[0])),
-                "thinking": prompt_thinking(
-                    str(openai.get("thinking") or DEFAULT_THINKING)
-                ),
-                "fast": prompt_bool("OpenAI fast mode", bool(openai.get("fast"))),
-                "transcription_model": prompt_transcription_model(
-                    str(
-                        openai.get("transcription_model")
-                        or TRANSCRIPTION_MODEL_OPTIONS[1]
-                    )
-                ),
-            },
-            "bot": {
-                "allow_groups": prompt_bool(
-                    "Allow WhatsApp groups",
-                    bool(bot.get("allow_groups")),
-                ),
-                "allowed_chats": prompt_allowed_chats(
-                    list(bot.get("allowed_chats") or []),
-                ),
-            },
-        }
+    data["bot"]["allowed_chats"] = _prompt_allowed_chats(
+        list(bot.get("allowed_chats") or []),
     )
-    config.config_file.write_text(render_config(updated), encoding="utf-8")
-    console.print(f"[green]Saved[/] [cyan]{config.config_file}[/]")
+    _write_config(data, config.config_file)
+    console.print(f"[green]✓ Saved[/] [cyan]{config.config_file}[/]")
+    console.print()
+    if Confirm.ask(
+        "[bold]Pair WhatsApp now[/]",
+        console=console,
+        default=True,
+        show_default=False,
+    ):
+        asyncio.run(run_auth(build_config()))
+
+
+def _run_migrations(config: Config) -> list[str]:
+    changes: list[str] = []
+    if migrate_config_file(config.config_file):
+        changes.append("config")
+    config.sessions_dir.mkdir(parents=True, exist_ok=True)
+    changes.append("sessions")
+    for version in run_release_migrations(config, _project_root()):
+        changes.append(f"migration:{version}")
+    return changes
+
+
+def _ensure_configured() -> Config:
+    config_file = app_root() / "config.toml"
+    had_config = config_file.exists()
+    config = build_config()
+    if had_config:
+        return config
+    console.print("[cyan]No config found. Starting configure wizard.[/]")
+    run_configure_command(config, mode="wizard")
+    return build_config()
+
+
+def show_logs(config: Config | None = None) -> None:
+    config = config or build_config()
+    _tail_file(config.log_file, follow=True)
+
+
+def run_update_command(config: Config | None = None) -> Config | None:
+    """Run `faltoobot update`."""
+    _config = config or build_config()
+    previous_version = package_version("faltoobot")
+    _run_cmd(_uv_bin(), "tool", "upgrade", "faltoobot")
+    current_version = package_version("faltoobot")
+    if current_version != previous_version:
+        console.print(
+            "[yellow]Faltoobot was upgraded.[/] "
+            f"Please rerun the command to continue with [cyan]{current_version}[/]."
+        )
+        return None
+    console.print("[dim]No required system dependencies to install.[/]")
+    config = _ensure_configured()
+    changes = _run_migrations(config)
+    summary = ", ".join(changes) if changes else "none"
+    console.print(f"[green]Update complete.[/] changes: {summary}")
+    return build_config()
+
+
+def run_whatsapp_command(config: Config | None = None) -> None:
+    """Run `faltoobot whatsapp`."""
+    config = run_update_command(config)
+    if config is None:
+        return
+    _stop_service(config)
+    _install_service(config)
+    _start_service(config)
+    console.print("[green]WhatsApp service is running.[/]")
+    console.print("[dim]Press Ctrl+C any time. The service will keep running.[/]")
+    console.print("logs: [cyan]faltoobot logs[/]")
+    show_logs(config)
+
+
+def run_configure_command(
+    config: Config | None = None,
+    *,
+    mode: str | None = None,
+) -> None:
+    config = config or build_config()
+    if mode is None:
+        choice = _prompt_menu(
+            "Configure",
+            ["Wizard", "WhatsApp", "Codex / OpenAI"],
+            default=1,
+        )
+        mode = {1: "wizard", 2: "whatsapp", 3: "openai"}[choice]
+
+    if mode == "wizard":
+        _configure_openai(config)
+        _configure_whatsapp(build_config())
+    elif mode == "whatsapp":
+        _configure_whatsapp(config)
+    elif mode == "openai":
+        _configure_openai(config)
+    else:  # comment: only internal callers choose the configure mode.
+        raise SystemExit(f"unknown configure mode: {mode}")
+    _restart_service(build_config())
 
 
 def parse_args() -> argparse.Namespace:
@@ -502,79 +515,43 @@ def parse_args() -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("auth", help="authenticate the WhatsApp session")
-    sub.add_parser("login", help="sign in to OpenAI Codex for faltoochat")
-    sub.add_parser("configure", help="create or update the config file interactively")
-    sub.add_parser("run", help="run the WhatsApp bot in the foreground")
-    sub.add_parser("install", help="install the background service")
-    sub.add_parser("uninstall", help="remove the background service")
-    sub.add_parser("status", help="show background service status")
+    sub.add_parser("update", help="upgrade faltoobot and run setup tasks")
+    sub.add_parser("whatsapp", help="install and run the WhatsApp service")
 
-    logs = sub.add_parser("logs", help="show Faltoobot logs")
-    logs.add_argument(
-        "-f", "--follow", action="store_true", help="follow the log output"
-    )
-    logs.add_argument(
-        "-n", "--lines", type=int, default=100, help="number of lines to show"
-    )
-
-    update = sub.add_parser("update", help="pull the latest code and run migrations")
-    update.add_argument("--migrate-only", action="store_true", help=argparse.SUPPRESS)
-
-    sub.add_parser("paths", help="show important file paths")
+    sub.add_parser("logs", help="show logs in follow mode")
+    sub.add_parser("configure", help="configure Faltoobot")
     sub.add_parser("makemigrations", help="dev: create migrations with the model")
+    sub.add_parser(SERVICE_COMMAND, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
-def show_paths(config: Config) -> None:
-    table = Table(box=None, show_header=False, pad_edge=False)
-    table.add_column(style="cyan", no_wrap=True)
-    table.add_column()
-    table.add_row("home", str(config.root))
-    table.add_row("config", str(config.config_file))
-    table.add_row("session_db", str(config.session_db))
-    table.add_row("sessions", str(config.sessions_dir))
-    table.add_row("log", str(config.log_file))
-    table.add_row("service", str(service_file(config)))
-    console.print(table)
-
-
-def handle_async_command(args: argparse.Namespace, config: Config) -> bool:
-    command = args.command
-    if command == "auth":
-        asyncio.run(run_auth(config))
-        return True
-    if command == "run":
-        asyncio.run(run_bot(config))
-        return True
-    return False
-
-
-def handle_command(args: argparse.Namespace, config: Config) -> None:
-    if handle_async_command(args, config):
+def handle_command(args: argparse.Namespace, config: Config | None = None) -> None:
+    # comment: the public `whatsapp` command manages updates, service install/start, and log
+    # following. The OS service itself needs a separate hidden entrypoint that only runs the bot.
+    if args.command == SERVICE_COMMAND:
+        asyncio.run(run_bot(config or build_config()))
         return
-    actions = {
-        "configure": lambda: (ensure_config_file(), configure_app(config)),
-        "install": lambda: install_service(config),
-        "makemigrations": lambda: run_makemigrations_command(),
-        "login": lambda: run_openai_login(console),
-        "logs": lambda: tail_file(
-            config.log_file, lines=args.lines, follow=args.follow
-        ),
-        "paths": lambda: (ensure_config_file(), show_paths(config)),
-        "status": lambda: service_status(config),
-        "uninstall": lambda: uninstall_service(config),
-        "update": lambda: update_app(config, migrate_only=args.migrate_only),
-    }
-    action = actions.get(args.command)
-    if action is None:  # guard for unexpected parser changes
-        raise SystemExit(f"unknown command: {args.command}")
-    action()
+    if args.command == "update":
+        run_update_command(config)
+        return
+    if args.command == "whatsapp":
+        run_whatsapp_command(config)
+        return
+    if args.command == "logs":
+        show_logs(config)
+        return
+    if args.command == "configure":
+        run_configure_command(config)
+        return
+    if args.command == "makemigrations":
+        run_makemigrations_command()
+        return
+    # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
+    raise SystemExit(f"unknown command: {args.command}")
 
 
 def main() -> None:
-    args = parse_args()
-    handle_command(args, build_config())
+    handle_command(parse_args())
 
 
 if __name__ == "__main__":

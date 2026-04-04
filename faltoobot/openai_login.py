@@ -243,14 +243,16 @@ def run_openai_login(console: Console | None = None) -> None:
             code_challenge=code_challenge,
             state=callback_state.expected_state,
         )
-        console.print("[bold]OpenAI Codex login[/]")
+        console.print()
+        console.rule("[bold cyan]OpenAI Codex login[/]", style="dim")
         console.print("Open this URL if your browser does not open automatically:")
-        console.print(authorize_url)
+        console.print(f"[cyan]{authorize_url}[/]")
         try:
             webbrowser.open(authorize_url)
         except webbrowser.Error:
             pass
 
+        console.print()
         console.print("Waiting for the browser callback...")
         if not callback_state.done.wait(LOGIN_TIMEOUT_SECONDS):
             raise SystemExit("OpenAI login timed out. Please try again.")
@@ -272,8 +274,9 @@ def run_openai_login(console: Console | None = None) -> None:
             refresh_token=tokens["refresh_token"],
         )
         config_file = _save_oauth_path(auth_file)
-        console.print(f"[green]Saved[/] [cyan]{auth_file}[/]")
-        console.print(f"[green]Updated[/] [cyan]{config_file}[/] with openai.oauth")
+        console.print()
+        console.print(f"[green]✓ Saved[/] [cyan]{auth_file}[/]")
+        console.print(f"[green]✓ Updated[/] [cyan]{config_file}[/] with openai.oauth")
     except OpenAIAuthError as exc:
         raise SystemExit(str(exc)) from exc
     finally:

@@ -22,6 +22,7 @@ from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 from PIL import Image
 
+from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
 from faltoobot.whatsapp.runtime import (
     keep_chat_typing,
@@ -672,3 +673,34 @@ async def test_process_message_reset_creates_new_session_for_chat(
     ]
     assert get_messages(second)["messages"] == []
     assert get_messages(second)["message_ids"] == ["msg-1", "msg-2"]
+
+
+class _DummyClient:
+    def event(self, _event: object):
+        def decorator(function):
+            return function
+
+        return decorator
+
+    async def connect(self) -> None:
+        return None
+
+    async def idle(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
+@pytest.mark.anyio
+async def test_run_bot_allows_oauth_without_api_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    config.openai_oauth = "auth.json"
+
+    monkeypatch.setattr(whatsapp_app.login, "configure_logging", lambda path: None)
+    monkeypatch.setattr(whatsapp_app, "NewAClient", lambda session_db: _DummyClient())
+    monkeypatch.setattr(whatsapp_app, "install_signal_handlers", lambda stop: None)
+
+    await whatsapp_app.run_bot(config)

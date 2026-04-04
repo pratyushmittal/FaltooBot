@@ -85,10 +85,9 @@ def test_cli_run_migrations_includes_release_migrations(
         "0.5.0",
         "def migrate(config):\n    (config.root / 'migrated.txt').parent.mkdir(parents=True, exist_ok=True)\n    (config.root / 'migrated.txt').write_text('done', encoding='utf-8')\n",
     )
-    monkeypatch.setattr(cli, "project_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "has_service", lambda config: False)
+    monkeypatch.setattr(cli, "_project_root", lambda: tmp_path)
 
-    changes = __import__("asyncio").run(cli.run_migrations(config))
+    changes = cli._run_migrations(config)
 
     assert "sessions" in changes
     assert "migration:0.5.0" in changes
