@@ -131,7 +131,7 @@ def test_run_update_command_upgrades_then_bootstraps(
     calls: list[tuple[str, ...]] = []
     ensured: list[str] = []
     migrations: list[str] = []
-    versions = iter(["1.5.2", "1.5.2"])
+    versions = iter(["1.6.0", "1.6.0"])
 
     monkeypatch.setattr(cli, "build_config", lambda: config)
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
@@ -169,7 +169,7 @@ def test_run_update_command_stops_when_new_version_was_installed(
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
     ensured: list[str] = []
-    versions = iter(["1.5.2", "1.5.3"])
+    versions = iter(["1.6.0", "1.6.1"])
 
     monkeypatch.setattr(cli, "build_config", lambda: config)
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")

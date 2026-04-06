@@ -2,6 +2,19 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.6.0 — 2026-04-06
+
+### Added
+- `faltoochat` now supports one-shot sub-agent runs with `--notify-chat-key`, plus a bundled `scheduled-subagents` skill for background jobs, cron tasks, and delayed follow-ups.
+- A lightweight notify queue now lets sub-agents send results back into terminal chat and WhatsApp sessions.
+
+### Changed
+- Coding, sub-agent, and WhatsApp built-in prompts are now selected from session type, and prompt templates support a configurable `bot_name`.
+- `faltoobot update` and `faltoobot configure` now refresh bundled skills alongside the rest of the local install.
+
+### Fixed
+- WhatsApp and terminal chat now share the updated turn/session flow, including notification polling, normalized per-chat locking, and one-shot output handling.
+
 ## 1.5.2 — 2026-04-04
 
 ### Fixed
