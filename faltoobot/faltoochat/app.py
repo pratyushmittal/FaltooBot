@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from faltoobot import sessions
+from faltoobot import notify_queue, sessions
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.terminal import (
     open_in_default_editor,
@@ -246,8 +247,6 @@ class FaltooChatApp(App[None]):
     def __init__(
         self,
         session: sessions.Session,
-        *,
-        initial_prompt: str | None = None,
     ) -> None:
         self._persist_theme_changes = False
         super().__init__()
@@ -258,8 +257,8 @@ class FaltooChatApp(App[None]):
         self._persist_theme_changes = True
         self.session = session
         self.workspace = Path(sessions.get_messages(session)["workspace"])
-        self.initial_prompt = (initial_prompt or "").strip()
         self.is_answering = False
+        self._is_polling_notifications = False
 
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)
@@ -344,14 +343,40 @@ class FaltooChatApp(App[None]):
         self.query_one("#slash-commands", OptionList).display = False
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
         await self.queue().refresh_queue()
-        if self.initial_prompt:
-            self.run_worker(
-                self.submit_message(
-                    get_local_user_message_item(self.initial_prompt, [])
-                ),
-                exclusive=True,
-            )
-            self.initial_prompt = ""
+        self.set_interval(1.0, self._poll_notifications)
+
+    def _poll_notifications(self) -> None:
+        # comment: timer ticks can overlap while an earlier notification drain is still running.
+        if self._is_polling_notifications:
+            return
+        self._is_polling_notifications = True
+        self.run_worker(self._drain_notifications(), exclusive=False)
+
+    async def _drain_notifications(self) -> None:
+        try:
+            for path, notification in notify_queue.claim_notifications(
+                lambda item: item["chat_key"] == self.session[0]
+            ):
+                try:
+                    message_item = get_local_user_message_item(
+                        notification["message"], []
+                    )
+                    await self.handle_message(message_item)
+                    notify_queue.ack_notification(path)
+                    self.notify("Received sub-agent response")
+                except Exception:
+                    notify_queue.requeue_notification(path)
+                    raise
+        finally:
+            self._is_polling_notifications = False
+
+    async def handle_message(self, message_item: MessageItem) -> None:
+        # comment: queued messages should wait for the active answer to finish before starting a new turn.
+        if self.is_answering:
+            await self.queue().add_to_queue(message_item)
+            return
+        # exclusive=True tells Textual to cancel all previous workers before starting the new one
+        self.run_worker(self.submit_message(message_item), exclusive=True)
 
     async def load_messages(
         self,
@@ -452,21 +477,22 @@ class FaltooChatApp(App[None]):
         await _stop_answer_stream(answer_stream)
 
     async def submit_message(self, message_item: MessageItem):
-        # render user message
-        transcript = self.query_one("#transcript", VerticalScroll)
-        preview_text, preview_classes = get_item_text(message_item)  # type: ignore
-        await transcript.mount(*_render_blocks(preview_text, preview_classes))
-        self.call_after_refresh(
-            transcript.scroll_end,
-            animate=False,
-            immediate=True,
-        )
-
-        # stream reply
+        # comment: mark the turn as active before the first await so new messages queue behind it.
         self.is_answering = True
         composer = self.query_one("#composer", Composer)
         composer.border_subtitle = "answering"
         try:
+            # render user message
+            transcript = self.query_one("#transcript", VerticalScroll)
+            preview_text, preview_classes = get_item_text(message_item)  # type: ignore
+            await transcript.mount(*_render_blocks(preview_text, preview_classes))
+            self.call_after_refresh(
+                transcript.scroll_end,
+                animate=False,
+                immediate=True,
+            )
+
+            # stream reply
             await self.stream_reply(
                 transcript,
                 *decompose_local_message_item(message_item),
@@ -628,18 +654,22 @@ class Composer(TextArea):
         if await self.handle_command(question):
             return
 
-        # add to queue if answering
         message_item = get_local_user_message_item(question, attachments)
-        if self.app.is_answering:
-            await self.app.queue().add_to_queue(message_item)
-            self.focus()
-            return
-
-        # exclusive=True tells Textual to cancel all previous workers before starting the new one
-        self.app.run_worker(self.app.submit_message(message_item), exclusive=True)
+        await self.app.handle_message(message_item)
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+
+async def _run_one_shot(session: sessions.Session, prompt: str) -> str:
+    return await sessions.get_answer(session=session, question=prompt)
+
+
+def _workspace_from_args(workspace: str | None) -> Path:
+    base = Path.cwd() if workspace is None else Path(workspace).expanduser()
+    path = base.resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def parse_args() -> argparse.Namespace:
@@ -655,21 +685,45 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="start a fresh session",
     )
+    parser.add_argument("--workspace", help="workspace path to use for this chat")
+    parser.add_argument(
+        "--notify-chat-key",
+        help="send the final output back to another chat key",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    workspace = _workspace_from_args(args.workspace)
     session_id = str(uuid4()) if args.new_session else None
+    chat_key = sessions.get_dir_chat_key(
+        workspace,
+        is_sub_agent=bool(args.notify_chat_key),
+    )
+    session = sessions.get_session(
+        chat_key=chat_key,
+        session_id=session_id,
+        workspace=workspace,
+    )
     try:
-        FaltooChatApp(
-            session=sessions.get_session(
-                chat_key=sessions.get_dir_chat_key(Path.cwd()),
-                session_id=session_id,
-                workspace=Path.cwd(),
-            ),
-            initial_prompt=args.prompt,
-        ).run()
+        if args.prompt:
+            output = asyncio.run(_run_one_shot(session, args.prompt))
+            if output:
+                print(output)
+            if args.notify_chat_key:
+                notify_queue.enqueue_notification(
+                    args.notify_chat_key,
+                    notify_queue.format_subagent_message(
+                        prompt=args.prompt,
+                        workspace=workspace,
+                        output=output,
+                    ),
+                )
+            return 0
+        if args.notify_chat_key:
+            raise SystemExit("--notify-chat-key requires a prompt")
+        FaltooChatApp(session=session).run()
     except KeyboardInterrupt:
         return 130
     return 0

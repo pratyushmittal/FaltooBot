@@ -153,12 +153,33 @@ Dev-only command for creating release migration scripts inside this repo.
 
 ## Terminal chat
 
-You can also use Faltoobot locally in the terminal:
+You can also use Faltoobot locally in the terminal.
+
+### Interactive mode
+
+Run `faltoochat` with no prompt to open the terminal UI:
 
 ```bash
 faltoochat
-faltoochat "draft a release note"
+faltoochat --workspace=./repo
 faltoochat --new-session
+```
+
+### One-shot mode
+
+Run `faltoochat` with a prompt to execute a headless one-shot task in that workspace and print the final output to stdout:
+
+```bash
+faltoochat "draft a release note"
+faltoochat "review unstaged files" --workspace=./repo --new-session
+```
+
+### Notify another chat
+
+A one-shot `faltoochat` run can send its final output back to another chat key. This is useful for sub-agents, cron jobs, and detached background tasks:
+
+```bash
+faltoochat "List new emails for the user" --workspace=./emails --notify-chat-key=code@main
 ```
 
 ## Commands inside chat

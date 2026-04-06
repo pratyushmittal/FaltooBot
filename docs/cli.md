@@ -65,3 +65,34 @@ faltoobot whatsapp
 - `faltoobot whatsapp` is safe to run again.
 - `Ctrl+C` stops log following, not the background service.
 - `faltoobot logs` is the command to reattach to logs later.
+
+## `faltoochat`
+
+`faltoochat` now supports both interactive and one-shot usage.
+
+### Interactive mode
+
+Run it without a prompt to open the terminal UI:
+
+```bash
+faltoochat
+faltoochat --workspace=./repo
+faltoochat --new-session
+```
+
+### One-shot mode
+
+Run it with a prompt to execute a single task and print the final output to stdout:
+
+```bash
+faltoochat "draft a release note"
+faltoochat "review unstaged files" --workspace=./repo --new-session
+```
+
+### `--notify-chat-key`
+
+A one-shot run can send its final output back to another chat key. This powers sub-agents, cron jobs, and detached background jobs.
+
+```bash
+faltoochat "List new emails for the user" --workspace=./emails --notify-chat-key=code@main
+```

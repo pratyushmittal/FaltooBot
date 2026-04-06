@@ -12,6 +12,19 @@ class Skill(TypedDict):
     content: str
 
 
+def _bundled_skills_root() -> Path:
+    return Path(__file__).resolve().parent / "skills"
+
+
+def _skill_roots(workspace: Path) -> tuple[Path, Path, Path, Path]:
+    return (
+        _bundled_skills_root(),
+        app_root() / "skills",
+        Path.home() / ".agents" / "skills",
+        workspace.expanduser().resolve() / ".skills",
+    )
+
+
 def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
@@ -77,13 +90,8 @@ def _iter_skill_files(root: Path) -> list[tuple[str, Path, str | None]]:
 
 
 def load_skills(workspace: Path) -> list[Skill]:
-    roots = (
-        app_root() / "skills",
-        Path.home() / ".agents" / "skills",
-        workspace.expanduser().resolve() / ".skills",
-    )
     skills_by_name: dict[str, Skill] = {}
-    for root in roots:
+    for root in _skill_roots(workspace):
         for _, path, default_name in _iter_skill_files(root):
             skill = _read_skill_file(path, default_name=default_name)
             if skill is None:
@@ -100,12 +108,12 @@ def _available_skills_text(skills: list[Skill]) -> str:
     )
 
 
-def load_skill(workspace: Path, skill_name: str) -> str:
+def load_skill(workspace: Path, skill_name: str, *, chat_key: str) -> str:
     skills = load_skills(workspace)
     by_name = {_skill_key(skill["name"]): skill for skill in skills}
     skill = by_name.get(_skill_key(skill_name))
     if skill is not None:
-        return skill["content"]
+        return skill["content"].replace("{chat_key}", chat_key)
 
     available = _available_skills_text(skills)
     return (
@@ -114,18 +122,19 @@ def load_skill(workspace: Path, skill_name: str) -> str:
     )
 
 
-def get_load_skill_tool(workspace: Path) -> tuple[list[Skill], Callable[[str], str]]:
+def get_load_skill_tool(
+    workspace: Path, *, chat_key: str
+) -> tuple[list[Skill], Callable[[str], str]]:
     workspace = workspace.expanduser().resolve()
     skills = load_skills(workspace)
     available = _available_skills_text(skills)
 
     def load_skill_tool(skill_name: str) -> str:
-        return load_skill(workspace, skill_name)
+        return load_skill(workspace, skill_name, chat_key=chat_key)
 
     load_skill_tool.__name__ = "load_skill"
-    load_skill_tool.__doc__ = f"""Load the contents of a local skill by name.
-
-Skills are loaded from `{app_root() / "skills"}`, `{Path.home() / ".agents" / "skills"}`, and `{workspace / ".skills"}`.
+    load_skill_tool.__doc__ = f"""The following skills provide specialized instructions for specific tasks.
+When a task matches a skill's description, use this `{load_skill_tool.__name__}` tool before proceeding.
 
 Available skills:
 {available or "- (none)"}

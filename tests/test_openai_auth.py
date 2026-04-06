@@ -31,6 +31,7 @@ def _config(tmp_path: Path, *, api_key: str, oauth: str) -> Config:
         openai_transcription_model="gpt-4o-transcribe",
         allow_groups=False,
         allowed_chats=set(),
+        bot_name="Faltoo",
     )
 
 

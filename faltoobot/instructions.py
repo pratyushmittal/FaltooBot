@@ -2,6 +2,7 @@ from pathlib import Path
 
 from faltoobot.config import Config
 from faltoobot.prompts.coding_agent import PROMPT as CODING_AGENT_PROMPT
+from faltoobot.prompts.sub_agent import PROMPT as SUB_AGENT_PROMPT
 from faltoobot.prompts.whatsapp import PROMPT as WHATSAPP_PROMPT
 
 
@@ -17,7 +18,7 @@ def _read_agents_text(path: Path) -> str | None:
 
 
 def _instruction_parts(prompt: str, config: Config, workspace: Path) -> list[str]:
-    parts = [prompt]
+    parts = [prompt.format(bot_name=config.bot_name)]
     seen = set[Path]()
     for base, label in (
         (config.root, "Global AGENTS.md"),
@@ -35,6 +36,8 @@ def _instruction_parts(prompt: str, config: Config, workspace: Path) -> list[str
 
 def get_system_instructions(config: Config, chat_key: str, workspace: Path) -> str:
     match chat_key:
+        case key if key.startswith("sub-agent@"):
+            prompt = SUB_AGENT_PROMPT
         case key if key.startswith("code@"):
             prompt = CODING_AGENT_PROMPT
         case _:

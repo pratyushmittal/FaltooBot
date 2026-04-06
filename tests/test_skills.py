@@ -1,8 +1,17 @@
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from faltoobot import skills
 from faltoobot.gpt_utils import get_tools_definition
+
+
+@pytest.fixture(autouse=True)
+def _isolate_bundled_skills(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        skills, "_bundled_skills_root", lambda: tmp_path / ".bundled-skills"
+    )
 
 
 def _write_folder_skill(root: Path, name: str, text: str) -> None:
@@ -75,6 +84,50 @@ def test_load_skills_skips_direct_file_with_conflicting_name(
     assert "frontmatter name does not match filename" in capsys.readouterr().err
 
 
+def test_load_skills_reads_bundled_package_skills_when_app_root_is_empty(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    workspace = tmp_path / "workspace"
+
+    package_root = tmp_path / "package" / "faltoobot"
+    bundled = package_root / "skills"
+    bundled.mkdir(parents=True, exist_ok=True)
+    (bundled / "scheduled-subagents.md").write_text(
+        "---\ndescription: bundled helper\n---\nUse bundled rules.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skills, "_bundled_skills_root", lambda: bundled)
+
+    loaded = skills.load_skills(workspace)
+
+    assert loaded == [
+        {
+            "name": "scheduled-subagents",
+            "description": "bundled helper",
+            "content": "Use bundled rules.",
+        }
+    ]
+
+
+def test_load_skill_injects_chat_key_placeholder(monkeypatch, tmp_path: Path) -> None:
+    home_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    workspace = tmp_path / "workspace"
+    _write_file_skill(
+        home_root / "skills",
+        "scheduled-subagents",
+        "---\ndescription: sub-agent helper\n---\nnotify key: {chat_key}\n",
+    )
+
+    result = skills.load_skill(workspace, "scheduled-subagents", chat_key="code@main")
+
+    assert result == "notify key: code@main"
+
+
 def test_load_skill_returns_exact_skill_content(monkeypatch, tmp_path: Path) -> None:
     home_root = tmp_path / ".faltoobot"
     monkeypatch.setattr(skills, "app_root", lambda: home_root)
@@ -86,7 +139,7 @@ def test_load_skill_returns_exact_skill_content(monkeypatch, tmp_path: Path) -> 
         "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small and prefer e2e coverage.\n",
     )
 
-    result = skills.load_skill(workspace, "pytest-helper")
+    result = skills.load_skill(workspace, "pytest-helper", chat_key="code@test")
 
     assert result == "Always keep tests small and prefer e2e coverage."
 
@@ -104,7 +157,7 @@ def test_load_skill_lists_available_skills_when_missing(
         "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
     )
 
-    result = skills.load_skill(workspace, "missing")
+    result = skills.load_skill(workspace, "missing", chat_key="code@test")
 
     assert "Local skill not found" in result
     assert "pytest-helper: Write small pytest e2e checks" in result
@@ -122,7 +175,9 @@ def test_get_load_skill_tool_builds_valid_tool_definition(
         "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
     )
 
-    loaded, tool = skills.get_load_skill_tool(tmp_path / "workspace")
+    loaded, tool = skills.get_load_skill_tool(
+        tmp_path / "workspace", chat_key="code@test"
+    )
     definition = get_tools_definition(tool)
 
     assert loaded == [
@@ -139,7 +194,9 @@ def test_get_load_skill_tool_builds_valid_tool_definition(
     assert definition["type"] == "function"
     assert definition["name"] == "load_skill"
     assert definition["strict"] is True
-    assert description.startswith("Load the contents of a local skill by name.")
+    assert description.startswith(
+        "The following skills provide specialized instructions for specific tasks."
+    )
     assert "pytest-helper: Write small pytest e2e checks" in description
     assert parameters == {
         "type": "object",
@@ -171,7 +228,9 @@ def test_get_load_skill_tool_lists_skills_in_stable_name_order(
         "---\ndescription: first\n---\nAlpha.\n",
     )
 
-    _loaded, tool = skills.get_load_skill_tool(tmp_path / "workspace")
+    _loaded, tool = skills.get_load_skill_tool(
+        tmp_path / "workspace", chat_key="code@test"
+    )
 
     assert tool.__doc__ is not None
     assert tool.__doc__.index("- alpha-helper: first") < tool.__doc__.index(

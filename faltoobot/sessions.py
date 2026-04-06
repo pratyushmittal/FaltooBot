@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator, TypeAlias, TypedDict
 from uuid import uuid4
 
 from openai import AsyncOpenAI
+from openai.types.responses import Response, ResponseOutputMessage, ResponseOutputText
 from PIL import Image
 
 from faltoobot.config import Config, app_root, build_config
@@ -64,11 +65,12 @@ def _validate_chat_key(chat_key: str) -> str:
     return chat_key
 
 
-def get_dir_chat_key(workspace: Path) -> str:
+def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
     resolved = workspace.resolve()
     name = resolved.name or "root"
     digest = hashlib.md5(str(resolved).encode("utf-8")).hexdigest()[-6:]
-    return f"code@{name}-{digest}"
+    prefix = "sub-agent" if is_sub_agent else "code"
+    return f"{prefix}@{name}-{digest}"
 
 
 def _chat_root(chat_key: str) -> Path:
@@ -356,20 +358,39 @@ async def _upload_attachments(
         await client.close()
 
 
+def _assistant_text_from_response(response: Response | None) -> str:
+    if response is None:
+        return ""
+    output_text = getattr(response, "output_text", "")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+    for item in reversed(response.output):
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        text = "".join(
+            part.text for part in item.content if isinstance(part, ResponseOutputText)
+        ).strip()
+        if text:
+            return text
+    return ""
+
+
 async def get_answer(
     session: Session,
     question: str,
     attachments: Sequence[Attachment] | None = None,
     message_id: str | None = None,
-) -> MessagesJson:
-    async for _ in get_answer_streaming(
+) -> str:
+    answer = ""
+    async for event in get_answer_streaming(
         session=session,
         question=question,
         attachments=attachments,
         message_id=message_id,
     ):
-        pass
-    return get_messages(session)
+        if event.type == "response.completed":
+            answer = _assistant_text_from_response(getattr(event, "response", None))
+    return answer
 
 
 async def get_answer_streaming(
@@ -409,7 +430,8 @@ async def get_answer_streaming(
 
         tools: list[Tool] = [get_run_shell_call_tool(Path(messages_json["workspace"]))]
         available_skills, load_skill_tool = get_load_skill_tool(
-            Path(messages_json["workspace"])
+            Path(messages_json["workspace"]),
+            chat_key=session[0],
         )
         if available_skills:
             # comment: only expose the skill-loading tool when there is at least one local skill to load.

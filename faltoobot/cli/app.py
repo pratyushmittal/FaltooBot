@@ -36,7 +36,7 @@ from faltoobot.config import (
     render_config,
 )
 from faltoobot.openai_login import run_openai_login
-from faltoobot.whatsapp.app import run_bot
+from faltoobot.whatsapp.app import main as run_whatsapp_bot
 from faltoobot.whatsapp.login import run_auth
 
 console = Console()
@@ -75,6 +75,22 @@ def _uv_bin() -> str:
     if not uv:
         raise SystemExit("uv is required. Install it first: https://docs.astral.sh/uv/")
     return uv
+
+
+def _copy_bundled_skills(config: Config) -> None:
+    source = Path(__file__).resolve().parents[1] / "skills"
+    # comment: broken installs may miss bundled skills, so skip copying when the source folder is absent.
+    if not source.is_dir():
+        return
+    target = config.root / "skills"
+    target.mkdir(parents=True, exist_ok=True)
+    for path in sorted(source.rglob("*")):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(source)
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
 
 
 def _run_cmd(*args: str) -> None:
@@ -229,6 +245,12 @@ def _start_service(config: Config) -> None:
         _run_darwin_launchctl("kickstart", "-k", _darwin_service_target())
         return
     _run_systemctl("start", LINUX_SERVICE_NAME)
+
+
+def _reinstall_service(config: Config) -> None:
+    _stop_service(config)
+    _install_service(config)
+    _start_service(config)
 
 
 def _restart_service(config: Config) -> None:
@@ -459,11 +481,16 @@ def run_update_command(config: Config | None = None) -> Config | None:
         )
         return None
     console.print("[dim]No required system dependencies to install.[/]")
+    _copy_bundled_skills(_config)
     config = _ensure_configured()
     changes = _run_migrations(config)
+    final_config = build_config()
+    # comment: only refresh services on update when one was already installed before this update run.
+    if _service_installed(final_config):
+        _reinstall_service(final_config)
     summary = ", ".join(changes) if changes else "none"
     console.print(f"[green]Update complete.[/] changes: {summary}")
-    return build_config()
+    return final_config
 
 
 def run_whatsapp_command(config: Config | None = None) -> None:
@@ -471,9 +498,7 @@ def run_whatsapp_command(config: Config | None = None) -> None:
     config = run_update_command(config)
     if config is None:
         return
-    _stop_service(config)
-    _install_service(config)
-    _start_service(config)
+    _reinstall_service(config)
     console.print("[green]WhatsApp service is running.[/]")
     console.print("[dim]Press Ctrl+C any time. The service will keep running.[/]")
     console.print("logs: [cyan]faltoobot logs[/]")
@@ -486,6 +511,7 @@ def run_configure_command(
     mode: str | None = None,
 ) -> None:
     config = config or build_config()
+    _copy_bundled_skills(config)
     if mode is None:
         choice = _prompt_menu(
             "Configure",
@@ -529,7 +555,7 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
     # comment: the public `whatsapp` command manages updates, service install/start, and log
     # following. The OS service itself needs a separate hidden entrypoint that only runs the bot.
     if args.command == SERVICE_COMMAND:
-        asyncio.run(run_bot(config or build_config()))
+        asyncio.run(run_whatsapp_bot(config or build_config()))
         return
     if args.command == "update":
         run_update_command(config)

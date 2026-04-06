@@ -30,6 +30,7 @@ class Config:
     openai_transcription_model: str
     allow_groups: bool
     allowed_chats: set[str]
+    bot_name: str
 
 
 def app_root() -> Path:
@@ -50,6 +51,7 @@ def default_config() -> dict[str, dict[str, Any]]:
         "bot": {
             "allow_groups": False,
             "allowed_chats": [],
+            "bot_name": "Faltoo",
         },
     }
 
@@ -78,6 +80,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 bot.get("allow_groups"), defaults["bot"]["allow_groups"]
             ),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
+            "bot_name": as_str(bot.get("bot_name"), defaults["bot"]["bot_name"]),
         },
     }
 
@@ -133,6 +136,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
             f"allowed_chats = [{allowed}]",
+            f"bot_name = {quote(str(bot['bot_name']))}",
             "",
         ]
     )
@@ -208,20 +212,15 @@ def build_config() -> Config:
         session_db=root / "session.db",
         launch_agent=Path.home() / "Library" / "LaunchAgents" / f"{APP_LABEL}.plist",
         run_script=root / "run.sh",
-        openai_api_key=as_str(
-            openai.get("api_key"), os.environ.get("OPENAI_API_KEY", "")
-        ),
-        openai_oauth=as_str(openai.get("oauth"), ""),
-        openai_model=as_str(openai.get("model"), MODEL_OPTIONS[0]),
-        openai_thinking=as_str(openai.get("thinking"), DEFAULT_THINKING),
-        openai_fast=as_bool(openai.get("fast"), False),
-        openai_transcription_model=as_choice(
-            openai.get("transcription_model"),
-            TRANSCRIPTION_MODEL_OPTIONS[1],
-            TRANSCRIPTION_MODEL_OPTIONS,
-        ),
-        allow_groups=as_bool(bot.get("allow_groups"), False),
-        allowed_chats=as_chat_set(bot.get("allowed_chats")),
+        openai_api_key=str(openai["api_key"]) or os.environ.get("OPENAI_API_KEY", ""),
+        openai_oauth=str(openai["oauth"]),
+        openai_model=str(openai["model"]),
+        openai_thinking=str(openai["thinking"]),
+        openai_fast=bool(openai["fast"]),
+        openai_transcription_model=str(openai["transcription_model"]),
+        allow_groups=bool(bot["allow_groups"]),
+        allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
+        bot_name=str(bot["bot_name"]),
     )
 
 

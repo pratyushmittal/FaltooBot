@@ -27,6 +27,7 @@ def make_config(tmp_path: Path) -> Config:
         openai_transcription_model="gpt-4o-transcribe",
         allow_groups=False,
         allowed_chats=set(),
+        bot_name="Faltoo",
     )
 
 
@@ -94,6 +95,35 @@ def test_render_log_line_uses_level_colors() -> None:
     )
 
 
+def test_copy_bundled_skills_overwrites_existing_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    source = tmp_path / "source-skills"
+    source.mkdir(parents=True)
+    (source / "alpha.md").write_text("new alpha", encoding="utf-8")
+    nested = source / "nested"
+    nested.mkdir()
+    (nested / "beta.md").write_text("new beta", encoding="utf-8")
+
+    target = config.root / "skills"
+    target.mkdir(parents=True)
+    (target / "alpha.md").write_text("old alpha", encoding="utf-8")
+
+    package_root = tmp_path / "package" / "faltoobot" / "cli"
+    package_root.mkdir(parents=True)
+    monkeypatch.setattr(cli, "__file__", str(package_root / "app.py"))
+    target_source = package_root.parent / "skills"
+    if target_source.exists():
+        raise AssertionError("test source dir must start missing")
+    source.replace(target_source)
+
+    cli._copy_bundled_skills(config)
+
+    assert (target / "alpha.md").read_text(encoding="utf-8") == "new alpha"
+    assert (target / "nested" / "beta.md").read_text(encoding="utf-8") == "new beta"
+
+
 def test_run_update_command_upgrades_then_bootstraps(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -107,18 +137,29 @@ def test_run_update_command_upgrades_then_bootstraps(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    copied: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_configured", lambda: ensured.append("ran") or config
     )
+    reinstalls: list[str] = []
     monkeypatch.setattr(
         cli, "_run_migrations", lambda config: migrations.append("ran") or ["sessions"]
+    )
+    monkeypatch.setattr(
+        cli, "_copy_bundled_skills", lambda config: copied.append("ran")
+    )
+    monkeypatch.setattr(cli, "_service_installed", lambda config: True)
+    monkeypatch.setattr(
+        cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
 
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert ensured == ["ran"]
+    assert copied == ["ran"]
     assert migrations == ["ran"]
+    assert reinstalls == ["ran"]
     assert result == config
 
 
@@ -134,14 +175,24 @@ def test_run_update_command_stops_when_new_version_was_installed(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    copied: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_configured", lambda: ensured.append("ran") or config
+    )
+    reinstalls: list[str] = []
+    monkeypatch.setattr(
+        cli, "_copy_bundled_skills", lambda config: copied.append("ran")
+    )
+    monkeypatch.setattr(
+        cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
 
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
+    assert copied == []
     assert ensured == []
+    assert reinstalls == []
     assert result is None
 
 
@@ -150,14 +201,14 @@ def test_run_whatsapp_command_runs_service_flow(tmp_path: Path, monkeypatch) -> 
     calls: list[str] = []
 
     monkeypatch.setattr(cli, "run_update_command", lambda config=None: config)
-    monkeypatch.setattr(cli, "_stop_service", lambda config: calls.append("stop"))
-    monkeypatch.setattr(cli, "_install_service", lambda config: calls.append("install"))
-    monkeypatch.setattr(cli, "_start_service", lambda config: calls.append("start"))
+    monkeypatch.setattr(
+        cli, "_reinstall_service", lambda config: calls.append("reinstall")
+    )
     monkeypatch.setattr(cli, "show_logs", lambda config=None: calls.append("logs"))
 
     cli.run_whatsapp_command(config)
 
-    assert calls == ["stop", "install", "start", "logs"]
+    assert calls == ["reinstall", "logs"]
 
 
 def test_handle_command_runs_makemigrations(monkeypatch, tmp_path: Path) -> None:
@@ -169,3 +220,20 @@ def test_handle_command_runs_makemigrations(monkeypatch, tmp_path: Path) -> None
     cli.handle_command(cli.argparse.Namespace(command="makemigrations"), config)
 
     assert calls == ["ran"]
+
+
+def test_run_configure_command_copies_bundled_skills(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        cli, "_copy_bundled_skills", lambda config: calls.append("copy")
+    )
+    monkeypatch.setattr(cli, "_configure_openai", lambda config: calls.append("openai"))
+    monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
+
+    cli.run_configure_command(config, mode="openai")
+
+    assert calls == ["copy", "openai", "restart"]

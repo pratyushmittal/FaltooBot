@@ -203,6 +203,8 @@ async def _tool_result(
     else:
         try:
             output = await _run_tool(tools_by_name[tool_call.name], arguments)
+        except asyncio.CancelledError:
+            output = "interrupted by user"
         except TypeError as exc:
             output = f"error: {exc}"
         except Exception as exc:  # comment: tool failures should go back to the model.

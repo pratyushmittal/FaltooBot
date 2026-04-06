@@ -26,6 +26,20 @@ class FakeResponse:
     ) -> None:
         self.output = [FakeItem(item) for item in output]
         self.usage = usage
+        self.output_text = ""
+        for item in output:
+            if item.get("type") != "message" or item.get("role") != "assistant":
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            self.output_text = "".join(
+                str(part.get("text") or "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "output_text"
+            ).strip()
+            if self.output_text:
+                break
 
 
 class FakeUpload:
@@ -85,6 +99,21 @@ def _config(tmp_path: Path) -> SimpleNamespace:
         openai_oauth="",
         openai_thinking="low",
         openai_fast=False,
+    )
+
+
+def test_get_dir_chat_key_supports_subagent_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    workspace = tmp_path / "workspace"
+
+    assert sessions.get_dir_chat_key(
+        workspace, is_sub_agent=True
+    ) == sessions.get_dir_chat_key(workspace).replace(
+        "code@",
+        "sub-agent@",
+        1,
     )
 
 
@@ -198,7 +227,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
         encoding="utf-8",
     )
-    payload = await sessions.get_answer(
+    answer = await sessions.get_answer(
         session=session,
         question="Hi",
         message_id="msg-1",
@@ -208,7 +237,10 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         question="Hi again",
         message_id="msg-1",
     )
+    payload = sessions.get_messages(session)
 
+    assert answer == "hello"
+    assert duplicate == ""
     assert len(calls) == 1
     assert calls[0] == [
         {
@@ -251,7 +283,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     assert skills_tool["type"] == "function"
     assert skills_tool["strict"] is True
     assert skills_tool["description"].startswith(
-        "Load the contents of a local skill by name."
+        "The following skills provide specialized instructions for specific tasks."
     )
     assert skills_tool["parameters"] == {
         "type": "object",
@@ -283,7 +315,6 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             },
         },
     ]
-    assert duplicate == payload
 
 
 @pytest.mark.anyio
@@ -325,12 +356,14 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         chat_key=chat_key,
         workspace=tmp_path / "workspace",
     )
-    payload = await sessions.get_answer(
+    answer = await sessions.get_answer(
         session=session,
         question="Look",
         attachments=[image],
     )
+    payload = sessions.get_messages(session)
 
+    assert answer == ""
     assert client.files.calls[0]["purpose"] == "vision"
     uploaded = client.files.calls[0]["file"]
     assert uploaded.name.endswith("1600x960.png")
@@ -393,12 +426,14 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
         chat_key="code@test",
         workspace=tmp_path / "workspace",
     )
-    payload = await sessions.get_answer(
+    answer = await sessions.get_answer(
         session=session,
         question="Look",
         attachments=[image],
     )
+    payload = sessions.get_messages(session)
 
+    assert answer == ""
     assert client.files.calls == []
     assert payload["messages"][0]["content"][1]["type"] == "input_image"
     assert payload["messages"][0]["content"][1]["image_url"].startswith(
@@ -443,12 +478,14 @@ async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
         chat_key="code@test",
         workspace=tmp_path / "workspace",
     )
-    payload = await sessions.get_answer(
+    answer = await sessions.get_answer(
         session=session,
         question="compare",
         attachments=attachments,
     )
+    payload = sessions.get_messages(session)
 
+    assert answer == ""
     assert len(client.files.calls) == len(attachments)
     assert payload["messages"] == [
         {

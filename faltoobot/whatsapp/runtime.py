@@ -2,24 +2,19 @@ import asyncio
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any, TypedDict, Unpack
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import MessageEv
+from neonize.proto import Neonize_pb2
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import MessageAssociation
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
 from faltoobot.config import Config, normalize_chat
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
-from faltoobot.sessions import (
-    MessagesJson,
-    get_answer,
-    get_messages,
-    get_session,
-    set_messages,
-)
+from faltoobot.sessions import get_answer, get_messages, get_session, set_messages
 
 from .audio import AudioError, audio_message, audio_prompt
 
@@ -45,17 +40,13 @@ HELP_TEXT = (
 
 
 class PendingAlbum(TypedDict):
+    """Buffered state for a WhatsApp media album until all its images arrive."""
+
     expected_images: int
     message_ids: list[str]
     attachments: list[Path]
     prompt: str
     reply_event: MessageEv
-
-
-class ProcessMessageOptions(TypedDict, total=False):
-    config: Config
-    chat_locks: dict[str, asyncio.Lock]
-    pending_albums: dict[str, PendingAlbum]
 
 
 def source_chat_ids(source: Any) -> set[str]:
@@ -117,9 +108,18 @@ async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -
         logger.debug("Failed to update chat presence", exc_info=True)
 
 
-async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
+async def send_text(  # noqa: C901
+    client: NewAClient,
+    *,
+    chat: Neonize_pb2.JID,
+    text: str,
+    event: MessageEv | None = None,
+) -> None:
     if len(text) <= MESSAGE_CHUNK_LIMIT:
-        await client.reply_message(text, event)
+        if event is None:
+            await client.send_message(chat, text)
+        else:
+            await client.reply_message(text, event)
         return
 
     chunks: list[str] = []
@@ -141,9 +141,9 @@ async def send_text(client: NewAClient, event: MessageEv, text: str) -> None:
     if not chunks:
         chunks = [text[:MESSAGE_CHUNK_LIMIT]]
 
-    await client.reply_message(chunks[0], event)
-    chat = event.Info.MessageSource.Chat
-    for chunk in chunks[1:]:
+    if event is not None:
+        await client.reply_message(chunks.pop(0), event)
+    for chunk in chunks:
         await client.send_message(chat, chunk)
 
 
@@ -169,17 +169,29 @@ async def save_image_attachment(
     return path
 
 
-async def process_turn_locked(
+async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
     client: NewAClient,
     session: tuple[str, str],
     *,
     config: Config,
-    turn: dict[str, Any],
+    turn: "Turn",
 ) -> None:
+    """Process one already-normalized chat turn while the per-chat lock is held.
+
+    By the time this function runs, `process_message()` has already decided which
+    WhatsApp events belong to this turn. This function then:
+    - deduplicates message ids and persists them to the session
+    - logs a small summary of what arrived
+    - handles slash commands like `/help` and `/reset`
+    - keeps the chat in typing state while the model is working
+    - transcribes audio when needed
+    - gets the assistant answer and sends it back to WhatsApp
+    """
     event = turn["event"]
-    source = event.Info.MessageSource
-    chat_jid = Jid2String(source.Chat)
-    sender_jid = Jid2String(source.Sender)
+    chat = turn["chat"]
+    source = event.Info.MessageSource if event is not None else None
+    chat_jid = Jid2String(chat)
+    sender_jid = Jid2String(source.Sender) if source is not None else session[0]
     message_ids = turn["message_ids"]
     prompt = turn["prompt"]
     attachments = turn["attachments"]
@@ -214,10 +226,10 @@ async def process_turn_locked(
         chat_jid,
         summary,
     )
-    if not attachments and audio is None and prompt == "/help":
+    if event is not None and not attachments and audio is None and prompt == "/help":
         await client.reply_message(HELP_TEXT, event)
         return
-    if not attachments and audio is None and prompt == "/reset":
+    if event is not None and not attachments and audio is None and prompt == "/reset":
         reset_session = get_session(chat_key=session[0], session_id=str(uuid4()))
         reset_messages_json = get_messages(reset_session)
         reset_messages_json["message_ids"] = list(messages_json["message_ids"])
@@ -226,11 +238,9 @@ async def process_turn_locked(
         return
 
     typing_stop = asyncio.Event()
-    typing_task = asyncio.create_task(
-        keep_chat_typing(client, event.Info.MessageSource.Chat, typing_stop)
-    )
+    typing_task = asyncio.create_task(keep_chat_typing(client, chat, typing_stop))
     try:
-        if not prompt and audio is not None:
+        if event is not None and not prompt and audio is not None:
             prompt = await audio_prompt(
                 client,
                 event,
@@ -239,41 +249,287 @@ async def process_turn_locked(
                 model=config.openai_transcription_model,
                 normalization_model=config.openai_model,
             )
-        answer_json = await get_answer(
+        answer = await get_answer(
             session=session,
             question=prompt,
             attachments=attachments or None,
         )
-        if answer := latest_assistant_text(answer_json):
-            await send_text(client, event, answer)
+        if answer:
+            await send_text(client, chat=chat, text=answer, event=event)
     except AudioError as exc:
-        logger.info("Failed to transcribe audio %s: %s", event.Info.ID, exc)
-        await client.reply_message(str(exc), event)
+        logger.info(
+            "Failed to transcribe audio %s: %s",
+            event.Info.ID if event is not None else "<notify>",
+            exc,
+        )
+        await send_text(client, chat=chat, text=str(exc), event=event)
+    except asyncio.CancelledError:
+        await send_text(client, chat=chat, text="interrupted by user", event=event)
+        raise
     except Exception as exc:
-        logger.exception("Failed to handle message %s", event.Info.ID)
-        await client.reply_message(f"Sorry, that failed: {exc}", event)
+        logger.exception(
+            "Failed to handle message %s",
+            event.Info.ID if event is not None else "<notify>",
+        )
+        await send_text(
+            client, chat=chat, text=f"Sorry, that failed: {exc}", event=event
+        )
     finally:
         typing_stop.set()
         await typing_task
 
 
-async def process_message(  # noqa: C901, PLR0911, PLR0912, PLR0915
+class Turn(TypedDict):
+    # comment: event is kept for normal WhatsApp messages because quote-reply uses it.
+    event: MessageEv | None
+    # comment: chat is used for direct typing updates and direct replies in this chat.
+    chat: Neonize_pb2.JID
+    message_ids: list[str]
+    prompt: str
+    attachments: list[Path]
+    audio: Any
+
+
+def _message_text(message: Any) -> str:
+    text = message.conversation
+    if not text and message.HasField("extendedTextMessage"):
+        text = message.extendedTextMessage.text
+    if not text and message.HasField("imageMessage"):
+        text = message.imageMessage.caption
+    return text.strip()
+
+
+def _album_id(message: Any, message_id: str) -> tuple[int, str | None]:
+    expected_images = (
+        int(message.albumMessage.expectedImageCount or 0)
+        if message.HasField("albumMessage")
+        else 0
+    )
+    if expected_images:
+        return expected_images, message_id
+    if (
+        message.HasField("messageContextInfo")
+        and message.messageContextInfo.HasField("messageAssociation")
+        and message.messageContextInfo.messageAssociation.associationType
+        == MessageAssociation.MEDIA_ALBUM
+    ):
+        return (
+            expected_images,
+            str(
+                message.messageContextInfo.messageAssociation.parentMessageKey.ID or ""
+            ).strip()
+            or None,
+        )
+    return expected_images, None
+
+
+def _pending_album_turn(pending_album: PendingAlbum) -> Turn:
+    return {
+        "event": pending_album["reply_event"],
+        "chat": pending_album["reply_event"].Info.MessageSource.Chat,
+        "message_ids": pending_album["message_ids"],
+        "prompt": pending_album["prompt"],
+        "attachments": pending_album["attachments"],
+        "audio": None,
+    }
+
+
+async def _flush_pending_album(
+    client: NewAClient,
+    session: tuple[str, str],
+    *,
+    config: Config,
+    pending_album: PendingAlbum,
+) -> None:
+    await process_turn_locked(
+        client,
+        session,
+        config=config,
+        turn=_pending_album_turn(pending_album),
+    )
+
+
+async def _handle_pending_album(  # noqa: PLR0913
+    client: NewAClient,
+    session: tuple[str, str],
+    *,
+    config: Config,
+    pending_albums: dict[str, PendingAlbum],
+    current_album_id: str | None,
+    message_id: str,
+    chat_jid: str,
+    image_message: bool,
+    user_text: str,
+    message: Any,
+    workspace: Path,
+) -> bool:
+    if not current_album_id:
+        return False
+    pending_album = pending_albums.get(current_album_id)
+    if pending_album is None:
+        return False
+    if message_id in pending_album["message_ids"]:
+        logger.info("Skipping duplicate message %s from %s", message_id, chat_jid)
+        return True
+    if image_message:
+        pending_album["message_ids"].append(message_id)
+        pending_album["attachments"].append(
+            await save_image_attachment(
+                client,
+                message,
+                workspace=workspace,
+                message_id=message_id,
+            )
+        )
+        if user_text and user_text != pending_album["prompt"]:
+            pending_album["prompt"] = (
+                user_text
+                if not pending_album["prompt"]
+                else f"{pending_album['prompt']}\n{user_text}"
+            )
+        if len(pending_album["attachments"]) < pending_album["expected_images"]:
+            return True
+        pending_albums.pop(current_album_id, None)
+        await _flush_pending_album(
+            client,
+            session,
+            config=config,
+            pending_album=pending_album,
+        )
+        return True
+
+    pending_albums.pop(current_album_id, None)
+    if pending_album["attachments"]:
+        await _flush_pending_album(
+            client,
+            session,
+            config=config,
+            pending_album=pending_album,
+        )
+    return False
+
+
+def _start_pending_album(
+    pending_albums: dict[str, PendingAlbum],
+    *,
+    expected_album_images: int,
+    current_album_id: str | None,
+    event: MessageEv,
+    message_id: str,
+) -> bool:
+    if not expected_album_images or not current_album_id:
+        return False
+    pending_albums[current_album_id] = {
+        "expected_images": expected_album_images,
+        "message_ids": [message_id],
+        "attachments": [],
+        "prompt": "",
+        "reply_event": event,
+    }
+    return True
+
+
+async def _message_attachments(
+    client: NewAClient,
+    message: Any,
+    *,
+    image_message: bool,
+    workspace: Path,
+    message_id: str,
+) -> list[Path]:
+    if not image_message:
+        return []
+    return [
+        await save_image_attachment(
+            client,
+            message,
+            workspace=workspace,
+            message_id=message_id,
+        )
+    ]
+
+
+async def _parse_event(  # noqa: PLR0913
     client: NewAClient,
     event: MessageEv,
-    **kwargs: Unpack[ProcessMessageOptions],
-) -> None:
-    config = kwargs["config"]
-    chat_locks = kwargs["chat_locks"]
-    pending_albums = kwargs["pending_albums"] if "pending_albums" in kwargs else {}
-    source = event.Info.MessageSource
+    *,
+    pending_albums: dict[str, PendingAlbum],
+    session: tuple[str, str],
+    workspace: Path,
+    config: Config,
+    chat_jid: str,
+) -> Turn | None:
+    """Parse one raw WhatsApp event into a normalized turn, or return None.
+
+    Returning None means there is nothing to process yet. That can happen when the
+    event should be ignored, or when it only updates an in-progress album buffer.
+    """
     message = event.Message
-    chat_jid = Jid2String(source.Chat)
-    chat_key = normalize_chat(chat_jid)
-    sender_jid = Jid2String(source.Sender)
     message_id = event.Info.ID
+    user_text = _message_text(message)
+    audio = audio_message(event)
+    image_message = message.HasField("imageMessage")
+    expected_album_images, current_album_id = _album_id(message, message_id)
+    if not user_text and audio is None and not image_message and not current_album_id:
+        return None
+
+    # comment: WhatsApp sends media albums as separate events. We buffer them by album
+    # id until all expected images arrive, then turn the finished album into one prompt.
+    if await _handle_pending_album(
+        client,
+        session,
+        config=config,
+        pending_albums=pending_albums,
+        current_album_id=current_album_id,
+        message_id=message_id,
+        chat_jid=chat_jid,
+        image_message=image_message,
+        user_text=user_text,
+        message=message,
+        workspace=workspace,
+    ):
+        return None
+    if _start_pending_album(
+        pending_albums,
+        expected_album_images=expected_album_images,
+        current_album_id=current_album_id,
+        event=event,
+        message_id=message_id,
+    ):
+        return None
+    attachments = await _message_attachments(
+        client,
+        message,
+        image_message=image_message,
+        workspace=workspace,
+        message_id=message_id,
+    )
+    return {
+        "event": event,
+        "chat": event.Info.MessageSource.Chat,
+        "message_ids": [message_id],
+        "prompt": user_text,
+        "attachments": attachments,
+        "audio": audio,
+    }
+
+
+async def get_turn_locked(
+    client: NewAClient,
+    event: MessageEv,
+    *,
+    config: Config,
+    session: tuple[str, str],
+    pending_albums: dict[str, PendingAlbum] | None = None,
+) -> Turn | None:
+    """Return a normalized turn for one event while the caller holds the chat lock."""
+    pending_albums = {} if pending_albums is None else pending_albums
+    source = event.Info.MessageSource
+    chat_jid = Jid2String(source.Chat)
+    sender_jid = Jid2String(source.Sender)
 
     if source.IsFromMe or (source.IsGroup and not config.allow_groups):
-        return
+        return None
 
     source_ids = source_chat_ids(source)
     if not is_allowed_chat(config, source_ids):
@@ -283,154 +539,15 @@ async def process_message(  # noqa: C901, PLR0911, PLR0912, PLR0915
             chat_jid,
             ", ".join(sorted(source_ids)) or "<none>",
         )
-        return
+        return None
 
-    user_text = message.conversation
-    if not user_text and message.HasField("extendedTextMessage"):
-        user_text = message.extendedTextMessage.text
-    if not user_text and message.HasField("imageMessage"):
-        user_text = message.imageMessage.caption
-    user_text = user_text.strip()
-
-    audio = audio_message(event)
-    image_message = message.HasField("imageMessage")
-    expected_album_images = (
-        int(message.albumMessage.expectedImageCount or 0)
-        if message.HasField("albumMessage")
-        else 0
+    workspace = Path(get_messages(session)["workspace"])
+    return await _parse_event(
+        client,
+        event,
+        pending_albums=pending_albums,
+        session=session,
+        workspace=workspace,
+        config=config,
+        chat_jid=chat_jid,
     )
-    current_album_id: str | None = None
-    if expected_album_images:
-        current_album_id = message_id
-    elif (
-        message.HasField("messageContextInfo")
-        and message.messageContextInfo.HasField("messageAssociation")
-        and message.messageContextInfo.messageAssociation.associationType
-        == MessageAssociation.MEDIA_ALBUM
-    ):
-        current_album_id = (
-            str(
-                message.messageContextInfo.messageAssociation.parentMessageKey.ID or ""
-            ).strip()
-            or None
-        )
-    if not user_text and audio is None and not image_message and not current_album_id:
-        return
-
-    async with chat_locks[chat_jid]:
-        session = get_session(chat_key=chat_key)
-        workspace = Path(get_messages(session)["workspace"])
-        if current_album_id and (pending_album := pending_albums.get(current_album_id)):
-            if message_id in pending_album["message_ids"]:
-                logger.info(
-                    "Skipping duplicate message %s from %s", message_id, chat_jid
-                )
-                return
-            if image_message:
-                pending_album["message_ids"].append(message_id)
-                pending_album["attachments"].append(
-                    await save_image_attachment(
-                        client,
-                        message,
-                        workspace=workspace,
-                        message_id=message_id,
-                    )
-                )
-                incoming_prompt = user_text.strip()
-                if incoming_prompt and incoming_prompt != pending_album["prompt"]:
-                    pending_album["prompt"] = (
-                        incoming_prompt
-                        if not pending_album["prompt"]
-                        else f"{pending_album['prompt']}\n{incoming_prompt}"
-                    )
-                if len(pending_album["attachments"]) < pending_album["expected_images"]:
-                    return
-                pending_albums.pop(current_album_id, None)
-                await process_turn_locked(
-                    client,
-                    session,
-                    config=config,
-                    turn={
-                        "event": pending_album["reply_event"],
-                        "message_ids": pending_album["message_ids"],
-                        "prompt": pending_album["prompt"],
-                        "attachments": pending_album["attachments"],
-                        "audio": None,
-                    },
-                )
-                return
-            pending_albums.pop(current_album_id, None)
-            if pending_album["attachments"]:
-                await process_turn_locked(
-                    client,
-                    session,
-                    config=config,
-                    turn={
-                        "event": pending_album["reply_event"],
-                        "message_ids": pending_album["message_ids"],
-                        "prompt": pending_album["prompt"],
-                        "attachments": pending_album["attachments"],
-                        "audio": None,
-                    },
-                )
-
-        if expected_album_images and current_album_id:
-            pending_albums[current_album_id] = {
-                "expected_images": expected_album_images,
-                "message_ids": [message_id],
-                "attachments": [],
-                "prompt": "",
-                "reply_event": event,
-            }
-            return
-
-        attachments = (
-            [
-                await save_image_attachment(
-                    client,
-                    message,
-                    workspace=workspace,
-                    message_id=message_id,
-                )
-            ]
-            if image_message
-            else None
-        )
-        await process_turn_locked(
-            client,
-            session,
-            config=config,
-            turn={
-                "event": event,
-                "message_ids": [message_id],
-                "prompt": user_text,
-                "attachments": attachments or [],
-                "audio": audio,
-            },
-        )
-
-
-def latest_assistant_text(messages_json: MessagesJson | dict[str, Any]) -> str:
-    messages = messages_json.get("messages")
-    if not isinstance(messages, list):
-        return ""
-
-    for message in reversed(messages):
-        if not isinstance(message, dict):
-            continue
-        if message.get("type") != "message" or message.get("role") != "assistant":
-            continue
-
-        content = message.get("content")
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            text = "".join(
-                str(part.get("text") or "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "output_text"
-            ).strip()
-            if text:
-                return text
-
-    return ""

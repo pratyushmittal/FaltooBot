@@ -24,11 +24,7 @@ from PIL import Image
 
 from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
-from faltoobot.whatsapp.runtime import (
-    keep_chat_typing,
-    latest_assistant_text,
-    source_chat_ids,
-)
+from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
 from faltoobot.config import Config, normalize_chat
 from faltoobot.sessions import get_messages, get_session
 
@@ -53,6 +49,7 @@ def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
         openai_transcription_model="gpt-4o-transcribe",
         allow_groups=False,
         allowed_chats=allowed_chats,
+        bot_name="Faltoo",
     )
 
 
@@ -178,6 +175,31 @@ class FakePresenceClient:
         return self.audio_bytes
 
 
+async def handle_message(
+    client: NewAClient,
+    event: MessageEv,
+    *,
+    config: Config,
+    chat_locks: dict[str, asyncio.Lock] | None = None,
+    pending_albums: dict[str, runtime.PendingAlbum] | None = None,
+) -> None:
+    chat_locks = defaultdict(asyncio.Lock) if chat_locks is None else chat_locks
+    source = event.Info.MessageSource
+    chat_jid = Jid2String(source.Chat)
+    session = get_session(chat_key=normalize_chat(chat_jid))
+    async with chat_locks[chat_jid]:
+        turn = await runtime.get_turn_locked(
+            client,
+            event,
+            config=config,
+            session=session,
+            pending_albums=pending_albums,
+        )
+        if turn is None:
+            return
+        await runtime.process_turn_locked(client, session, config=config, turn=turn)
+
+
 def png_bytes() -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (4, 3), color="red").save(buffer, format="PNG")
@@ -276,25 +298,16 @@ async def test_process_message_transcribes_voice_notes(
         assert model == "gpt-4o-transcribe"
         return "Call mom at 6"
 
-    async def fake_get_answer(*, question: str, **_: object) -> dict[str, Any]:
+    async def fake_get_answer(*, question: str, **_: object) -> str:
         prompts.append(question)
-        return {
-            "messages": [
-                {"type": "message", "role": "user", "content": question},
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "Done"}],
-                },
-            ]
-        }
+        return "Done"
 
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
     monkeypatch.setattr(runtime, "TRANSCRIPTION_PROMPT", "Prefer English script.")
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=7)
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         event,
         config=config,
@@ -318,7 +331,7 @@ async def test_process_message_rejects_long_voice_notes(
     config = make_config(tmp_path, allowed_chats=set())
     client = FakePresenceClient()
 
-    async def fake_get_answer(*args: object, **kwargs: object) -> dict[str, object]:
+    async def fake_get_answer(*args: object, **kwargs: object) -> str:
         raise AssertionError(
             "get_answer_for_whatsapp should not run for oversized voice notes"
         )
@@ -326,7 +339,7 @@ async def test_process_message_rejects_long_voice_notes(
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_event(audio_seconds=audio.DEFAULT_AUDIO_MAX_SECONDS + 1)
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         event,
         config=config,
@@ -401,23 +414,19 @@ async def test_process_message_sends_whatsapp_images_to_the_model(
         question: str,
         attachments: list[Path] | None = None,
         **_: object,
-    ) -> dict[str, Any]:
+    ) -> str:
         calls.append(
             {
                 "question": question,
                 "attachments": attachments or [],
             }
         )
-        return {
-            "messages": [
-                {"type": "message", "role": "assistant", "content": "nice cat"}
-            ]
-        }
+        return "nice cat"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_image_event(caption="what is in this image?")
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         event,
         config=config,
@@ -447,22 +456,18 @@ async def test_process_message_allows_image_only_messages(
         question: str,
         attachments: list[Path] | None = None,
         **_: object,
-    ) -> dict[str, Any]:
+    ) -> str:
         calls.append(
             {
                 "question": question,
                 "attachments": attachments or [],
             }
         )
-        return {
-            "messages": [
-                {"type": "message", "role": "assistant", "content": "looks good"}
-            ]
-        }
+        return "looks good"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_image_event(caption=""),
         config=config,
@@ -493,22 +498,20 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
         question: str,
         attachments: list[Path] | None = None,
         **_: object,
-    ) -> dict[str, Any]:
+    ) -> str:
         calls.append(
             {
                 "question": question,
                 "attachments": attachments or [],
             }
         )
-        return {
-            "messages": [{"type": "message", "role": "assistant", "content": "done"}]
-        }
+        return "done"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
     expected_images = 2
 
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_album_event(message_id="album-1", images=expected_images),
         config=config,
@@ -518,7 +521,7 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     assert calls == []
     assert client.replies == []
 
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_album_child_event(
             message_id="img-1",
@@ -532,7 +535,7 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     assert calls == []
     assert client.replies == []
 
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_album_child_event(message_id="img-2", parent_id="album-1"),
         config=config,
@@ -568,36 +571,34 @@ async def test_process_message_groups_captionless_album_images_into_one_turn(
         question: str,
         attachments: list[Path] | None = None,
         **_: object,
-    ) -> dict[str, Any]:
+    ) -> str:
         calls.append(
             {
                 "question": question,
                 "attachments": attachments or [],
             }
         )
-        return {
-            "messages": [{"type": "message", "role": "assistant", "content": "done"}]
-        }
+        return "done"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
     expected_images = 2
 
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_album_event(message_id="album-2", images=expected_images),
         config=config,
         chat_locks=chat_locks,
         pending_albums=pending_albums,
     )
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_album_child_event(message_id="img-3", parent_id="album-2"),
         config=config,
         chat_locks=chat_locks,
         pending_albums=pending_albums,
     )
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         fake_album_child_event(message_id="img-4", parent_id="album-2"),
         config=config,
@@ -610,21 +611,6 @@ async def test_process_message_groups_captionless_album_images_into_one_turn(
     assert len(calls) == 1
     assert calls[0]["question"] == ""
     assert len(calls[0]["attachments"]) == expected_images
-
-
-def test_latest_assistant_text_reads_sessions_messages() -> None:
-    messages_json = {
-        "messages": [
-            {"type": "message", "role": "user", "content": "hi"},
-            {
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": "hello"}],
-            },
-        ]
-    }
-
-    assert latest_assistant_text(messages_json) == "hello"
 
 
 @pytest.mark.anyio
@@ -658,7 +644,7 @@ async def test_process_message_reset_creates_new_session_for_chat(
         ),
     )
 
-    await runtime.process_message(
+    await handle_message(
         cast(NewAClient, client),
         event,
         config=config,
@@ -700,7 +686,130 @@ async def test_run_bot_allows_oauth_without_api_key(
     config.openai_oauth = "auth.json"
 
     monkeypatch.setattr(whatsapp_app.login, "configure_logging", lambda path: None)
-    monkeypatch.setattr(whatsapp_app, "NewAClient", lambda session_db: _DummyClient())
-    monkeypatch.setattr(whatsapp_app, "install_signal_handlers", lambda stop: None)
+    monkeypatch.setattr(whatsapp_app, "client", _DummyClient())
 
-    await whatsapp_app.run_bot(config)
+    class _DummyLoop:
+        def add_signal_handler(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr(whatsapp_app.asyncio, "get_running_loop", lambda: _DummyLoop())
+
+    await whatsapp_app.main(config)
+
+
+@pytest.mark.anyio
+async def test_handle_message_uses_normalized_chat_key_for_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected_key = "normalized@chat"
+    monkeypatch.setattr(
+        whatsapp_app, "config", make_config(tmp_path, allowed_chats=set())
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    monkeypatch.setattr(whatsapp_app, "normalize_chat", lambda value: expected_key)
+    monkeypatch.setattr(
+        whatsapp_app, "get_session", lambda chat_key: (chat_key, "session-1")
+    )
+
+    async def fake_get_turn_locked(
+        client: NewAClient,
+        event: MessageEv,
+        *,
+        config: Config,
+        session,
+        pending_albums: dict[str, runtime.PendingAlbum] | None = None,
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
+
+    await whatsapp_app._handle_message(
+        cast(NewAClient, FakePresenceClient()),
+        fake_event(text="hello"),
+    )
+
+    assert list(whatsapp_app.chat_locks.keys()) == [expected_key]
+
+
+@pytest.mark.anyio
+async def test_process_turn_locked_sends_notification_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    client = FakePresenceClient()
+    config = make_config(tmp_path, allowed_chats=set())
+    seen: dict[str, object] = {}
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+
+    async def fake_get_answer(*, session, question: str, **_: object) -> str:
+        seen["session"] = session
+        seen["question"] = question
+        return "queued reply"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn={
+            "event": None,
+            "chat": jid("15555550123", "s.whatsapp.net"),
+            "message_ids": ["notify_1"],
+            "prompt": "queued user message",
+            "attachments": [],
+            "audio": None,
+        },
+    )
+
+    assert seen["question"] == "queued user message"
+    assert client.sent_messages == ["queued reply"]
+
+
+@pytest.mark.anyio
+async def test_start_polling_notifications_claims_and_acks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
+    monkeypatch.setattr(
+        whatsapp_app, "config", make_config(tmp_path, allowed_chats=set())
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "claim_notifications",
+        lambda matches: [
+            (
+                tmp_path / "notify.json",
+                {
+                    "id": "notify_1",
+                    "chat_key": "15555550123@s.whatsapp.net",
+                    "message": "queued user message",
+                    "created_at": "2026-04-05T00:00:00+00:00",
+                },
+            )
+        ],
+    )
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+        calls.append(str(kwargs["turn"]["prompt"]))
+        whatsapp_app.notifications_stop.set()
+
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue, "ack_notification", lambda path: calls.append("ack")
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "requeue_notification",
+        lambda path: calls.append("requeue"),
+    )
+
+    await whatsapp_app._start_polling_notifications()
+
+    assert calls == ["queued user message", "ack"]
