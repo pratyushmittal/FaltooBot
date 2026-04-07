@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.0.2 — 2026-04-07
+
+### Fixed
+- OpenAI Codex OAuth login now works better on remote servers: after finishing the browser flow on your local machine, you can paste the final callback URL back into Faltoobot to complete login.
+
 ## 2.0.1 — 2026-04-07
 
 ### Changed
