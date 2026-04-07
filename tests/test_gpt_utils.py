@@ -339,6 +339,109 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "output": "hello Faltoobot",
         "status": "completed",
     }
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_uses_output_item_done_when_completed_output_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(
+        [
+            {
+                "events": [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=FakeItem(
+                            {
+                                "type": "function_call",
+                                "id": "fc_1",
+                                "call_id": "call_1",
+                                "name": "greet",
+                                "arguments": '{"name":"Faltoobot"}',
+                            }
+                        ),
+                    ),
+                    FakeCompletedEvent([]),
+                ],
+                "output": [],
+            },
+            {
+                "events": [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=FakeItem(
+                            {
+                                "type": "message",
+                                "id": "msg_2",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Done."}],
+                            }
+                        ),
+                    ),
+                    FakeCompletedEvent([]),
+                ],
+                "output": [],
+            },
+        ]
+    )
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_api_key="test-key",
+            openai_oauth="",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
+
+    history: MessageHistory = [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+
+    items = [
+        item
+        async for item in get_streaming_reply(
+            instructions="system prompt",
+            input=history,
+            tools=[greet],
+        )
+    ]
+
+    assert [getattr(item, "type", "response") for item in items] == [
+        "response.output_item.done",
+        "response.completed",
+        "function_call_output",
+        "response.output_item.done",
+        "response.completed",
+    ]
+    assert history == [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "greet",
+            "arguments": '{"name":"Faltoobot"}',
+            "usage": None,
+        },
+        {
+            "id": "fco_call_1",
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "hello Faltoobot",
+            "status": "completed",
+        },
+        {
+            "type": "message",
+            "id": "msg_2",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Done."}],
+            "usage": None,
+        },
+    ]
     assert client.closed is True
 
 

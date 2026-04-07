@@ -3,13 +3,12 @@ import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias, TypedDict, cast
 
 from openai import AsyncOpenAI, omit
 from openai.types.responses import (
     FunctionToolParam,
     ResponseCompletedEvent,
-    ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
     ResponsesServerEvent,
 )
@@ -25,6 +24,13 @@ MessageHistory: TypeAlias = list[MessageItem]
 StreamingReplyItem: TypeAlias = (
     ResponsesServerEvent | ResponseFunctionToolCallOutputItem
 )
+
+
+class FunctionToolCallItem(TypedDict):
+    type: str
+    name: str
+    arguments: str
+    call_id: str
 
 
 def _parse_docs(docs: str) -> dict[str, Any]:
@@ -167,17 +173,6 @@ def _parse_tool_arguments(raw_arguments: str) -> tuple[dict[str, Any], str | Non
     return value, None
 
 
-def _response_tool_calls(
-    event: ResponseCompletedEvent,
-) -> list[ResponseFunctionToolCall]:
-    tool_calls: list[ResponseFunctionToolCall] = []
-    for item in event.response.output:
-        if item.type == "function_call":
-            item = cast(ResponseFunctionToolCall, item)
-            tool_calls.append(item)
-    return tool_calls
-
-
 async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> str:
     if inspect.iscoroutinefunction(function):
         result = await function(**kwargs)
@@ -193,16 +188,16 @@ async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> str:
 
 async def _tool_result(
     tools_by_name: dict[str, Tool],
-    tool_call: ResponseFunctionToolCall,
+    tool_call: FunctionToolCallItem,
 ) -> ResponseFunctionToolCallOutputItem:
-    arguments, error = _parse_tool_arguments(tool_call.arguments)
+    arguments, error = _parse_tool_arguments(tool_call["arguments"])
     if error:
         output = error
-    elif tool_call.name not in tools_by_name:
-        output = f"Function name error - unknown name: {tool_call.name}"
+    elif tool_call["name"] not in tools_by_name:
+        output = f"Function name error - unknown name: {tool_call['name']}"
     else:
         try:
-            output = await _run_tool(tools_by_name[tool_call.name], arguments)
+            output = await _run_tool(tools_by_name[tool_call["name"]], arguments)
         except asyncio.CancelledError:
             output = "interrupted by user"
         except TypeError as exc:
@@ -211,15 +206,15 @@ async def _tool_result(
             output = f"{type(exc).__name__}: {exc}"
 
     return ResponseFunctionToolCallOutputItem(
-        id=f"fco_{tool_call.call_id}",
+        id=f"fco_{tool_call['call_id']}",
         type="function_call_output",
-        call_id=tool_call.call_id,
+        call_id=tool_call["call_id"],
         output=output,
         status="completed",
     )
 
 
-async def get_streaming_reply(
+async def get_streaming_reply(  # noqa: C901
     instructions: str,
     input: MessageHistory,
     tools: list[Tool],
@@ -245,6 +240,7 @@ async def get_streaming_reply(
     async def reply(
         current_input: MessageHistory,
     ) -> AsyncIterator[StreamingReplyItem]:
+        response_output: MessageHistory = []
         async with client.responses.stream(
             model=config.openai_model,
             input=cast(Any, trim_input(current_input)),
@@ -262,13 +258,24 @@ async def get_streaming_reply(
             service_tier="priority" if config.openai_fast else omit,
         ) as stream:
             async for event in stream:
+                if event.type == "response.output_item.done":
+                    # comment: response.output_item.done carries the finalized output item
+                    # for that block, such as a tool call or assistant message.
+                    response_output.append(
+                        _to_message_item(getattr(event, "item", None))
+                    )
                 if event.type == "response.completed":
-                    # Normalize output items to plain dicts before sharing and persisting
-                    # history, then attach usage to the last item from this response.
+                    # comment: ChatGPT OAuth streams can leave response.output empty on
+                    # response.completed even though the finalized items were already sent
+                    # via response.output_item.done.
                     event = cast(ResponseCompletedEvent, event)
                     dict_response = event.response.to_dict()
-                    current_input.extend(dict_response["output"])  # type: ignore
-                    current_input[-1]["usage"] = dict_response["usage"]
+                    output = dict_response.get("output")
+                    if isinstance(output, list) and output:
+                        response_output = cast(MessageHistory, output)
+                    current_input.extend(response_output)
+                    if response_output:
+                        current_input[-1]["usage"] = dict_response.get("usage")
                 yield event
 
         # https://developers.openai.com/api/reference/resources/responses/streaming-events#response.completed
@@ -279,7 +286,14 @@ async def get_streaming_reply(
             raise ValueError("last event was not response.completed")
         event = cast(ResponseCompletedEvent, event)
 
-        tool_calls = _response_tool_calls(event)
+        tool_calls: list[FunctionToolCallItem] = [
+            cast(FunctionToolCallItem, item)
+            for item in response_output
+            if item.get("type") == "function_call"
+            and isinstance(item.get("name"), str)
+            and isinstance(item.get("arguments"), str)
+            and isinstance(item.get("call_id"), str)
+        ]
         if not tool_calls:
             return
 
