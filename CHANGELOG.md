@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.0.3 — 2026-04-07
+
+### Changed
+- WhatsApp prompt guidance now asks the bot to share plain links like `[https://example.com]` or `https://example.com`, instead of markdown links that render poorly in chat.
+
 ## 2.0.2 — 2026-04-07
 
 ### Fixed
