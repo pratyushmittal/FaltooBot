@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TextIO, TypedDict
 from uuid import uuid4
 
 from faltoobot.config import app_root
@@ -13,6 +13,7 @@ class Notification(TypedDict):
     chat_key: str
     message: str
     created_at: str
+    source: NotRequired[str]
 
 
 ClaimedNotification = tuple[Path, Notification]
@@ -41,20 +42,40 @@ def _read_notification(path: Path) -> Notification | None:
     chat_key = payload.get("chat_key")
     message = payload.get("message")
     created_at = payload.get("created_at")
+    source = payload.get("source")
     if not all(
         isinstance(value, str) and value
         for value in (notification_id, chat_key, message, created_at)
     ):
         return None
-    return {
+    if source is not None and not isinstance(source, str):
+        return None
+    notification: Notification = {
         "id": notification_id,
         "chat_key": chat_key,
         "message": message,
         "created_at": created_at,
     }
+    if source is not None:
+        notification["source"] = source
+    return notification
 
 
-def enqueue_notification(chat_key: str, message: str) -> str:
+def parse_message(message: str | None, stdin: TextIO) -> str:
+    if message:
+        return message
+    # comment: interactive shells have no piped stdin, so fail fast instead of waiting forever.
+    if stdin.isatty():
+        raise SystemExit("notify requires a message argument or stdin")
+    parsed = stdin.read().strip()
+    if not parsed:
+        raise SystemExit("notify requires a non-empty message")
+    return parsed
+
+
+def enqueue_notification(
+    chat_key: str, message: str, *, source: str | None = None
+) -> str:
     notification_id = f"notify_{uuid4().hex}"
     notification: Notification = {
         "id": notification_id,
@@ -62,6 +83,8 @@ def enqueue_notification(chat_key: str, message: str) -> str:
         "message": message,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    if source:
+        notification["source"] = source
     pending = _pending_dir()
     pending.mkdir(parents=True, exist_ok=True)
     path = pending / f"{notification_id}.json"
@@ -108,15 +131,15 @@ def requeue_notification(path: Path) -> None:
     path.replace(pending / path.name)
 
 
-def format_subagent_message(*, prompt: str, workspace: Path, output: str) -> str:
-    return "\n".join(
-        [
-            "# Response from sub-agent (not visible to user)",
-            "",
-            f"message: {prompt}",
-            f"workspace: {workspace}",
-            "",
-            "## output",
-            output,
-        ]
-    ).strip()
+def format_notification_message(notification: Notification) -> str:
+    lines = [
+        "# Notification (not visible to user)",
+        "",
+        "Reply with [noreply] if no user-facing reply is needed.",
+        "",
+    ]
+    source = notification.get("source")
+    if source:
+        lines.extend([f"source: {source}", ""])
+    lines.extend(["## message", notification["message"]])
+    return "\n".join(lines).strip()

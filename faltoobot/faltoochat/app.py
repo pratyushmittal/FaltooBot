@@ -359,7 +359,8 @@ class FaltooChatApp(App[None]):
             ):
                 try:
                     message_item = get_local_user_message_item(
-                        notification["message"], []
+                        notify_queue.format_notification_message(notification),
+                        [],
                     )
                     await self.handle_message(message_item)
                     notify_queue.ack_notification(path)
@@ -686,10 +687,7 @@ def parse_args() -> argparse.Namespace:
         help="start a fresh session",
     )
     parser.add_argument("--workspace", help="workspace path to use for this chat")
-    parser.add_argument(
-        "--notify-chat-key",
-        help="send the final output back to another chat key",
-    )
+
     return parser.parse_args()
 
 
@@ -697,10 +695,7 @@ def main() -> int:
     args = parse_args()
     workspace = _workspace_from_args(args.workspace)
     session_id = str(uuid4()) if args.new_session else None
-    chat_key = sessions.get_dir_chat_key(
-        workspace,
-        is_sub_agent=bool(args.notify_chat_key),
-    )
+    chat_key = sessions.get_dir_chat_key(workspace, is_sub_agent=bool(args.prompt))
     session = sessions.get_session(
         chat_key=chat_key,
         session_id=session_id,
@@ -711,18 +706,7 @@ def main() -> int:
             output = asyncio.run(_run_one_shot(session, args.prompt))
             if output:
                 print(output)
-            if args.notify_chat_key:
-                notify_queue.enqueue_notification(
-                    args.notify_chat_key,
-                    notify_queue.format_subagent_message(
-                        prompt=args.prompt,
-                        workspace=workspace,
-                        output=output,
-                    ),
-                )
             return 0
-        if args.notify_chat_key:
-            raise SystemExit("--notify-chat-key requires a prompt")
         FaltooChatApp(session=session).run()
     except KeyboardInterrupt:
         return 130

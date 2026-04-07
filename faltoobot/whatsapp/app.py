@@ -54,7 +54,9 @@ async def _start_polling_notifications() -> None:
                         "event": None,
                         "chat": chat_jid,
                         "message_ids": [notification["id"]],
-                        "prompt": notification["message"],
+                        "prompt": notify_queue.format_notification_message(
+                            notification
+                        ),
                         "attachments": [],
                         "audio": None,
                     }

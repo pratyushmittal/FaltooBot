@@ -6,7 +6,9 @@ from faltoobot import notify_queue
 def test_notify_queue_enqueues_claims_and_acks(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
 
-    notification_id = notify_queue.enqueue_notification("code@demo", "hello")
+    notification_id = notify_queue.enqueue_notification(
+        "code@demo", "hello", source="cron:daily-ops"
+    )
     claimed = notify_queue.claim_notifications(
         lambda item: item["chat_key"] == "code@demo"
     )
@@ -15,6 +17,7 @@ def test_notify_queue_enqueues_claims_and_acks(tmp_path: Path, monkeypatch) -> N
     assert len(claimed) == 1
     path, notification = claimed[0]
     assert notification["message"] == "hello"
+    assert notification["source"] == "cron:daily-ops"
     assert path.exists()
 
     notify_queue.ack_notification(path)
@@ -42,14 +45,35 @@ def test_notify_queue_requeues_claimed_notifications(
     notify_queue.ack_notification(claimed_again[0][0])
 
 
-def test_format_subagent_message_uses_expected_layout() -> None:
-    message = notify_queue.format_subagent_message(
-        prompt="List new emails",
-        workspace=Path("./emails"),
-        output="There are 2 new emails.",
+def test_format_notification_message_uses_expected_layout() -> None:
+    message = notify_queue.format_notification_message(
+        {
+            "id": "notify-1",
+            "chat_key": "code@demo",
+            "message": "Check backups.",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "source": "cron:daily-ops",
+        }
     )
 
-    assert "# Response from sub-agent" in message
-    assert "message: List new emails" in message
-    assert "workspace: emails" in message
-    assert "## output" in message
+    assert "# Notification" in message
+    assert "Reply with [noreply]" in message
+    assert "source: cron:daily-ops" in message
+    assert "## message" in message
+    assert "Check backups." in message
+
+
+def test_format_notification_message_without_source_still_wraps_message() -> None:
+    message = notify_queue.format_notification_message(
+        {
+            "id": "notify-1",
+            "chat_key": "code@demo",
+            "message": "hello",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    assert "# Notification" in message
+    assert "Reply with [noreply]" in message
+    assert "## message" in message
+    assert "hello" in message

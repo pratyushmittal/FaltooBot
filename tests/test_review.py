@@ -2,11 +2,15 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+
 import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import Input, OptionList, TabbedContent, TabPane, TextArea
+from textual.widgets.option_list import Option
 
 from faltoobot import sessions
-from faltoobot.faltoochat.diff import get_diff
 from faltoobot.faltoochat.app import FaltooChatApp
+from faltoobot.faltoochat.diff import get_diff
 from faltoobot.faltoochat.review import (
     ReviewView,
     _review_tab_titles,
@@ -25,9 +29,6 @@ from faltoobot.faltoochat.widgets.search_project import (
     _project_search_results,
     _ripgrep_results,
 )
-from textual.app import App, ComposeResult
-from textual.widgets import Input, OptionList, TabPane, TabbedContent, TextArea
-from textual.widgets.option_list import Option
 
 EXPECTED_REVIEW_FILES = 2
 

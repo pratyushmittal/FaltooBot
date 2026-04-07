@@ -147,6 +147,10 @@ async def send_text(  # noqa: C901
         await client.send_message(chat, chunk)
 
 
+def _is_no_reply_answer(text: str) -> bool:
+    return text.strip() == "[noreply]"
+
+
 async def save_image_attachment(
     client: NewAClient,
     message: Any,
@@ -254,7 +258,7 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
             question=prompt,
             attachments=attachments or None,
         )
-        if answer:
+        if answer and not _is_no_reply_answer(answer):
             await send_text(client, chat=chat, text=answer, event=event)
     except AudioError as exc:
         logger.info(

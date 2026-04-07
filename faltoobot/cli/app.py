@@ -35,6 +35,7 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
+from faltoobot import notify_queue
 from faltoobot.openai_login import run_openai_login
 from faltoobot.whatsapp.app import main as run_whatsapp_bot
 from faltoobot.whatsapp.login import run_auth
@@ -75,22 +76,6 @@ def _uv_bin() -> str:
     if not uv:
         raise SystemExit("uv is required. Install it first: https://docs.astral.sh/uv/")
     return uv
-
-
-def _copy_bundled_skills(config: Config) -> None:
-    source = Path(__file__).resolve().parents[1] / "skills"
-    # comment: broken installs may miss bundled skills, so skip copying when the source folder is absent.
-    if not source.is_dir():
-        return
-    target = config.root / "skills"
-    target.mkdir(parents=True, exist_ok=True)
-    for path in sorted(source.rglob("*")):
-        if path.is_dir():
-            continue
-        relative = path.relative_to(source)
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, destination)
 
 
 def _run_cmd(*args: str) -> None:
@@ -481,7 +466,6 @@ def run_update_command(config: Config | None = None) -> Config | None:
         )
         return None
     console.print("[dim]No required system dependencies to install.[/]")
-    _copy_bundled_skills(_config)
     config = _ensure_configured()
     changes = _run_migrations(config)
     final_config = build_config()
@@ -511,7 +495,6 @@ def run_configure_command(
     mode: str | None = None,
 ) -> None:
     config = config or build_config()
-    _copy_bundled_skills(config)
     if mode is None:
         choice = _prompt_menu(
             "Configure",
@@ -532,6 +515,17 @@ def run_configure_command(
     _restart_service(build_config())
 
 
+def run_notify_command(args: argparse.Namespace) -> str:
+    message = notify_queue.parse_message(args.message, sys.stdin)
+    notification_id = notify_queue.enqueue_notification(
+        args.chat_key,
+        message,
+        source=str(args.source),
+    )
+    console.print(notification_id)
+    return notification_id
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="faltoobot")
     parser.add_argument(
@@ -545,6 +539,16 @@ def parse_args() -> argparse.Namespace:
     sub.add_parser("whatsapp", help="install and run the WhatsApp service")
 
     sub.add_parser("logs", help="show logs in follow mode")
+    notify = sub.add_parser("notify", help="enqueue a notification for a chat")
+    notify.add_argument("chat_key", help="chat key to notify")
+    notify.add_argument(
+        "message", nargs="?", help="notification message, or read from stdin"
+    )
+    notify.add_argument(
+        "--source",
+        default="notify",
+        help="identifier explaining why this notification was sent",
+    )
     sub.add_parser("configure", help="configure Faltoobot")
     sub.add_parser("makemigrations", help="dev: create migrations with the model")
     sub.add_parser(SERVICE_COMMAND, help=argparse.SUPPRESS)
@@ -556,24 +560,21 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
     # following. The OS service itself needs a separate hidden entrypoint that only runs the bot.
     if args.command == SERVICE_COMMAND:
         asyncio.run(run_whatsapp_bot(config or build_config()))
-        return
-    if args.command == "update":
+    elif args.command == "update":
         run_update_command(config)
-        return
-    if args.command == "whatsapp":
+    elif args.command == "whatsapp":
         run_whatsapp_command(config)
-        return
-    if args.command == "logs":
+    elif args.command == "logs":
         show_logs(config)
-        return
-    if args.command == "configure":
+    elif args.command == "notify":
+        run_notify_command(args)
+    elif args.command == "configure":
         run_configure_command(config)
-        return
-    if args.command == "makemigrations":
+    elif args.command == "makemigrations":
         run_makemigrations_command()
-        return
-    # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
-    raise SystemExit(f"unknown command: {args.command}")
+    else:
+        # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
+        raise SystemExit(f"unknown command: {args.command}")
 
 
 def main() -> None:

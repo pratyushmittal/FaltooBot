@@ -1,7 +1,7 @@
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from faltoobot.config import app_root
 
@@ -10,6 +10,7 @@ class Skill(TypedDict):
     name: str
     description: str
     content: str
+    meta: NotRequired[list[str]]
 
 
 def _bundled_skills_root() -> Path:
@@ -50,6 +51,10 @@ def _skill_error(path: Path, message: str) -> None:
     print(f"skill error: {path}: {message}", file=sys.stderr)
 
 
+def _parse_meta(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _read_skill_file(path: Path, *, default_name: str | None) -> Skill | None:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
@@ -67,11 +72,15 @@ def _read_skill_file(path: Path, *, default_name: str | None) -> Skill | None:
 
     content = (body or text).strip()
     description = frontmatter.get("description", "").strip()
-    return {
+    skill: Skill = {
         "name": name or (default_name or ""),
         "description": description,
         "content": content,
     }
+    meta = _parse_meta(frontmatter.get("meta", ""))
+    if meta:
+        skill["meta"] = meta
+    return skill
 
 
 def _iter_skill_files(root: Path) -> list[tuple[str, Path, str | None]]:
@@ -89,7 +98,15 @@ def _iter_skill_files(root: Path) -> list[tuple[str, Path, str | None]]:
     return skill_files
 
 
-def load_skills(workspace: Path) -> list[Skill]:
+def _filter_skills_for_chat_key(skills: list[Skill], chat_key: str) -> list[Skill]:
+    if not chat_key.startswith("sub-agent@"):
+        return skills
+    return [
+        skill for skill in skills if "disallow-sub-agent" not in skill.get("meta", [])
+    ]
+
+
+def load_skills(workspace: Path, *, chat_key: str) -> list[Skill]:
     skills_by_name: dict[str, Skill] = {}
     for root in _skill_roots(workspace):
         for _, path, default_name in _iter_skill_files(root):
@@ -97,7 +114,8 @@ def load_skills(workspace: Path) -> list[Skill]:
             if skill is None:
                 continue
             skills_by_name[_skill_key(skill["name"])] = skill
-    return sorted(skills_by_name.values(), key=lambda skill: skill["name"].lower())
+    skills = sorted(skills_by_name.values(), key=lambda skill: skill["name"].lower())
+    return _filter_skills_for_chat_key(skills, chat_key)
 
 
 def _available_skills_text(skills: list[Skill]) -> str:
@@ -109,7 +127,7 @@ def _available_skills_text(skills: list[Skill]) -> str:
 
 
 def load_skill(workspace: Path, skill_name: str, *, chat_key: str) -> str:
-    skills = load_skills(workspace)
+    skills = load_skills(workspace, chat_key=chat_key)
     by_name = {_skill_key(skill["name"]): skill for skill in skills}
     skill = by_name.get(_skill_key(skill_name))
     if skill is not None:
@@ -126,7 +144,7 @@ def get_load_skill_tool(
     workspace: Path, *, chat_key: str
 ) -> tuple[list[Skill], Callable[[str], str]]:
     workspace = workspace.expanduser().resolve()
-    skills = load_skills(workspace)
+    skills = load_skills(workspace, chat_key=chat_key)
     available = _available_skills_text(skills)
 
     def load_skill_tool(skill_name: str) -> str:

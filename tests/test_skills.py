@@ -50,7 +50,7 @@ def test_load_skills_reads_all_roots_and_prefers_workspace(
         "---\ndescription: workspace version\n---\nUse workspace rules.\n",
     )
 
-    loaded = skills.load_skills(workspace)
+    loaded = skills.load_skills(workspace, chat_key="code@test")
 
     assert loaded == [
         {
@@ -80,7 +80,7 @@ def test_load_skills_skips_direct_file_with_conflicting_name(
         "---\nname: Totally Different\ndescription: mismatch\n---\nIgnored.\n",
     )
 
-    assert skills.load_skills(workspace) == []
+    assert skills.load_skills(workspace, chat_key="code@test") == []
     assert "frontmatter name does not match filename" in capsys.readouterr().err
 
 
@@ -95,17 +95,17 @@ def test_load_skills_reads_bundled_package_skills_when_app_root_is_empty(
     package_root = tmp_path / "package" / "faltoobot"
     bundled = package_root / "skills"
     bundled.mkdir(parents=True, exist_ok=True)
-    (bundled / "scheduled-subagents.md").write_text(
+    (bundled / "notification-listener.md").write_text(
         "---\ndescription: bundled helper\n---\nUse bundled rules.\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(skills, "_bundled_skills_root", lambda: bundled)
 
-    loaded = skills.load_skills(workspace)
+    loaded = skills.load_skills(workspace, chat_key="code@test")
 
     assert loaded == [
         {
-            "name": "scheduled-subagents",
+            "name": "notification-listener",
             "description": "bundled helper",
             "content": "Use bundled rules.",
         }
@@ -119,11 +119,11 @@ def test_load_skill_injects_chat_key_placeholder(monkeypatch, tmp_path: Path) ->
     workspace = tmp_path / "workspace"
     _write_file_skill(
         home_root / "skills",
-        "scheduled-subagents",
+        "notification-listener",
         "---\ndescription: sub-agent helper\n---\nnotify key: {chat_key}\n",
     )
 
-    result = skills.load_skill(workspace, "scheduled-subagents", chat_key="code@main")
+    result = skills.load_skill(workspace, "notification-listener", chat_key="code@main")
 
     assert result == "notify key: code@main"
 
@@ -235,4 +235,40 @@ def test_get_load_skill_tool_lists_skills_in_stable_name_order(
     assert tool.__doc__ is not None
     assert tool.__doc__.index("- alpha-helper: first") < tool.__doc__.index(
         "- zeta-helper: last"
+    )
+
+
+def test_get_load_skill_tool_hides_subagent_disallowed_skills(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(skills, "app_root", lambda: home_root)
+    monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    workspace = tmp_path / "workspace"
+    _write_file_skill(
+        home_root / "skills",
+        "notification-listener",
+        "---\ndescription: async notify helper\nmeta: disallow-sub-agent\n---\nDo not load in sub-agents.\n",
+    )
+    _write_file_skill(
+        home_root / "skills",
+        "pytest-helper",
+        "---\ndescription: allowed helper\n---\nStill available.\n",
+    )
+
+    loaded, tool = skills.get_load_skill_tool(
+        workspace,
+        chat_key="sub-agent@demo",
+    )
+
+    assert loaded == [
+        {
+            "name": "pytest-helper",
+            "description": "allowed helper",
+            "content": "Still available.",
+        }
+    ]
+    assert tool("notification-listener") == (
+        "Local skill not found: 'notification-listener'.\n\nAvailable skills:\n"
+        "- pytest-helper: allowed helper"
     )

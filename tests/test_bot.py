@@ -812,4 +812,40 @@ async def test_start_polling_notifications_claims_and_acks(
 
     await whatsapp_app._start_polling_notifications()
 
-    assert calls == ["queued user message", "ack"]
+    assert calls == [
+        "# Notification (not visible to user)\n\n"
+        "Reply with [noreply] if no user-facing reply is needed.\n\n"
+        "## message\nqueued user message",
+        "ack",
+    ]
+
+
+@pytest.mark.anyio
+async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakePresenceClient()
+    config = make_config(tmp_path, allowed_chats=set())
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+
+    async def fake_get_answer(*, session, question: str, **_: object) -> str:
+        return "[noreply]"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn={
+            "event": None,
+            "chat": jid("15555550123", "s.whatsapp.net"),
+            "message_ids": ["notify_2"],
+            "prompt": "queued user message",
+            "attachments": [],
+            "audio": None,
+        },
+    )
+
+    assert client.sent_messages == []
+    assert client.replies == []

@@ -1,3 +1,4 @@
+import io
 import shlex
 import subprocess
 import sys
@@ -95,35 +96,6 @@ def test_render_log_line_uses_level_colors() -> None:
     )
 
 
-def test_copy_bundled_skills_overwrites_existing_files(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    source = tmp_path / "source-skills"
-    source.mkdir(parents=True)
-    (source / "alpha.md").write_text("new alpha", encoding="utf-8")
-    nested = source / "nested"
-    nested.mkdir()
-    (nested / "beta.md").write_text("new beta", encoding="utf-8")
-
-    target = config.root / "skills"
-    target.mkdir(parents=True)
-    (target / "alpha.md").write_text("old alpha", encoding="utf-8")
-
-    package_root = tmp_path / "package" / "faltoobot" / "cli"
-    package_root.mkdir(parents=True)
-    monkeypatch.setattr(cli, "__file__", str(package_root / "app.py"))
-    target_source = package_root.parent / "skills"
-    if target_source.exists():
-        raise AssertionError("test source dir must start missing")
-    source.replace(target_source)
-
-    cli._copy_bundled_skills(config)
-
-    assert (target / "alpha.md").read_text(encoding="utf-8") == "new alpha"
-    assert (target / "nested" / "beta.md").read_text(encoding="utf-8") == "new beta"
-
-
 def test_run_update_command_upgrades_then_bootstraps(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -137,16 +109,12 @@ def test_run_update_command_upgrades_then_bootstraps(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
-    copied: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_configured", lambda: ensured.append("ran") or config
     )
     reinstalls: list[str] = []
     monkeypatch.setattr(
         cli, "_run_migrations", lambda config: migrations.append("ran") or ["sessions"]
-    )
-    monkeypatch.setattr(
-        cli, "_copy_bundled_skills", lambda config: copied.append("ran")
     )
     monkeypatch.setattr(cli, "_service_installed", lambda config: True)
     monkeypatch.setattr(
@@ -157,7 +125,6 @@ def test_run_update_command_upgrades_then_bootstraps(
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert ensured == ["ran"]
-    assert copied == ["ran"]
     assert migrations == ["ran"]
     assert reinstalls == ["ran"]
     assert result == config
@@ -175,14 +142,10 @@ def test_run_update_command_stops_when_new_version_was_installed(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
-    copied: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_configured", lambda: ensured.append("ran") or config
     )
     reinstalls: list[str] = []
-    monkeypatch.setattr(
-        cli, "_copy_bundled_skills", lambda config: copied.append("ran")
-    )
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
@@ -190,7 +153,6 @@ def test_run_update_command_stops_when_new_version_was_installed(
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
-    assert copied == []
     assert ensured == []
     assert reinstalls == []
     assert result is None
@@ -228,12 +190,73 @@ def test_run_configure_command_copies_bundled_skills(
     config = make_config(tmp_path)
     calls: list[str] = []
 
-    monkeypatch.setattr(
-        cli, "_copy_bundled_skills", lambda config: calls.append("copy")
-    )
     monkeypatch.setattr(cli, "_configure_openai", lambda config: calls.append("openai"))
     monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
 
     cli.run_configure_command(config, mode="openai")
 
-    assert calls == ["copy", "openai", "restart"]
+    assert calls == ["openai", "restart"]
+
+
+def test_run_notify_command_formats_message_with_source(monkeypatch) -> None:
+    seen: dict[str, str | None] = {}
+    monkeypatch.setattr(
+        cli.notify_queue,
+        "enqueue_notification",
+        lambda chat_key, message, *, source=None: (
+            seen.__setitem__("chat_key", chat_key)
+            or seen.__setitem__("message", message)
+            or seen.__setitem__("source", source)
+            or "notify-1"
+        ),
+    )
+
+    result = cli.run_notify_command(
+        cli.argparse.Namespace(
+            chat_key="code@demo",
+            message="Hello from cron",
+            source="cron:daily-ops",
+        )
+    )
+
+    assert result == "notify-1"
+    assert seen["chat_key"] == "code@demo"
+    assert seen["source"] == "cron:daily-ops"
+    message = seen["message"]
+    assert message is not None
+    assert "Hello from cron" in message
+
+
+def test_run_notify_command_reads_message_from_stdin(monkeypatch) -> None:
+    seen: dict[str, str | None] = {}
+    monkeypatch.setattr(
+        cli.notify_queue,
+        "enqueue_notification",
+        lambda chat_key, message, *, source=None: (
+            seen.__setitem__("chat_key", chat_key)
+            or seen.__setitem__("message", message)
+            or seen.__setitem__("source", source)
+            or "notify-1"
+        ),
+    )
+
+    class FakeStdin(io.StringIO):
+        def isatty(self) -> bool:
+            return False
+
+    monkeypatch.setattr(cli.sys, "stdin", FakeStdin("Hello from stdin\n"))
+
+    result = cli.run_notify_command(
+        cli.argparse.Namespace(
+            chat_key="code@demo",
+            message=None,
+            source="monitor:disk-usage",
+        )
+    )
+
+    assert result == "notify-1"
+    assert seen["chat_key"] == "code@demo"
+    assert seen["source"] == "monitor:disk-usage"
+    message = seen["message"]
+    assert message is not None
+    assert "Hello from stdin" in message
