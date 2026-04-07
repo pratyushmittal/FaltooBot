@@ -164,6 +164,39 @@ def _send_html(handler: BaseHTTPRequestHandler, *, status: int, body: str) -> No
     handler.wfile.write(encoded)
 
 
+def _callback_params_from_input(text: str) -> dict[str, list[str]]:
+    parsed = urlparse(text)
+    query = parsed.query if parsed.scheme or parsed.netloc else text.lstrip("?")
+    return parse_qs(query)
+
+
+def _apply_callback_params(state: _CallbackState, params: dict[str, list[str]]) -> None:
+    error = next(iter(params.get("error", [])), "")
+    error_description = next(iter(params.get("error_description", [])), "")
+    if error:
+        # comment: the OAuth provider can redirect with an explicit error instead of a code.
+        state.error = error_description or error
+        state.done.set()
+        return
+
+    callback_state = next(iter(params.get("state", [])), "")
+    if callback_state != state.expected_state:
+        # comment: reject mismatched state values to avoid accepting a stale or foreign callback.
+        state.error = "State mismatch."
+        state.done.set()
+        return
+
+    code = next(iter(params.get("code", [])), "")
+    if not code:
+        # comment: the callback can arrive without a code when the browser flow is interrupted.
+        state.error = "Missing authorization code."
+        state.done.set()
+        return
+
+    state.code = code
+    state.done.set()
+
+
 def _handler(state: _CallbackState) -> type[BaseHTTPRequestHandler]:
     class CallbackHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -172,34 +205,10 @@ def _handler(state: _CallbackState) -> type[BaseHTTPRequestHandler]:
                 _send_html(self, status=404, body=ERROR_HTML)
                 return
 
-            params = parse_qs(parsed.query)
-            error = next(iter(params.get("error", [])), "")
-            error_description = next(iter(params.get("error_description", [])), "")
-            if error:
-                # comment: the OAuth provider can redirect with an explicit error instead of a code.
-                state.error = error_description or error
-                state.done.set()
+            _apply_callback_params(state, parse_qs(parsed.query))
+            if state.error:
                 _send_html(self, status=400, body=ERROR_HTML)
                 return
-
-            callback_state = next(iter(params.get("state", [])), "")
-            if callback_state != state.expected_state:
-                # comment: reject mismatched state values to avoid accepting a stale or foreign callback.
-                state.error = "State mismatch."
-                state.done.set()
-                _send_html(self, status=400, body=ERROR_HTML)
-                return
-
-            code = next(iter(params.get("code", [])), "")
-            if not code:
-                # comment: the callback can arrive without a code when the browser flow is interrupted.
-                state.error = "Missing authorization code."
-                state.done.set()
-                _send_html(self, status=400, body=ERROR_HTML)
-                return
-
-            state.code = code
-            state.done.set()
             _send_html(self, status=200, body=SUCCESS_HTML)
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -245,7 +254,9 @@ def run_openai_login(console: Console | None = None) -> None:
         )
         console.print()
         console.rule("[bold cyan]OpenAI Codex login[/]", style="dim")
-        console.print("Open this URL if your browser does not open automatically:")
+        console.print(
+            "Open this URL in your browser. If Faltoobot is running on a remote server, open it on your local machine:"
+        )
         console.print(f"[cyan]{authorize_url}[/]")
         try:
             webbrowser.open(authorize_url)
@@ -253,7 +264,18 @@ def run_openai_login(console: Console | None = None) -> None:
             pass
 
         console.print()
-        console.print("Waiting for the browser callback...")
+        console.print(
+            "After the browser finishes, you can either let the local callback complete automatically or paste the final browser URL back here."
+        )
+        callback_url = console.input(
+            "Paste final browser URL here for remote-server login, or press Enter to wait for the local callback: "
+        ).strip()
+        if callback_url:
+            _apply_callback_params(
+                callback_state,
+                _callback_params_from_input(callback_url),
+            )
+
         if not callback_state.done.wait(LOGIN_TIMEOUT_SECONDS):
             raise SystemExit("OpenAI login timed out. Please try again.")
         if callback_state.error:

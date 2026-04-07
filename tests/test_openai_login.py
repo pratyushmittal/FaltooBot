@@ -108,6 +108,7 @@ def test_run_openai_login_saves_auth_file(monkeypatch, tmp_path: Path) -> None:
         lambda: tmp_path / ".faltoobot" / "auth.json",
     )
     monkeypatch.setattr(openai_login.webbrowser, "open", lambda url: True)
+    monkeypatch.setattr(Console, "input", lambda self, prompt="": "")
     monkeypatch.setattr(
         openai_login,
         "_save_oauth_path",
@@ -142,3 +143,61 @@ def test_run_openai_login_saves_auth_file(monkeypatch, tmp_path: Path) -> None:
     assert payload["tokens"]["access_token"] == "access-token"
     assert payload["tokens"]["refresh_token"] == "refresh-token"
     assert "Saved" in output.getvalue()
+
+
+def test_run_openai_login_accepts_pasted_callback_url(
+    monkeypatch, tmp_path: Path
+) -> None:
+    id_token = _jwt(
+        {
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-123",
+            }
+        }
+    )
+    seen: dict[str, str] = {}
+    monkeypatch.setattr(
+        openai_login,
+        "faltoobot_auth_file",
+        lambda: tmp_path / ".faltoobot" / "auth.json",
+    )
+    monkeypatch.setattr(openai_login.webbrowser, "open", lambda url: True)
+    monkeypatch.setattr(
+        openai_login,
+        "_save_oauth_path",
+        lambda auth_file: tmp_path / ".faltoobot" / "config.toml",
+    )
+    monkeypatch.setattr(
+        openai_login,
+        "_exchange_code_for_tokens",
+        lambda **kwargs: {
+            "id_token": id_token,
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+        },
+    )
+
+    def fake_start(state: openai_login._CallbackState):
+        seen["state"] = state.expected_state
+        return FakeServer(), FakeThread(), "http://localhost:1455/auth/callback"
+
+    monkeypatch.setattr(openai_login, "_start_callback_server", fake_start)
+    monkeypatch.setattr(
+        Console,
+        "input",
+        lambda self, prompt="": (
+            f"http://localhost:1455/auth/callback?code=code-123&state={seen['state']}"
+        ),
+    )
+    output = io.StringIO()
+
+    openai_login.run_openai_login(
+        Console(file=output, force_terminal=False, color_system=None)
+    )
+
+    auth_file = tmp_path / ".faltoobot" / "auth.json"
+    payload = json.loads(auth_file.read_text(encoding="utf-8"))
+    assert payload["auth_mode"] == "chatgpt"
+    assert payload["tokens"]["account_id"] == "account-123"
+    assert payload["tokens"]["access_token"] == "access-token"
+    assert payload["tokens"]["refresh_token"] == "refresh-token"
