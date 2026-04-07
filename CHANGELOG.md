@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.0.1 — 2026-04-07
+
+### Changed
+- Simplified the bundled `notification-listener` skill frontmatter.
+
 ## 2.0.0 — 2026-04-07
 
 ### Added
