@@ -4,6 +4,9 @@ repos:
     hooks:
       - id: check-added-large-files
       - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: debug-statements
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
@@ -32,3 +35,4 @@ repos:
         entry: bash -lc 'RUN_FALTOOCHAT_E2E=1 uv run pytest -n auto --cov=faltoobot --cov-report=term-missing:skip-covered --cov-fail-under=78'
         language: system
         pass_filenames: false
+        stages: [pre-push]
