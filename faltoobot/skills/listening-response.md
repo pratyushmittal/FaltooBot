@@ -1,5 +1,4 @@
 ---
-name: notification-listener
 description: Listen for notifications from background scripts, cron jobs, monitors, or sub-agents, then continue the conversation when they arrive. This is useful for reminders, recurring tasks, updates, and async sub-tasks.
 meta: disallow-sub-agent
 ---
