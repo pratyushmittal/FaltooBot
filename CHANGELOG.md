@@ -2,6 +2,17 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.0.0 — 2026-04-07
+
+### Added
+- `faltoobot notify` can now queue notifications into an ongoing chat, and the bundled `notification-listener` skill shows practical cron, sub-agent, and scripting patterns.
+
+### Changed
+- Notification queue items now carry a `source`, and WhatsApp notification turns can suppress user-facing replies with `[noreply]`.
+
+### Removed
+- `faltoochat --notify-chat-key` and the bundled `scheduled-subagents` skill were removed. Pipe `faltoochat` output into `faltoobot notify` instead.
+
 ## 1.6.1 — 2026-04-07
 
 ### Fixed
