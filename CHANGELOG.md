@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 1.6.1 — 2026-04-07
+
+### Fixed
+- `faltoochat` now persists and resumes streamed tool calls correctly in ChatGPT/Codex OAuth sessions, so shell-tool turns no longer stop after rendering the tool call in the transcript.
+
 ## 1.6.0 — 2026-04-06
 
 ### Added
