@@ -10,6 +10,7 @@ MODEL_OPTIONS = ("gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-code
 TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
+GEMINI_MODEL = "gemini-3.1-flash-image-preview"
 
 
 @dataclass(slots=True)
@@ -32,6 +33,8 @@ class Config:
     allowed_chats: set[str]
     bot_name: str
     browser_binary: str
+    gemini_api_key: str = ""
+    gemini_model: str = GEMINI_MODEL
 
 
 def app_root() -> Path:
@@ -48,6 +51,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "fast": False,
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
+        "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
         "ui": {"theme": ""},
         "browser": {"binary": None},
         "bot": {
@@ -61,6 +65,7 @@ def default_config() -> dict[str, dict[str, Any]]:
 def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     defaults = default_config()
     openai = as_dict(data.get("openai"))
+    gemini = as_dict(data.get("gemini"))
     ui = as_dict(data.get("ui"))
     browser = as_dict(data.get("browser"))
     bot = as_dict(data.get("bot"))
@@ -76,6 +81,12 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 defaults["openai"]["transcription_model"],
                 TRANSCRIPTION_MODEL_OPTIONS,
             ),
+        },
+        "gemini": {
+            "gemini_api_key": as_str(
+                gemini.get("gemini_api_key"), defaults["gemini"]["gemini_api_key"]
+            ),
+            "model": as_str(gemini.get("model"), defaults["gemini"]["model"]),
         },
         "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
         "browser": {
@@ -119,6 +130,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     data = merge_config(data)
     bot = data["bot"]
     openai = data["openai"]
+    gemini = data["gemini"]
     ui = data["ui"]
     browser = data["browser"]
     allowed_chats = (
@@ -136,6 +148,10 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"thinking = {quote(str(openai['thinking']))}",
             f"fast = {str(bool(openai['fast'])).lower()}",
             f"transcription_model = {quote(str(openai['transcription_model']))}",
+            "",
+            "[gemini]",
+            f"gemini_api_key = {quote(str(gemini['gemini_api_key']))}",
+            f"model = {quote(str(gemini['model']))}",
             "",
             "[ui]",
             f"theme = {quote(str(ui['theme']))}",
@@ -214,6 +230,7 @@ def build_config() -> Config:
     openai = data["openai"]
     bot = data["bot"]
     browser = data["browser"]
+    gemini = data["gemini"]
     return Config(
         home=Path.home(),
         root=root,
@@ -233,6 +250,9 @@ def build_config() -> Config:
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
         bot_name=str(bot["bot_name"]),
         browser_binary=str(browser["binary"]),
+        gemini_api_key=str(gemini["gemini_api_key"])
+        or os.environ.get("GEMINI_API_KEY", ""),
+        gemini_model=str(gemini["model"]),
     )
 
 

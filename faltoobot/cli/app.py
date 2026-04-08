@@ -22,6 +22,7 @@ from faltoobot.cli.migrations import run_release_migrations
 from faltoobot.config import (
     APP_LABEL,
     DEFAULT_THINKING,
+    GEMINI_MODEL,
     MODEL_OPTIONS,
     THINKING_OPTIONS,
     TRANSCRIPTION_MODEL_OPTIONS,
@@ -457,6 +458,21 @@ def _configure_openai(config: Config) -> None:
     console.print(f"[green]✓ Saved[/] [cyan]{config.config_file}[/]")
 
 
+def _configure_gemini(config: Config) -> None:
+    console.print()
+    console.rule("[bold cyan]Gemini[/]", style="dim")
+    data = merge_config(load_toml(config.config_file))
+    gemini = data["gemini"]
+    data["gemini"]["gemini_api_key"] = _prompt_text(
+        "Gemini API key",
+        str(gemini.get("gemini_api_key") or ""),
+        secret=True,
+    )
+    data["gemini"]["model"] = str(gemini.get("model") or GEMINI_MODEL)
+    _write_config(data, config.config_file)
+    console.print(f"[green]✓ Saved[/] [cyan]{config.config_file}[/]")
+
+
 def _configure_whatsapp(config: Config) -> None:
     console.print()
     console.rule("[bold cyan]WhatsApp[/]", style="dim")
@@ -582,13 +598,16 @@ def run_configure_command(
     if mode is None:
         choice = _prompt_menu(
             "Configure",
-            ["Wizard", "WhatsApp", "Codex / OpenAI", "Browser"],
+            ["Wizard", "WhatsApp", "Codex / OpenAI", "Gemini", "Browser"],
             default=1,
         )
-        mode = {1: "wizard", 2: "whatsapp", 3: "openai", 4: "browser"}[choice]
+        mode = {1: "wizard", 2: "whatsapp", 3: "openai", 4: "gemini", 5: "browser"}[
+            choice
+        ]
 
     if mode == "wizard":
         _configure_openai(config)
+        _configure_gemini(build_config())
         _configure_whatsapp(build_config())
         _configure_browser(build_config())
     elif mode == "whatsapp":
@@ -597,6 +616,8 @@ def run_configure_command(
         _configure_browser(config)
     elif mode == "openai":
         _configure_openai(config)
+    elif mode == "gemini":
+        _configure_gemini(config)
     else:  # comment: only internal callers choose the configure mode.
         raise SystemExit(f"unknown configure mode: {mode}")
     _restart_service(build_config())
