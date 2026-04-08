@@ -26,6 +26,7 @@ from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
 from faltoobot.config import Config, normalize_chat
+from faltoobot.memory import memory_file_path
 from faltoobot.sessions import get_messages, get_session
 
 
@@ -696,6 +697,44 @@ async def test_process_message_reset_creates_new_session_for_chat(
     ]
     assert get_messages(second)["messages"] == []
     assert get_messages(second)["message_ids"] == ["msg-1", "msg-2"]
+
+
+@pytest.mark.anyio
+async def test_process_message_memory_command_lists_saved_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    config = make_config(tmp_path, allowed_chats=set())
+    config.root.mkdir(parents=True, exist_ok=True)
+    path = memory_file_path(config.root, "8960294979@s.whatsapp.net")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("- Prefers concise replies\n", encoding="utf-8")
+    client = FakePresenceClient()
+
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("8960294979", "s.whatsapp.net"),
+        Sender=jid("8960294979", "s.whatsapp.net"),
+    )
+    event = cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=Message(conversation="/memory"),
+            Info=SimpleNamespace(MessageSource=source, ID="msg-2"),
+        ),
+    )
+
+    await handle_message(
+        cast(NewAClient, client),
+        event,
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.replies == [
+        "Here are the things I remember:\n1. Prefers concise replies"
+    ]
 
 
 class _DummyClient:

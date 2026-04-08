@@ -8,6 +8,7 @@ from textual import events
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
 from faltoobot.faltoochat.app import Composer, FaltooChatApp
+from faltoobot.memory import memory_file_path
 from faltoobot.session_utils import get_local_user_message_item
 from faltoobot.faltoochat.review import ReviewView
 from faltoobot.faltoochat.widgets import QueueWidget
@@ -105,6 +106,7 @@ async def test_minchat_shows_slash_command_suggestions(
         option_list = app.query_one("#slash-commands", OptionList)
         assert option_list.display
         assert [str(option.prompt) for option in option_list.options] == [
+            "/memory — show things you asked me to remember",
             "/reset — start a fresh session",
             "/tree — open the current session messages file",
         ]
@@ -154,6 +156,29 @@ async def test_minchat_enter_applies_highlighted_slash_command(
         await pilot.pause(0)
 
         assert composer.text == "/reset"
+
+
+@pytest.mark.anyio
+async def test_minchat_memory_command_shows_saved_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    path = memory_file_path(sessions.app_root(), app.session[0])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("- Uses uv instead of pip\n", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/memory")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        assert any("Uses uv instead of pip" in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio

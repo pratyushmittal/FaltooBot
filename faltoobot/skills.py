@@ -5,6 +5,7 @@ from typing import NotRequired, TypedDict
 
 from faltoobot.config import app_root, build_config
 from faltoobot.cli import browser as browser_runtime
+from faltoobot.memory import memory_file_path
 
 
 class Skill(TypedDict):
@@ -131,6 +132,7 @@ def _skill_context(chat_key: str) -> dict[str, str]:
     config = build_config()
     return {
         "chat_key": chat_key,
+        "memory_file": str(memory_file_path(config.root, chat_key)),
         "browser_binary": config.browser_binary,
         "browser_profile": str(browser_runtime.browser_profile_dir(config.root)),
         "cdp_url": f"http://127.0.0.1:{browser_runtime.CDP_PORT}",

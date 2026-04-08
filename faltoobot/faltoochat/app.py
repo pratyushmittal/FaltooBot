@@ -26,6 +26,7 @@ from faltoobot.faltoochat.terminal import (
     open_in_default_editor,
     textual_theme_from_terminal,
 )
+from faltoobot.memory import format_memory_list
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.session_utils import (
     decompose_local_message_item,
@@ -46,6 +47,7 @@ from .widgets import QueueWidget
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
 SLASH_COMMANDS = {
+    "/memory": "show things you asked me to remember",
     "/reset": "start a fresh session",
     "/tree": "open the current session messages file",
 }
@@ -421,6 +423,15 @@ class FaltooChatApp(App[None]):
     async def action_load_all_messages(self) -> None:
         await self.load_messages()
 
+    async def show_local_answer(self, text: str) -> None:
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(Markdown(text, classes="answer"))
+        self.call_after_refresh(
+            transcript.scroll_end,
+            animate=False,
+            immediate=True,
+        )
+
     async def stream_reply(
         self,
         transcript: VerticalScroll,
@@ -556,6 +567,11 @@ class Composer(TextArea):
         match question:
             case "/tree":
                 open_in_default_editor(sessions.get_messages_path(self.app.session))
+                return True
+            case "/memory":
+                await self.app.show_local_answer(
+                    format_memory_list(sessions.app_root(), self.app.session[0])
+                )
                 return True
             case "/reset":
                 workspace = self.app.workspace

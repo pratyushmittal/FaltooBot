@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from faltoobot.config import Config
+from faltoobot.memory import render_memory_prompt
 from faltoobot.prompts.coding_agent import PROMPT as CODING_AGENT_PROMPT
 from faltoobot.prompts.sub_agent import PROMPT as SUB_AGENT_PROMPT
 from faltoobot.prompts.whatsapp import PROMPT as WHATSAPP_PROMPT
@@ -42,6 +43,8 @@ def get_system_instructions(config: Config, chat_key: str, workspace: Path) -> s
             prompt = CODING_AGENT_PROMPT
         case _:
             prompt = WHATSAPP_PROMPT
-    return "\n\n".join(
-        part for part in _instruction_parts(prompt, config, workspace) if part
-    )
+
+    parts = _instruction_parts(prompt, config, workspace)
+    if memory_text := render_memory_prompt(config.root, chat_key):
+        parts.append(memory_text)
+    return "\n\n".join(part for part in parts if part)
