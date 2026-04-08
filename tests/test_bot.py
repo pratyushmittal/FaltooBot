@@ -151,8 +151,8 @@ class FakePresenceClient:
         self.replies: list[str] = []
         self.reply_ids: list[str] = []
         self.sent_messages: list[str] = []
-        self.sent_images: list[dict[str, str | None]] = []
-        self.sent_documents: list[dict[str, str | None]] = []
+        self.sent_images: list[dict[str, object | None]] = []
+        self.sent_documents: list[dict[str, object | None]] = []
         self.downloads = 0
 
     async def send_chat_presence(
@@ -181,7 +181,9 @@ class FakePresenceClient:
         quoted: object | None = None,
         **_: object,
     ) -> str:
-        self.sent_images.append({"file": str(file), "caption": caption})
+        self.sent_images.append(
+            {"file": str(file), "caption": caption, "quoted": quoted}
+        )
         return "ok"
 
     async def send_document(  # noqa: PLR0913
@@ -200,6 +202,7 @@ class FakePresenceClient:
                 "caption": caption,
                 "filename": filename,
                 "mimetype": mimetype,
+                "quoted": quoted,
             }
         )
         return "ok"
@@ -899,7 +902,9 @@ async def test_send_text_sends_local_image_markdown_as_media(tmp_path: Path) -> 
     )
 
     assert client.sent_messages == ["Here."]
-    assert client.sent_images == [{"file": str(image), "caption": "Chart"}]
+    assert client.sent_images == [
+        {"file": str(image), "caption": "Chart", "quoted": None}
+    ]
 
 
 @pytest.mark.anyio
@@ -922,7 +927,30 @@ async def test_send_text_sends_local_pdf_markdown_as_document(tmp_path: Path) ->
             "caption": "Quarterly report",
             "filename": "report.pdf",
             "mimetype": "application/pdf",
+            "quoted": None,
         }
+    ]
+
+
+@pytest.mark.anyio
+async def test_send_text_quotes_media_replies_with_the_full_event(
+    tmp_path: Path,
+) -> None:
+    client = FakePresenceClient()
+    image = tmp_path / "chart.png"
+    image.write_bytes(png_bytes())
+    event = fake_event(text="hello")
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=f"![Chart]({image.name})",
+        event=event,
+        workspace=tmp_path,
+    )
+
+    assert client.sent_images == [
+        {"file": str(image), "caption": "Chart", "quoted": event}
     ]
 
 

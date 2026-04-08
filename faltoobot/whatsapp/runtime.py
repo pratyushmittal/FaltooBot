@@ -153,7 +153,7 @@ async def _send_media(
     media: OutgoingMedia,
     event: MessageEv | None = None,
 ) -> None:
-    quoted = event.Message if event is not None else None
+    quoted = event if event is not None else None
     if media["is_image"]:
         await client.send_image(
             chat,
