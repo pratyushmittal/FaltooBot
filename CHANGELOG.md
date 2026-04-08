@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.1.2 — 2026-04-08
+
+### Fixed
+- WhatsApp media replies now quote the full incoming event when sending images or documents, which fixes media replies breaking with newer `neonize` releases.
+
 ## 2.1.1 — 2026-04-08
 
 ### Changed
