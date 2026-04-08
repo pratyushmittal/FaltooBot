@@ -2,6 +2,18 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.1.0 — 2026-04-08
+
+### Added
+- `faltoobot browser` launches a persistent Playwright/Chromium session with a reusable profile, and `faltoobot configure` can install and save a browser binary for it.
+- A bundled `browser-use` skill and a `load_image` tool make it easier to automate JS-heavy sites and inspect saved screenshots in the same chat.
+
+### Changed
+- WhatsApp replies can now send local images and documents when the assistant emits one-media-per-line markup like `![caption](path/to/file.png)`.
+
+### Fixed
+- Codex OAuth replies now preserve raw response output items, which fixes WhatsApp replies and other assistant-text extraction when `response.completed.output` is empty.
+
 ## 2.0.3 — 2026-04-07
 
 ### Changed
