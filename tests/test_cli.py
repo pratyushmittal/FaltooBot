@@ -200,6 +200,31 @@ def test_run_configure_command_runs_selected_setup(tmp_path: Path, monkeypatch) 
     assert calls == ["openai", "restart"]
 
 
+def test_run_configure_command_runs_gemini_setup(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(cli, "_configure_gemini", lambda config: calls.append("gemini"))
+    monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
+
+    cli.run_configure_command(config, mode="gemini")
+
+    assert calls == ["gemini", "restart"]
+
+
+def test_configure_gemini_saves_api_key(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+
+    monkeypatch.setattr(cli, "_prompt_text", lambda *args, **kwargs: "gem-key")
+
+    cli._configure_gemini(config)
+
+    text = config.config_file.read_text(encoding="utf-8")
+    assert "[gemini]" in text
+    assert 'gemini_api_key = "gem-key"' in text
+    assert 'model = "gemini-3.1-flash-image-preview"' in text
+
+
 def test_run_notify_command_formats_message_with_source(monkeypatch) -> None:
     seen: dict[str, str | None] = {}
     monkeypatch.setattr(
