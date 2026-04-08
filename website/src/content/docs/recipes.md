@@ -32,7 +32,6 @@ Store repeatable workflows as local skills so the tool can reuse them across ses
 ## Available recipes
 
 - [Virtual monitor / remote desktop](/docs/recipes/virtual-monitor-remote-desktop/)
-- [CDP setup](/docs/recipes/cdp-setup/)
 
 ## Principle
 
