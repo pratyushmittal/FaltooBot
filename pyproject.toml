@@ -9,12 +9,12 @@ description = "WhatsApp-first LLM bot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "neonize>=0.3.15.post0",
+  "neonize>=0.3.16.post0",
   "openai>=2.30.0",
   "playwright>=1.58.0",
-  "pillow>=11.3.0",
-  "rich>=14.2.0",
-  "textual[syntax]>=8.1.1",
+  "pillow>=12.2.0",
+  "rich>=14.3.3",
+  "textual[syntax]>=8.2.3",
   'pyobjc-framework-Cocoa>=11.1; sys_platform == "darwin"',
   "tree-sitter-lua>=0.5.0",
   "tree-sitter-typescript>=0.23.2",
@@ -33,12 +33,12 @@ faltoobot = ["skills/*", "skills/**/*"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4.2",
-    "pytest-xdist>=3.6.1",
+    "pytest>=9.0.3",
+    "pytest-xdist>=3.8.0",
     "pre-commit>=4.5.1",
-    "ruff>=0.15.6",
-    "ty>=0.0.23",
-    "pytest-cov>=7.0.0",
+    "ruff>=0.15.9",
+    "ty>=0.0.29",
+    "pytest-cov>=7.1.0",
     "ipython>=9.12.0",
 ]
 

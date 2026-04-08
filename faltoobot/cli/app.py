@@ -493,14 +493,18 @@ def _run_migrations(config: Config) -> list[str]:
 def _ensure_configured() -> Config:
     config_file = app_root() / "config.toml"
     had_config = config_file.exists()
+    # comment: build_config normalizes and rewrites config.toml, so detect missing modes
+    # from the raw file first before defaults hide newly required sections like [browser].
+    missing_modes = _missing_config_modes(config_file) if had_config else []
     config = build_config()
     if not had_config:
         console.print("[cyan]No config found. Starting configure wizard.[/]")
         run_configure_command(config, mode="wizard")
         return build_config()
-    for mode in _missing_config_modes(config_file):
-        run_configure_command(build_config(), mode=mode)
-    return build_config()
+    for mode in missing_modes:
+        run_configure_command(config, mode=mode)
+        config = build_config()
+    return config
 
 
 def _missing_config_modes(config_file: Path) -> list[str]:

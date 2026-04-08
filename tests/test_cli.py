@@ -353,6 +353,47 @@ def test_ensure_configured_runs_missing_browser_setup_for_old_config(
     assert result == config
 
 
+def test_ensure_configured_checks_missing_modes_before_build_config_migrates_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(
+        """[openai]
+model = "gpt-5.4"
+""",
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_build_config() -> Config:
+        # comment: build_config migrates config.toml in real runs, so simulate it filling the
+        # browser section before _ensure_configured returns.
+        config.config_file.write_text(
+            """[openai]
+model = "gpt-5.4"
+
+[browser]
+binary = ""
+""",
+            encoding="utf-8",
+        )
+        return config
+
+    monkeypatch.setattr(cli, "app_root", lambda: config.root)
+    monkeypatch.setattr(cli, "build_config", fake_build_config)
+    monkeypatch.setattr(
+        cli,
+        "run_configure_command",
+        lambda config, *, mode=None: calls.append(str(mode)),
+    )
+
+    result = cli._ensure_configured()
+
+    assert calls == ["browser"]
+    assert result == config
+
+
 def test_ensure_configured_skips_present_required_values(
     tmp_path: Path, monkeypatch
 ) -> None:
