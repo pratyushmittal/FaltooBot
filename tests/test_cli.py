@@ -131,13 +131,14 @@ def test_run_update_command_upgrades_then_bootstraps(
     assert result == config
 
 
-def test_run_update_command_stops_when_new_version_was_installed(
+def test_run_update_command_reexecs_when_new_version_was_installed(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
     ensured: list[str] = []
     versions = iter(["1.6.0", "1.6.1"])
+    reexecs: list[str] = []
 
     monkeypatch.setattr(cli, "build_config", lambda: config)
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
@@ -150,12 +151,14 @@ def test_run_update_command_stops_when_new_version_was_installed(
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
+    monkeypatch.setattr(cli, "_reexec_current_command", lambda: reexecs.append("ran"))
 
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert ensured == []
     assert reinstalls == []
+    assert reexecs == ["ran"]
     assert result is None
 
 

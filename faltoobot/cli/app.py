@@ -85,6 +85,11 @@ def _run_cmd(*args: str) -> None:
     subprocess.run(list(args), check=True, text=True)
 
 
+def _reexec_current_command() -> None:
+    """Replace this process with the freshly installed Faltoobot command."""
+    os.execv(sys.executable, [sys.executable, "-m", "faltoobot.cli.app", *sys.argv[1:]])
+
+
 def _run_capture(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a command and return its captured stdout/stderr to the caller."""
     return subprocess.run(list(args), check=check, text=True, capture_output=True)
@@ -540,8 +545,9 @@ def run_update_command(config: Config | None = None) -> Config | None:
     if current_version != previous_version:
         console.print(
             "[yellow]Faltoobot was upgraded.[/] "
-            f"Please rerun the command to continue with [cyan]{current_version}[/]."
+            f"Restarting into [cyan]{current_version}[/] to finish the update."
         )
+        _reexec_current_command()
         return None
     console.print("[dim]No required system dependencies to install.[/]")
     config = _ensure_configured()
