@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.2.0 — 2026-04-08
+
+### Added
+- Gemini image-generation support can now be configured from `faltoobot configure`, including a bundled `image-generation` skill with examples for text-to-image, image editing, multi-turn updates, and live-data prompts.
+
+### Changed
+- The image-generation skill now uses Gemini `interactions.create(...)`, prints reusable response IDs, and documents how to return the final expanded prompt back to the user.
+
 ## 2.1.3 — 2026-04-08
 
 ### Fixed
