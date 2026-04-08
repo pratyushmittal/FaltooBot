@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.1.1 — 2026-04-08
+
+### Changed
+- Refreshed Python and pre-commit dependencies, including newer `ruff`, `ty`, `pytest`, `textual`, `pillow`, and `neonize` releases.
+
+### Fixed
+- `faltoobot update` once again prompts for newly required config sections like `[browser]` when they are missing from an older `config.toml`.
+
 ## 2.1.0 — 2026-04-08
 
 ### Added
