@@ -13,6 +13,7 @@ from openai.types.responses import (
     ResponseInputFile,
     ResponseInputImage,
     ResponseInputText,
+    ResponseOutputItem,
     ResponsesServerEvent,
 )
 
@@ -252,7 +253,7 @@ async def get_streaming_reply(  # noqa: C901
     async def reply(
         current_input: MessageHistory,
     ) -> AsyncIterator[StreamingReplyItem]:
-        response_output: MessageHistory = []
+        response_output: list[ResponseOutputItem] = []
         async with client.responses.stream(
             model=config.openai_model,
             input=cast(Any, trim_input(current_input)),
@@ -274,20 +275,22 @@ async def get_streaming_reply(  # noqa: C901
                     # comment: response.output_item.done carries the finalized output item
                     # for that block, such as a tool call or assistant message.
                     response_output.append(
-                        _to_message_item(getattr(event, "item", None))
+                        cast(ResponseOutputItem, getattr(event, "item", None))
                     )
                 if event.type == "response.completed":
                     # comment: ChatGPT OAuth streams can leave response.output empty on
                     # response.completed even though the finalized items were already sent
                     # via response.output_item.done.
                     event = cast(ResponseCompletedEvent, event)
-                    dict_response = event.response.to_dict()
-                    output = dict_response.get("output")
-                    if isinstance(output, list) and output:
-                        response_output = cast(MessageHistory, output)
-                    current_input.extend(response_output)
-                    if response_output:
-                        current_input[-1]["usage"] = dict_response.get("usage")
+                    if event.response.output:
+                        response_output = list(event.response.output)
+                    else:
+                        event.response.codex_output = response_output  # type: ignore[unresolved-attribute]
+                    current_input.extend(
+                        _to_message_item(item) for item in response_output
+                    )
+                    if hasattr(event.response, "usage") and event.response.usage:
+                        current_input[-1]["usage"] = event.response.usage.to_dict()
                 yield event
 
         # https://developers.openai.com/api/reference/resources/responses/streaming-events#response.completed
@@ -299,12 +302,12 @@ async def get_streaming_reply(  # noqa: C901
         event = cast(ResponseCompletedEvent, event)
 
         tool_calls: list[FunctionToolCallItem] = [
-            cast(FunctionToolCallItem, item)
-            for item in response_output
-            if item.get("type") == "function_call"
-            and isinstance(item.get("name"), str)
-            and isinstance(item.get("arguments"), str)
-            and isinstance(item.get("call_id"), str)
+            cast(FunctionToolCallItem, _to_message_item(raw_item))
+            for raw_item in response_output
+            if getattr(raw_item, "type", None) == "function_call"
+            and hasattr(raw_item, "name")
+            and hasattr(raw_item, "arguments")
+            and hasattr(raw_item, "call_id")
         ]
         if not tool_calls:
             return

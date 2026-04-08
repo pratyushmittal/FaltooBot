@@ -1,21 +1,40 @@
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-import hashlib
 
 import pytest
 from PIL import Image
+
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageHistory, get_tools_definition
 
 
-class FakeItem:
-    def __init__(self, payload: dict[str, Any]) -> None:
-        self.payload = payload
-
-    def to_dict(self) -> dict[str, Any]:
-        return self.payload
+def _fake_output_item(
+    payload: dict[str, Any],
+) -> ResponseOutputMessage | dict[str, Any]:
+    if payload.get("type") != "message" or payload.get("role") != "assistant":
+        return payload
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return payload
+    return ResponseOutputMessage(
+        id=str(payload.get("id") or "msg_fake"),
+        type="message",
+        role="assistant",
+        status="completed",
+        content=[
+            ResponseOutputText(
+                type="output_text",
+                text=str(part.get("text") or ""),
+                annotations=[],
+            )
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "output_text"
+        ],
+    )
 
 
 class FakeResponse:
@@ -24,19 +43,16 @@ class FakeResponse:
         output: list[dict[str, Any]],
         usage: dict[str, Any] | None = None,
     ) -> None:
-        self.output = [FakeItem(item) for item in output]
+        self.output = [_fake_output_item(item) for item in output]
         self.usage = usage
         self.output_text = ""
-        for item in output:
-            if item.get("type") != "message" or item.get("role") != "assistant":
-                continue
-            content = item.get("content")
-            if not isinstance(content, list):
+        for item in self.output:
+            if not isinstance(item, ResponseOutputMessage):
                 continue
             self.output_text = "".join(
-                str(part.get("text") or "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "output_text"
+                part.text
+                for part in item.content
+                if isinstance(part, ResponseOutputText)
             ).strip()
             if self.output_text:
                 break
@@ -385,6 +401,47 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         }
     ]
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_get_answer_uses_codex_output_when_completed_response_output_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_get_answer_streaming(**_: Any):
+        yield SimpleNamespace(
+            type="response.completed",
+            response=type(
+                "Response",
+                (),
+                {
+                    "output": [],
+                    "output_text": "",
+                    "codex_output": [
+                        ResponseOutputMessage(
+                            id="msg_codex",
+                            type="message",
+                            role="assistant",
+                            status="completed",
+                            content=[
+                                ResponseOutputText(
+                                    type="output_text",
+                                    text="hello from codex",
+                                    annotations=[],
+                                )
+                            ],
+                        )
+                    ],
+                },
+            )(),
+        )
+
+    monkeypatch.setattr(sessions, "get_answer_streaming", fake_get_answer_streaming)
+
+    answer = await sessions.get_answer(
+        session=("code@test", "session-1"), question="Hi"
+    )
+
+    assert answer == "hello from codex"
 
 
 @pytest.mark.anyio

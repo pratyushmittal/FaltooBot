@@ -427,7 +427,6 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
             "call_id": "call_1",
             "name": "greet",
             "arguments": '{"name":"Faltoobot"}',
-            "usage": None,
         },
         {
             "id": "fco_call_1",
@@ -441,9 +440,21 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
             "id": "msg_2",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "Done."}],
-            "usage": None,
         },
     ]
+    assert cast(Any, items[1]).response.codex_output[0].to_dict() == {
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "greet",
+        "arguments": '{"name":"Faltoobot"}',
+    }
+    assert cast(Any, items[4]).response.codex_output[0].to_dict() == {
+        "type": "message",
+        "id": "msg_2",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Done."}],
+    }
     assert client.closed is True
 
 

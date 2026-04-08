@@ -1,18 +1,21 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock, RLock
-from collections.abc import Sequence
-from typing import Any, AsyncIterator, TypeAlias, TypedDict
+from typing import Any, AsyncIterator, TypeAlias, TypedDict, cast
 from uuid import uuid4
 
 from openai import AsyncOpenAI
-from openai.types.responses import Response, ResponseOutputMessage, ResponseOutputText
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 from faltoobot.config import Config, app_root, build_config
-from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.gpt_utils import (
     MessageHistory,
     MessageItem,
@@ -22,6 +25,7 @@ from faltoobot.gpt_utils import (
 )
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
+from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 
@@ -285,13 +289,19 @@ async def _upload_attachments(
         await client.close()
 
 
-def _assistant_text_from_response(response: Response | None) -> str:
+def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
+    response = getattr(event, "response", None)
     if response is None:
         return ""
     output_text = getattr(response, "output_text", "")
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
-    for item in reversed(response.output):
+
+    output = cast(
+        list[object],
+        getattr(response, "output", None) or getattr(response, "codex_output", []),
+    )
+    for item in reversed(output):
         if not isinstance(item, ResponseOutputMessage):
             continue
         text = "".join(
@@ -316,7 +326,9 @@ async def get_answer(
         message_id=message_id,
     ):
         if event.type == "response.completed":
-            answer = _assistant_text_from_response(getattr(event, "response", None))
+            answer = _assistant_text_from_completed_event(
+                cast(ResponseCompletedEvent, event)
+            )
     return answer
 
 
