@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.1.3 — 2026-04-08
+
+### Fixed
+- `faltoobot update` now re-execs itself after `uv tool upgrade`, so a single update run continues with the newly installed version and properly refreshes background services.
+
 ## 2.1.2 — 2026-04-08
 
 ### Fixed
