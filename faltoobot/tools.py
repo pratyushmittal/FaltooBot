@@ -1,9 +1,22 @@
 import json
 import subprocess
 from collections.abc import Callable
+from collections.abc import Awaitable
 from pathlib import Path
 
+from openai.types.responses import (
+    ResponseInputFile,
+    ResponseInputImage,
+    ResponseInputText,
+)
+
+from faltoobot import images
+from faltoobot.config import build_config
+from faltoobot.gpt_utils import get_openai_client
+from faltoobot.openai_auth import uses_chatgpt_oauth
+
 MAX_SHELL_OUTPUT = 12_000
+ToolOutput = str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
 
 
 def _clipped_text(value: str | bytes | None) -> str:
@@ -61,3 +74,35 @@ def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
         - timeout_ms: Kill the command after this timeout in milliseconds.
     """
     return run_shell_call
+
+
+async def load_image_in_workspace(workspace: str, image_path: str) -> ToolOutput:
+    path = Path(image_path)
+    workspace_path = Path(workspace).resolve()
+    if not path.is_absolute():
+        path = workspace_path / path
+    resolved = path.resolve()
+    config = build_config()
+
+    if uses_chatgpt_oauth(config):
+        return [images.inline_image_item(workspace_path, resolved)]
+
+    client = get_openai_client(config)
+    try:
+        return [await images.upload_attachment(client, workspace_path, resolved)]
+    finally:
+        await client.close()
+
+
+def get_load_image_tool(workspace: Path) -> Callable[[str], Awaitable[ToolOutput]]:
+    workspace = workspace.expanduser().resolve()
+
+    async def load_image(image_path: str) -> ToolOutput:
+        return await load_image_in_workspace(str(workspace), image_path)
+
+    load_image.__doc__ = """Load image files such as jpg or png. Useful for seeing screenshots and creatives.
+
+    Args:
+        - image_path: relative or absolute path of the image
+    """
+    return load_image

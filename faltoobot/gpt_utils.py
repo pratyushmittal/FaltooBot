@@ -10,6 +10,9 @@ from openai.types.responses import (
     FunctionToolParam,
     ResponseCompletedEvent,
     ResponseFunctionToolCallOutputItem,
+    ResponseInputFile,
+    ResponseInputImage,
+    ResponseInputText,
     ResponsesServerEvent,
 )
 
@@ -18,7 +21,10 @@ from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 210_000
 
-Tool: TypeAlias = Callable[..., str] | Callable[..., Awaitable[str]]
+ToolOutput: TypeAlias = (
+    str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
+)
+Tool: TypeAlias = Callable[..., ToolOutput] | Callable[..., Awaitable[ToolOutput]]
 MessageItem: TypeAlias = dict[str, Any]
 MessageHistory: TypeAlias = list[MessageItem]
 StreamingReplyItem: TypeAlias = (
@@ -173,7 +179,7 @@ def _parse_tool_arguments(raw_arguments: str) -> tuple[dict[str, Any], str | Non
     return value, None
 
 
-async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> str:
+async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> ToolOutput:
     if inspect.iscoroutinefunction(function):
         result = await function(**kwargs)
     else:
@@ -181,9 +187,15 @@ async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> str:
         result = await asyncio.to_thread(function, **kwargs)
         if inspect.isawaitable(result):
             result = await result
-    if not isinstance(result, str):
-        raise TypeError(f"Tool {_callable_name(function)} must return str")
-    return result
+    if isinstance(result, str):
+        return cast(ToolOutput, result)
+    if isinstance(result, list) and all(
+        isinstance(item, ResponseInputText | ResponseInputImage) for item in result
+    ):
+        return cast(ToolOutput, result)
+    raise TypeError(
+        f"Tool {_callable_name(function)} must return str or list[ResponseInputText | ResponseInputImage]"
+    )
 
 
 async def _tool_result(

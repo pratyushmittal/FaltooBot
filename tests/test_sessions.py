@@ -250,7 +250,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         }
     ]
     tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
-    assert set(tool_defs_by_name) == {"run_shell_call", "load_skill"}
+    assert set(tool_defs_by_name) == {"run_shell_call", "load_image", "load_skill"}
 
     shell_tool = tool_defs_by_name["run_shell_call"]
     assert shell_tool["type"] == "function"
@@ -258,6 +258,13 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     assert shell_tool["description"].startswith(
         "Returns the output of a shell command. Use it to inspect files and run CLI tasks."
     )
+    load_image_tool = tool_defs_by_name["load_image"]
+    assert load_image_tool["type"] == "function"
+    assert load_image_tool["strict"] is True
+    assert load_image_tool["description"].startswith(
+        "Load image files such as jpg or png. Useful for seeing screenshots and creatives."
+    )
+
     assert "Commands are run from" in shell_tool["description"]
     assert shell_tool["parameters"] == {
         "type": "object",

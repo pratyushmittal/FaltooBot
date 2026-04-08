@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -112,20 +113,33 @@ def test_load_skills_reads_bundled_package_skills_when_app_root_is_empty(
     ]
 
 
-def test_load_skill_injects_chat_key_placeholder(monkeypatch, tmp_path: Path) -> None:
+def test_load_skill_injects_runtime_placeholders(monkeypatch, tmp_path: Path) -> None:
     home_root = tmp_path / ".faltoobot"
     monkeypatch.setattr(skills, "app_root", lambda: home_root)
     monkeypatch.setattr(skills.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        skills,
+        "build_config",
+        lambda: SimpleNamespace(root=home_root, browser_binary="/tmp/chromium"),
+    )
     workspace = tmp_path / "workspace"
     _write_file_skill(
         home_root / "skills",
         "notification-listener",
-        "---\ndescription: sub-agent helper\n---\nnotify key: {chat_key}\n",
+        "---\ndescription: sub-agent helper\n---\nnotify key: {chat_key}\nbrowser: {browser_binary}\nprofile: {browser_profile}\ncdp: {cdp_url}\nport: {cdp_port}\n",
     )
 
     result = skills.load_skill(workspace, "notification-listener", chat_key="code@main")
 
-    assert result == "notify key: code@main"
+    assert result == "\n".join(
+        [
+            "notify key: code@main",
+            "browser: /tmp/chromium",
+            f"profile: {home_root / 'faltoobot'}",
+            "cdp: http://127.0.0.1:9222",
+            "port: 9222",
+        ]
+    )
 
 
 def test_load_skill_returns_exact_skill_content(monkeypatch, tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
     MessageContextInfo,
 )
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
-from neonize.utils.jid import Jid2String
+from neonize.utils.jid import Jid2String, build_jid
 from PIL import Image
 
 from faltoobot.whatsapp import app as whatsapp_app
@@ -50,6 +50,7 @@ def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
         allow_groups=False,
         allowed_chats=allowed_chats,
         bot_name="Faltoo",
+        browser_binary="",
     )
 
 
@@ -150,6 +151,8 @@ class FakePresenceClient:
         self.replies: list[str] = []
         self.reply_ids: list[str] = []
         self.sent_messages: list[str] = []
+        self.sent_images: list[dict[str, str | None]] = []
+        self.sent_documents: list[dict[str, str | None]] = []
         self.downloads = 0
 
     async def send_chat_presence(
@@ -168,6 +171,37 @@ class FakePresenceClient:
 
     async def send_message(self, chat: Neonize_pb2.JID, text: str) -> str:
         self.sent_messages.append(text)
+        return "ok"
+
+    async def send_image(
+        self,
+        chat: Neonize_pb2.JID,
+        file: str | bytes,
+        caption: str | None = None,
+        quoted: object | None = None,
+        **_: object,
+    ) -> str:
+        self.sent_images.append({"file": str(file), "caption": caption})
+        return "ok"
+
+    async def send_document(  # noqa: PLR0913
+        self,
+        chat: Neonize_pb2.JID,
+        file: str | bytes,
+        caption: str | None = None,
+        filename: str | None = None,
+        mimetype: str | None = None,
+        quoted: object | None = None,
+        **_: object,
+    ) -> str:
+        self.sent_documents.append(
+            {
+                "file": str(file),
+                "caption": caption,
+                "filename": filename,
+                "mimetype": mimetype,
+            }
+        )
         return "ok"
 
     async def download_any(self, message: Message, path: str | None = None) -> bytes:
@@ -849,3 +883,77 @@ async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
 
     assert client.sent_messages == []
     assert client.replies == []
+
+
+@pytest.mark.anyio
+async def test_send_text_sends_local_image_markdown_as_media(tmp_path: Path) -> None:
+    client = FakePresenceClient()
+    image = tmp_path / "chart.png"
+    image.write_bytes(png_bytes())
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=f"Here.\n![Chart]({image.name})",
+        workspace=tmp_path,
+    )
+
+    assert client.sent_messages == ["Here."]
+    assert client.sent_images == [{"file": str(image), "caption": "Chart"}]
+
+
+@pytest.mark.anyio
+async def test_send_text_sends_local_pdf_markdown_as_document(tmp_path: Path) -> None:
+    client = FakePresenceClient()
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=f"![Quarterly report]({pdf.name})",
+        workspace=tmp_path,
+    )
+
+    assert client.sent_messages == []
+    assert client.sent_documents == [
+        {
+            "file": str(pdf),
+            "caption": "Quarterly report",
+            "filename": "report.pdf",
+            "mimetype": "application/pdf",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_send_text_keeps_missing_media_markdown_as_text(tmp_path: Path) -> None:
+    client = FakePresenceClient()
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text="Look ![Missing](missing.png)",
+        workspace=tmp_path,
+    )
+
+    assert client.sent_messages == ["Look ![Missing](missing.png)"]
+    assert client.sent_images == []
+    assert client.sent_documents == []
+
+
+@pytest.mark.anyio
+async def test_send_text_keeps_inline_media_markdown_as_text(tmp_path: Path) -> None:
+    client = FakePresenceClient()
+    image = tmp_path / "chart.png"
+    image.write_bytes(png_bytes())
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=f"Here. ![Chart]({image.name})",
+        workspace=tmp_path,
+    )
+
+    assert client.sent_messages == [f"Here. ![Chart]({image.name})"]
+    assert client.sent_images == []

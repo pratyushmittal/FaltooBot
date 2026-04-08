@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any, TypedDict
 from uuid import uuid4
@@ -31,6 +32,7 @@ IMAGE_SUFFIXES = {
     "image/webp": ".webp",
     "image/bmp": ".bmp",
 }
+MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 HELP_TEXT = (
     "Faltoobot is online.\n\n"
     "• Send any message to ask the model\n"
@@ -108,43 +110,117 @@ async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -
         logger.debug("Failed to update chat presence", exc_info=True)
 
 
-async def send_text(  # noqa: C901
+class OutgoingMedia(TypedDict):
+    path: Path
+    caption: str
+    is_image: bool
+
+
+def _outgoing_media(text: str, workspace: Path) -> tuple[str, list[OutgoingMedia]]:
+    medias: list[OutgoingMedia] = []
+    lines: list[str] = []
+
+    for line in text.splitlines():
+        match = MEDIA_MARKDOWN.match(line)
+        if match is None:
+            lines.append(line)
+            continue
+        raw_path = match.group("path").strip()
+        path = Path(raw_path).expanduser()
+        resolved = path if path.is_absolute() else workspace / path
+        resolved = resolved.resolve()
+        if not resolved.is_file():
+            lines.append(line)
+            continue
+        mime_type = mimetypes.guess_type(resolved.name)[0] or ""
+        medias.append(
+            {
+                "path": resolved,
+                "caption": match.group("caption").strip(),
+                "is_image": mime_type.startswith("image/"),
+            }
+        )
+
+    cleaned = "\n".join(lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned, medias
+
+
+async def _send_media(
+    client: NewAClient,
+    *,
+    chat: Neonize_pb2.JID,
+    media: OutgoingMedia,
+    event: MessageEv | None = None,
+) -> None:
+    quoted = event.Message if event is not None else None
+    if media["is_image"]:
+        await client.send_image(
+            chat,
+            str(media["path"]),
+            caption=media["caption"] or None,
+            quoted=quoted,
+        )
+        return
+    await client.send_document(
+        chat,
+        str(media["path"]),
+        caption=media["caption"] or None,
+        filename=media["path"].name,
+        mimetype=mimetypes.guess_type(media["path"].name)[0] or None,
+        quoted=quoted,
+    )
+
+
+async def send_text(  # noqa: C901, PLR0912
     client: NewAClient,
     *,
     chat: Neonize_pb2.JID,
     text: str,
     event: MessageEv | None = None,
+    workspace: Path,
 ) -> None:
-    if len(text) <= MESSAGE_CHUNK_LIMIT:
+    text, medias = _outgoing_media(text, workspace)
+
+    if text and len(text) <= MESSAGE_CHUNK_LIMIT:
         if event is None:
             await client.send_message(chat, text)
         else:
             await client.reply_message(text, event)
-        return
-
-    chunks: list[str] = []
-    current = ""
-    for paragraph in text.split("\n"):
-        candidate = paragraph if not current else f"{current}\n{paragraph}"
-        if len(candidate) <= MESSAGE_CHUNK_LIMIT:
-            current = candidate
-            continue
+    elif text:
+        chunks: list[str] = []
+        current = ""
+        for paragraph in text.split("\n"):
+            candidate = paragraph if not current else f"{current}\n{paragraph}"
+            if len(candidate) <= MESSAGE_CHUNK_LIMIT:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            while len(paragraph) > MESSAGE_CHUNK_LIMIT:
+                chunks.append(paragraph[:MESSAGE_CHUNK_LIMIT])
+                paragraph = paragraph[MESSAGE_CHUNK_LIMIT:]
+            current = paragraph
         if current:
             chunks.append(current)
-            current = ""
-        while len(paragraph) > MESSAGE_CHUNK_LIMIT:
-            chunks.append(paragraph[:MESSAGE_CHUNK_LIMIT])
-            paragraph = paragraph[MESSAGE_CHUNK_LIMIT:]
-        current = paragraph
-    if current:
-        chunks.append(current)
-    if not chunks:
-        chunks = [text[:MESSAGE_CHUNK_LIMIT]]
+        if not chunks:
+            chunks = [text[:MESSAGE_CHUNK_LIMIT]]
 
-    if event is not None:
-        await client.reply_message(chunks.pop(0), event)
-    for chunk in chunks:
-        await client.send_message(chat, chunk)
+        if event is not None:
+            await client.reply_message(chunks.pop(0), event)
+        for chunk in chunks:
+            await client.send_message(chat, chunk)
+
+    # comment: only the first media should quote-reply to the incoming message when there
+    # is no text body, because WhatsApp treats later media as follow-ups in the same reply.
+    for index, media in enumerate(medias):
+        await _send_media(
+            client,
+            chat=chat,
+            media=media,
+            event=event if not text and index == 0 else None,
+        )
 
 
 def _is_no_reply_answer(text: str) -> bool:
@@ -202,6 +278,7 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
     audio = turn["audio"]
 
     messages_json = get_messages(session)
+    workspace = Path(messages_json["workspace"])
     fresh_message_ids = [
         item for item in message_ids if item not in messages_json["message_ids"]
     ]
@@ -259,16 +336,26 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
             attachments=attachments or None,
         )
         if answer and not _is_no_reply_answer(answer):
-            await send_text(client, chat=chat, text=answer, event=event)
+            await send_text(
+                client, chat=chat, text=answer, event=event, workspace=workspace
+            )
     except AudioError as exc:
         logger.info(
             "Failed to transcribe audio %s: %s",
             event.Info.ID if event is not None else "<notify>",
             exc,
         )
-        await send_text(client, chat=chat, text=str(exc), event=event)
+        await send_text(
+            client, chat=chat, text=str(exc), event=event, workspace=workspace
+        )
     except asyncio.CancelledError:
-        await send_text(client, chat=chat, text="interrupted by user", event=event)
+        await send_text(
+            client,
+            chat=chat,
+            text="interrupted by user",
+            event=event,
+            workspace=workspace,
+        )
         raise
     except Exception as exc:
         logger.exception(
@@ -276,7 +363,11 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
             event.Info.ID if event is not None else "<notify>",
         )
         await send_text(
-            client, chat=chat, text=f"Sorry, that failed: {exc}", event=event
+            client,
+            chat=chat,
+            text=f"Sorry, that failed: {exc}",
+            event=event,
+            workspace=workspace,
         )
     finally:
         typing_stop.set()

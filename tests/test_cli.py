@@ -29,6 +29,7 @@ def make_config(tmp_path: Path) -> Config:
         allow_groups=False,
         allowed_chats=set(),
         bot_name="Faltoo",
+        browser_binary="",
     )
 
 
@@ -184,9 +185,7 @@ def test_handle_command_runs_makemigrations(monkeypatch, tmp_path: Path) -> None
     assert calls == ["ran"]
 
 
-def test_run_configure_command_copies_bundled_skills(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_run_configure_command_runs_selected_setup(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
     calls: list[str] = []
 
@@ -260,3 +259,117 @@ def test_run_notify_command_reads_message_from_stdin(monkeypatch) -> None:
     message = seen["message"]
     assert message is not None
     assert "Hello from stdin" in message
+
+
+def test_run_browser_command_installs_playwright_when_binary_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    seen: dict[str, str] = {}
+
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
+    monkeypatch.setattr(
+        cli.browser_runtime,
+        "playwright_chromium_binary",
+        lambda: "/tmp/chromium",
+    )
+    monkeypatch.setattr(
+        cli.browser_runtime,
+        "open_browser",
+        lambda *, root, binary, url=None: seen.update(
+            {"root": str(root), "binary": binary, "url": url or ""}
+        ),
+    )
+
+    cli.run_browser_command(cli.argparse.Namespace(url="https://example.com"), config)
+
+    assert calls == [(sys.executable, "-m", "playwright", "install", "chromium")]
+    assert seen == {
+        "root": str(config.root),
+        "binary": "/tmp/chromium",
+        "url": "https://example.com",
+    }
+    data = cli.merge_config(cli.load_toml(config.config_file))
+    assert data["browser"]["binary"] == "/tmp/chromium"
+
+
+def test_run_configure_command_browser_mode_installs_playwright_chromium(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
+    monkeypatch.setattr(
+        cli.browser_runtime,
+        "playwright_chromium_binary",
+        lambda: "/tmp/chromium",
+    )
+    monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(cli, "_restart_service", lambda config: None)
+
+    cli.run_configure_command(config, mode="browser")
+
+    assert calls == [(sys.executable, "-m", "playwright", "install", "chromium")]
+    data = cli.merge_config(cli.load_toml(config.config_file))
+    assert data["browser"]["binary"] == "/tmp/chromium"
+
+
+def test_run_browser_command_rejects_missing_configured_binary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    config.browser_binary = "/tmp/does-not-exist"
+
+    try:
+        cli.run_browser_command(cli.argparse.Namespace(url=None), config)
+    except SystemExit as exc:
+        assert str(exc) == "Configured browser binary not found: /tmp/does-not-exist"
+    else:
+        raise AssertionError("Expected SystemExit")
+
+
+def test_ensure_configured_runs_missing_browser_setup_for_old_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text('[openai]\nmodel = "gpt-5.4"\n', encoding="utf-8")
+    calls: list[str] = []
+
+    monkeypatch.setattr(cli, "app_root", lambda: config.root)
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(
+        cli,
+        "run_configure_command",
+        lambda config, *, mode=None: calls.append(str(mode)),
+    )
+
+    result = cli._ensure_configured()
+
+    assert calls == ["browser"]
+    assert result == config
+
+
+def test_ensure_configured_skips_present_required_values(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text('[browser]\nbinary = ""\n', encoding="utf-8")
+    calls: list[str] = []
+
+    monkeypatch.setattr(cli, "app_root", lambda: config.root)
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(
+        cli,
+        "run_configure_command",
+        lambda config, *, mode=None: calls.append(str(mode)),
+    )
+
+    result = cli._ensure_configured()
+
+    assert calls == []
+    assert result == config

@@ -28,6 +28,7 @@ from faltoobot.config import (
     Config,
     app_root,
     build_config,
+    default_config,
     ensure_config_file,
     load_toml,
     merge_config,
@@ -35,6 +36,7 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
+from faltoobot.cli import browser as browser_runtime
 from faltoobot import notify_queue
 from faltoobot.openai_login import run_openai_login
 from faltoobot.whatsapp.app import main as run_whatsapp_bot
@@ -348,7 +350,58 @@ def _prompt_allowed_chats(current: list[str]) -> list[str]:
 
 
 def _write_config(data: dict[str, dict[str, Any]], config_file: Path) -> None:
+    config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(render_config(data), encoding="utf-8")
+
+
+def _install_playwright_chromium() -> str:
+    _run_cmd(sys.executable, "-m", "playwright", "install", "chromium")
+    return browser_runtime.playwright_chromium_binary()
+
+
+def _configure_browser(config: Config) -> None:
+    console.print()
+    console.rule("[bold cyan]Browser[/]", style="dim")
+    data = merge_config(load_toml(config.config_file))
+    browser = data["browser"]
+    choice = _prompt_menu(
+        "Browser setup",
+        ["Install Playwright Chromium", "Use custom browser binary"],
+        default=1,
+    )
+    if choice == 1:
+        console.print()
+        console.print("Installing Playwright Chromium...")
+        data["browser"]["binary"] = _install_playwright_chromium()
+    else:
+        data["browser"]["binary"] = _prompt_text(
+            "Browser binary",
+            str(browser.get("binary") or ""),
+        )
+    _write_config(data, config.config_file)
+    console.print(f"[green]✓ Saved[/] [cyan]{config.config_file}[/]")
+
+
+def _ensure_browser_binary(config: Config) -> str:
+    if config.browser_binary:
+        if Path(config.browser_binary).exists():
+            return config.browser_binary
+        raise SystemExit(
+            f"Configured browser binary not found: {config.browser_binary}"
+        )
+    console.print()
+    console.print("[cyan]Installing Playwright Chromium for browser use...[/]")
+    binary = _install_playwright_chromium()
+    data = merge_config(load_toml(config.config_file))
+    data["browser"]["binary"] = binary
+    _write_config(data, config.config_file)
+    return binary
+
+
+def run_browser_command(args: argparse.Namespace, config: Config | None = None) -> None:
+    config = config or build_config()
+    binary = _ensure_browser_binary(config)
+    browser_runtime.open_browser(root=config.root, binary=binary, url=args.url)
 
 
 def _configure_openai(config: Config) -> None:
@@ -441,11 +494,32 @@ def _ensure_configured() -> Config:
     config_file = app_root() / "config.toml"
     had_config = config_file.exists()
     config = build_config()
-    if had_config:
-        return config
-    console.print("[cyan]No config found. Starting configure wizard.[/]")
-    run_configure_command(config, mode="wizard")
+    if not had_config:
+        console.print("[cyan]No config found. Starting configure wizard.[/]")
+        run_configure_command(config, mode="wizard")
+        return build_config()
+    for mode in _missing_config_modes(config_file):
+        run_configure_command(build_config(), mode=mode)
     return build_config()
+
+
+def _missing_config_modes(config_file: Path) -> list[str]:
+    """Return configure modes that are required but missing from the raw config file."""
+    data = load_toml(config_file)
+    missing: list[str] = []
+    for mode, defaults in default_config().items():
+        section = data.get(mode)
+        required_keys = [key for key, value in defaults.items() if value is None]
+        if not required_keys:
+            continue
+        if not isinstance(section, dict):
+            missing.append(mode)
+            continue
+        for key in required_keys:
+            if key not in section:
+                missing.append(mode)
+                break
+    return missing
 
 
 def show_logs(config: Config | None = None) -> None:
@@ -498,16 +572,19 @@ def run_configure_command(
     if mode is None:
         choice = _prompt_menu(
             "Configure",
-            ["Wizard", "WhatsApp", "Codex / OpenAI"],
+            ["Wizard", "WhatsApp", "Codex / OpenAI", "Browser"],
             default=1,
         )
-        mode = {1: "wizard", 2: "whatsapp", 3: "openai"}[choice]
+        mode = {1: "wizard", 2: "whatsapp", 3: "openai", 4: "browser"}[choice]
 
     if mode == "wizard":
         _configure_openai(config)
         _configure_whatsapp(build_config())
+        _configure_browser(build_config())
     elif mode == "whatsapp":
         _configure_whatsapp(config)
+    elif mode == "browser":
+        _configure_browser(config)
     elif mode == "openai":
         _configure_openai(config)
     else:  # comment: only internal callers choose the configure mode.
@@ -539,6 +616,8 @@ def parse_args() -> argparse.Namespace:
     sub.add_parser("whatsapp", help="install and run the WhatsApp service")
 
     sub.add_parser("logs", help="show logs in follow mode")
+    browser = sub.add_parser("browser", help="launch a persistent browser with CDP")
+    browser.add_argument("url", nargs="?", help="optional URL to open")
     notify = sub.add_parser("notify", help="enqueue a notification for a chat")
     notify.add_argument("chat_key", help="chat key to notify")
     notify.add_argument(
@@ -566,6 +645,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_whatsapp_command(config)
     elif args.command == "logs":
         show_logs(config)
+    elif args.command == "browser":
+        run_browser_command(args, config)
     elif args.command == "notify":
         run_notify_command(args)
     elif args.command == "configure":

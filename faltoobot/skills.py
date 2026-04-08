@@ -3,7 +3,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-from faltoobot.config import app_root
+from faltoobot.config import app_root, build_config
+from faltoobot.cli import browser as browser_runtime
 
 
 class Skill(TypedDict):
@@ -126,12 +127,26 @@ def _available_skills_text(skills: list[Skill]) -> str:
     )
 
 
+def _skill_context(chat_key: str) -> dict[str, str]:
+    config = build_config()
+    return {
+        "chat_key": chat_key,
+        "browser_binary": config.browser_binary,
+        "browser_profile": str(browser_runtime.browser_profile_dir(config.root)),
+        "cdp_url": f"http://127.0.0.1:{browser_runtime.CDP_PORT}",
+        "cdp_port": str(browser_runtime.CDP_PORT),
+    }
+
+
 def load_skill(workspace: Path, skill_name: str, *, chat_key: str) -> str:
     skills = load_skills(workspace, chat_key=chat_key)
     by_name = {_skill_key(skill["name"]): skill for skill in skills}
     skill = by_name.get(_skill_key(skill_name))
     if skill is not None:
-        return skill["content"].replace("{chat_key}", chat_key)
+        content = skill["content"]
+        for key, value in _skill_context(chat_key).items():
+            content = content.replace(f"{{{key}}}", value)
+        return content
 
     available = _available_skills_text(skills)
     return (

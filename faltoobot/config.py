@@ -31,6 +31,7 @@ class Config:
     allow_groups: bool
     allowed_chats: set[str]
     bot_name: str
+    browser_binary: str
 
 
 def app_root() -> Path:
@@ -48,6 +49,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
         "ui": {"theme": ""},
+        "browser": {"binary": None},
         "bot": {
             "allow_groups": False,
             "allowed_chats": [],
@@ -60,6 +62,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     defaults = default_config()
     openai = as_dict(data.get("openai"))
     ui = as_dict(data.get("ui"))
+    browser = as_dict(data.get("browser"))
     bot = as_dict(data.get("bot"))
     return {
         "openai": {
@@ -75,6 +78,9 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             ),
         },
         "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
+        "browser": {
+            "binary": as_str(browser.get("binary"), ""),
+        },
         "bot": {
             "allow_groups": as_bool(
                 bot.get("allow_groups"), defaults["bot"]["allow_groups"]
@@ -114,6 +120,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     bot = data["bot"]
     openai = data["openai"]
     ui = data["ui"]
+    browser = data["browser"]
     allowed_chats = (
         bot["allowed_chats"] if isinstance(bot["allowed_chats"], list) else []
     )
@@ -132,6 +139,9 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "",
             "[ui]",
             f"theme = {quote(str(ui['theme']))}",
+            "",
+            "[browser]",
+            f"binary = {quote(str(browser['binary']))}",
             "",
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
@@ -203,6 +213,7 @@ def build_config() -> Config:
     data = merge_config(load_toml(path))
     openai = data["openai"]
     bot = data["bot"]
+    browser = data["browser"]
     return Config(
         home=Path.home(),
         root=root,
@@ -221,6 +232,7 @@ def build_config() -> Config:
         allow_groups=bool(bot["allow_groups"]),
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
         bot_name=str(bot["bot_name"]),
+        browser_binary=str(browser["binary"]),
     )
 
 
