@@ -1,10 +1,7 @@
 import asyncio
-import base64
 import hashlib
 import json
-import mimetypes
 from contextlib import contextmanager
-from io import BytesIO
 from pathlib import Path
 from threading import Lock, RLock
 from collections.abc import Sequence
@@ -13,7 +10,6 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI
 from openai.types.responses import Response, ResponseOutputMessage, ResponseOutputText
-from PIL import Image
 
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.openai_auth import uses_chatgpt_oauth
@@ -24,16 +20,14 @@ from faltoobot.gpt_utils import (
     Tool,
     get_streaming_reply,
 )
+from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.skills import get_load_skill_tool
-from faltoobot.tools import get_run_shell_call_tool
+from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 
 MESSAGES_FILE = "messages.json"
 LAST_USED_FILE = "last_used"
 WORKSPACE_DIR = "workspace"
-MAX_IMAGE_WIDTH = 1600
-MAX_IMAGE_HEIGHT = 1200
-_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 _SESSION_LOCKS: dict[str, RLock] = {}
 _SESSION_LOCKS_GUARD = Lock()
 _LAST_USED_LOCK = Lock()
@@ -269,75 +263,6 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
         _write_json_atomic(_messages_path(chat_key, session_id), messages_json)
 
 
-def _attachment_path(source: Attachment, workspace: Path) -> Path:
-    path = (
-        source if isinstance(source, Path) else Path(str(source).strip()).expanduser()
-    )
-    return path if path.is_absolute() else workspace / path
-
-
-def _is_image_path(path: Path) -> bool:
-    mime_type, _ = mimetypes.guess_type(path.name)
-    return path.is_file() and (
-        (mime_type or "").startswith("image/")
-        or path.suffix.lower() in _IMAGE_EXTENSIONS
-    )
-
-
-def _fitted_image_size(width: int, height: int) -> tuple[int, int]:
-    scale = min(MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height, 1)
-    return max(1, int(width * scale)), max(1, int(height * scale))
-
-
-def _resized_image_upload(path: Path) -> BytesIO | None:
-    with Image.open(path) as image:
-        width, height = image.size
-        target = _fitted_image_size(width, height)
-        if target == (width, height):
-            return None
-        resized = image.resize(target, Image.Resampling.LANCZOS)
-        buffer = BytesIO()
-        format_name = "JPEG" if image.format in {"JPEG", "JPG"} else "PNG"
-        suffix = ".jpg" if format_name == "JPEG" else ".png"
-        resized.save(buffer, format=format_name)
-    buffer.seek(0)
-    buffer.name = f"{path.stem}-{target[0]}x{target[1]}{suffix}"
-    return buffer
-
-
-async def _upload_attachment(
-    client: AsyncOpenAI, workspace: Path, source: Attachment
-) -> dict[str, Any]:
-    path = _attachment_path(source, workspace)
-    if not path.exists():
-        raise ValueError(f"Attachment not found: {source}")
-    if not _is_image_path(path):
-        raise ValueError(f"Unsupported attachment: {source}")
-    if upload := _resized_image_upload(path):
-        uploaded = await client.files.create(file=upload, purpose="vision")
-    else:
-        with path.open("rb") as handle:
-            uploaded = await client.files.create(file=handle, purpose="vision")
-    return {"type": "input_image", "file_id": uploaded.id, "detail": "auto"}
-
-
-def _inline_image_item(workspace: Path, source: Attachment) -> dict[str, Any]:
-    path = _attachment_path(source, workspace)
-    if not path.exists():
-        raise ValueError(f"Attachment not found: {source}")
-    if not _is_image_path(path):
-        raise ValueError(f"Unsupported attachment: {source}")
-    upload = _resized_image_upload(path)
-    if upload is None:
-        data = path.read_bytes()
-        mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
-    else:
-        data = upload.getvalue()
-        mime_type = mimetypes.guess_type(upload.name)[0] or "image/png"
-    encoded = base64.b64encode(data).decode("ascii")
-    return {"type": "input_image", "image_url": f"data:{mime_type};base64,{encoded}"}
-
-
 async def _upload_attachments(
     attachments: Sequence[Attachment],
     workspace: Path,
@@ -346,12 +271,14 @@ async def _upload_attachments(
     if uses_chatgpt_oauth(config):
         # comment: ChatGPT Codex OAuth requests go straight to chatgpt.com responses, so
         # platform file uploads are unavailable. Inline images keep attachments working there.
-        return [_inline_image_item(workspace, source) for source in attachments]
+        return [
+            inline_image_item(workspace, source).to_dict() for source in attachments
+        ]
 
     client = AsyncOpenAI(api_key=config.openai_api_key)
     try:
         return [
-            await _upload_attachment(client, workspace, source)
+            (await upload_attachment(client, workspace, source)).to_dict()
             for source in attachments
         ]
     finally:
@@ -428,7 +355,10 @@ async def get_answer_streaming(
             messages_json["message_ids"].append(message_id)
         set_messages(session, messages_json)
 
-        tools: list[Tool] = [get_run_shell_call_tool(Path(messages_json["workspace"]))]
+        tools: list[Tool] = [
+            get_run_shell_call_tool(Path(messages_json["workspace"])),
+            get_load_image_tool(Path(messages_json["workspace"])),
+        ]
         available_skills, load_skill_tool = get_load_skill_tool(
             Path(messages_json["workspace"]),
             chat_key=session[0],

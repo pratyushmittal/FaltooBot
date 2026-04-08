@@ -32,6 +32,7 @@ def _config(tmp_path: Path, *, api_key: str, oauth: str) -> Config:
         allow_groups=False,
         allowed_chats=set(),
         bot_name="Faltoo",
+        browser_binary="",
     )
 
 

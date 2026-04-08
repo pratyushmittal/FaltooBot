@@ -57,6 +57,7 @@ def make_config(tmp_path: Path) -> Config:
         allow_groups=False,
         allowed_chats=set(),
         bot_name="Faltoo",
+        browser_binary="",
     )
 
 

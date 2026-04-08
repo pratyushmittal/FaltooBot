@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 import time
 from enum import Enum
@@ -13,6 +14,7 @@ from openai.types.responses import (
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
+    ResponseInputImage,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseReasoningTextDeltaEvent,
@@ -620,3 +622,39 @@ async def test_get_streaming_reply_adds_codex_session_headers_for_oauth(
         "session_id": "session-123",
     }
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_tool_result_keeps_structured_image_output() -> None:
+    async def load_image(image_path: str) -> list[ResponseInputImage]:
+        """Load image files such as jpg or png. Useful for seeing screenshots and creatives.
+
+        Args:
+            - image_path: relative or absolute path of the image
+        """
+        return [
+            ResponseInputImage(
+                type="input_image",
+                image_url="data:image/png;base64,abc",
+                detail="auto",
+            )
+        ]
+
+    result = await gpt_utils._tool_result(
+        cast(Any, {"load_image": load_image}),
+        {
+            "type": "function_call",
+            "name": "load_image",
+            "arguments": json.dumps({"image_path": "cat.png"}),
+            "call_id": "call_1",
+        },
+    )
+
+    assert result.type == "function_call_output"
+    assert isinstance(result.output, list)
+    assert len(result.output) == 1
+    image = result.output[0]
+    assert isinstance(image, ResponseInputImage)
+    assert image.type == "input_image"
+    assert image.image_url == "data:image/png;base64,abc"
+    assert image.detail == "auto"
