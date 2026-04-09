@@ -9,6 +9,7 @@ from tree_sitter import Language
 import tree_sitter_lua
 import tree_sitter_typescript
 from textual import events
+from textual.color import Color
 from textual.binding import Binding
 from textual.strip import Strip
 from textual.widgets import TabbedContent, TabPane, TextArea
@@ -35,6 +36,13 @@ if TYPE_CHECKING:
 TAB_SWITCH_COOLDOWN = 0.2
 DIFF_MODE = "diff"
 ADD_MODE = "add"
+GUTTER_HIGHLIGHT_BLEND = 0.35
+GUTTER_HIGHLIGHT_COLORS = {
+    "removed": Color.parse("#b56f78"),
+    "added": Color.parse("#6fa06f"),
+    "staged": Color.parse("#6f8fb8"),
+    "reviewed": Color.parse("#c3a162"),
+}
 
 
 class DisplayRowContext(TypedDict):
@@ -66,6 +74,7 @@ class ReviewDiffView(TextArea):
         ),
         Binding("V", "review_select_line", "Select Line", priority=True, show=True),
         Binding("W", "review_toggle_wrap", "Wrap", priority=True, show=True),
+        Binding("H", "review_toggle_line_highlights", "Highlights", priority=True, show=True),
         Binding("n", "review_jump_next", "Next Search", priority=True, show=True),
         Binding("N", "review_jump_previous", "Prev Search", priority=True, show=True),
         Binding("*", "review_search_word_under_cursor", priority=True, show=False),
@@ -87,12 +96,14 @@ class ReviewDiffView(TextArea):
         **kwargs,
     ) -> None:
         requested_language = kwargs.pop("language", None)
+        line_highlights = kwargs.pop("line_highlights", False)
         self.file_path = file_path
         self.review_view = review_view
         self.diff = diff
         self.mode = DIFF_MODE
         self.visible_diff_lines: list[int] = []
         self.last_tab_switch_at = 0.0
+        self.line_highlights = line_highlights
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
         self.missing_language_package: str | None = None
@@ -158,10 +169,29 @@ class ReviewDiffView(TextArea):
         absolute_y = self.scroll_offset[1] + y
         if (context := self._display_row_context(absolute_y)) is None:
             return strip
+        highlight = _line_highlight_style(
+            self,
+            context["diff_line"],
+            base_style=Style(
+                bgcolor=(
+                    None
+                    if (base_bg := _dominant_background(strip.crop(self.gutter_width))) is None
+                    else base_bg.rich_color
+                )
+            ),
+        )
+        strip = _apply_line_highlight(
+            strip.crop(self.gutter_width),
+            highlight,
+            preserve_special_backgrounds=True,
+        )
         if self.show_line_numbers:
-            content = strip.crop(self.gutter_width)
-            gutter = self._gutter_strip(context)
-            strip = Strip.join([gutter, content])
+            gutter = _apply_line_highlight(
+                self._gutter_strip(context),
+                highlight,
+                preserve_special_backgrounds=False,
+            )
+            strip = Strip.join([gutter, strip])
 
         if context["line_type"] != "-":
             return strip
@@ -294,7 +324,14 @@ class ReviewDiffView(TextArea):
         self._load_diff_text()
 
     def action_review_toggle_wrap(self) -> None:
-        self.soft_wrap = not self.soft_wrap
+        self.review_view.set_display_preferences(
+            soft_wrap=not self.review_view.soft_wrap_enabled,
+        )
+
+    def action_review_toggle_line_highlights(self) -> None:
+        self.review_view.set_display_preferences(
+            line_highlights=not self.review_view.line_highlights,
+        )
 
     def action_review_scroll_home(self) -> None:
         self.move_cursor((0, 0), record_width=False)
@@ -548,6 +585,49 @@ def _diff_text(diff: Diff, visible_diff_lines: list[int]) -> str:
     return "\n".join(diff[index]["text"] for index in visible_diff_lines)
 
 
+def _dominant_background(strip: Strip) -> Color | None:
+    weighted_backgrounds: dict[object | None, int] = {}
+    for segment in strip._segments:
+        if segment.control:
+            continue
+        background = None if segment.style is None else segment.style.bgcolor
+        weighted_backgrounds[background] = (
+            weighted_backgrounds.get(background, 0) + segment.cell_length
+        )
+    if not weighted_backgrounds:
+        return None
+    background = max(weighted_backgrounds, key=weighted_backgrounds.get)
+    if background is None:
+        return None
+    return Color.from_rich_color(background)
+
+
+def _apply_line_highlight(
+    strip: Strip,
+    style: Style,
+    *,
+    preserve_special_backgrounds: bool,
+) -> Strip:
+    if style.bgcolor is None:
+        return strip
+    base_bg = _dominant_background(strip)
+    segments = []
+    for segment in strip._segments:
+        current = Style() if segment.style is None else segment.style
+        if segment.control:
+            segments.append(segment)
+            continue
+        if preserve_special_backgrounds and current.bgcolor is not None and (
+            base_bg is None or current.bgcolor != base_bg.rich_color
+        ):
+            segments.append(segment)
+            continue
+        segments.append(
+            Segment(segment.text, current + Style(bgcolor=style.bgcolor), segment.control)
+        )
+    return Strip(segments, strip.cell_length)
+
+
 def _line_selection(
     view: ReviewDiffView,
     anchor_line: int,
@@ -588,6 +668,39 @@ def _get_code_for_review_submission(diff: Diff, start: int, end: int) -> str:
             else line["text"]
         )
         for line in diff[start : end + 1]
+    )
+
+
+def _style_background(style: Style) -> Color | None:
+    return None if style.bgcolor is None else Color.from_rich_color(style.bgcolor)
+
+
+def _gutter_target_color(view: ReviewDiffView, diff_line: int) -> Color | None:
+    if diff_line in _commented_lines(view):
+        return GUTTER_HIGHLIGHT_COLORS["reviewed"]
+    line = view.diff[diff_line]
+    if line["is_staged"] and line["type"] in {"+", "-"}:
+        return GUTTER_HIGHLIGHT_COLORS["staged"]
+    if line["type"] == "-":
+        return GUTTER_HIGHLIGHT_COLORS["removed"]
+    if line["type"] == "+":
+        return GUTTER_HIGHLIGHT_COLORS["added"]
+    return None
+
+
+def _line_highlight_style(
+    view: ReviewDiffView,
+    diff_line: int,
+    *,
+    base_style: Style | None = None,
+) -> Style:
+    if not view.line_highlights:
+        return Style()
+    if (target := _gutter_target_color(view, diff_line)) is None:
+        return Style()
+    base = _style_background(base_style or Style()) or _style_background(view.rich_style) or Color.parse("#232323")
+    return Style(
+        bgcolor=base.blend(target, GUTTER_HIGHLIGHT_BLEND).rich_color,
     )
 
 

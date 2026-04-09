@@ -1,3 +1,5 @@
+from rich.style import Style
+from textual.color import Color
 import subprocess
 from pathlib import Path
 
@@ -14,7 +16,13 @@ from faltoobot.faltoochat.editor_utils import (
     previous_modification,
     word_under_cursor,
 )
-from faltoobot.faltoochat.widgets.review_diff import ReviewDiffView, _review_range
+from faltoobot.faltoochat.widgets.review_diff import (
+    GUTTER_HIGHLIGHT_BLEND,
+    GUTTER_HIGHLIGHT_COLORS,
+    ReviewDiffView,
+    _line_highlight_style,
+    _review_range,
+)
 
 
 EXPECTED_GUTTER_WIDTH = 6
@@ -90,6 +98,70 @@ def test_selected_patch_stages_insertions_at_the_right_location(tmp_path: Path) 
         "    }\n"
     )
 
+
+
+
+def test_review_diff_highlights_tint_the_full_line_background() -> None:
+    viewer = ReviewDiffView(
+        [{"is_staged": False, "type": "+", "text": "added"}],
+        file_path=Path("alpha.py"),
+        review_view=review_view_stub(),  # type: ignore[arg-type]
+        show_line_numbers=True,
+    )
+    viewer.line_highlights = True
+    base_style = Style(bgcolor="#1f1f1f")
+
+    style = _line_highlight_style(viewer, 0, base_style=base_style)
+
+    assert style.bgcolor == Color.parse("#1f1f1f").blend(
+        GUTTER_HIGHLIGHT_COLORS["added"],
+        GUTTER_HIGHLIGHT_BLEND,
+    ).rich_color
+
+
+def test_review_diff_highlight_colors_match_status_priority() -> None:
+    review_view = review_view_stub()
+    review_view.reviews = [
+        {
+            "filename": Path("alpha.py"),
+            "line_number_start": 1,
+            "line_number_end": 1,
+        }
+    ]
+    viewer = ReviewDiffView(
+        [
+            {"is_staged": False, "type": "+", "text": "reviewed"},
+            {"is_staged": False, "type": "-", "text": "removed"},
+            {"is_staged": False, "type": "+", "text": "added"},
+            {"is_staged": True, "type": "+", "text": "staged"},
+        ],
+        file_path=Path("alpha.py"),
+        review_view=review_view,  # type: ignore[arg-type]
+    )
+    viewer.line_highlights = True
+    base_style = Style(color="#808080", bgcolor="#1f1f1f")
+
+    reviewed = _line_highlight_style(viewer, 0, base_style=base_style)
+    removed = _line_highlight_style(viewer, 1, base_style=base_style)
+    added = _line_highlight_style(viewer, 2, base_style=base_style)
+    staged = _line_highlight_style(viewer, 3, base_style=base_style)
+
+    assert reviewed.bgcolor == Color.parse("#1f1f1f").blend(
+        GUTTER_HIGHLIGHT_COLORS["reviewed"],
+        GUTTER_HIGHLIGHT_BLEND,
+    ).rich_color
+    assert removed.bgcolor == Color.parse("#1f1f1f").blend(
+        GUTTER_HIGHLIGHT_COLORS["removed"],
+        GUTTER_HIGHLIGHT_BLEND,
+    ).rich_color
+    assert added.bgcolor == Color.parse("#1f1f1f").blend(
+        GUTTER_HIGHLIGHT_COLORS["added"],
+        GUTTER_HIGHLIGHT_BLEND,
+    ).rich_color
+    assert staged.bgcolor == Color.parse("#1f1f1f").blend(
+        GUTTER_HIGHLIGHT_COLORS["staged"],
+        GUTTER_HIGHLIGHT_BLEND,
+    ).rich_color
 
 def test_review_diff_gutter_width_reserves_space_for_diff_symbol() -> None:
     viewer = ReviewDiffView(

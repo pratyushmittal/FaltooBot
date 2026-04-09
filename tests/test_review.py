@@ -313,6 +313,227 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
         assert viewer.soft_wrap is False
 
 
+
+@pytest.mark.anyio
+async def test_review_diff_wrap_and_highlight_toggles_apply_app_wide(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        beta_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "beta.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        alpha_viewer = alpha_pane.query_one(ReviewDiffView)
+        beta_viewer = beta_pane.query_one(ReviewDiffView)
+        alpha_viewer.focus()
+        await pilot.pause(0)
+
+        assert alpha_viewer.soft_wrap is False
+        assert beta_viewer.soft_wrap is False
+        assert alpha_viewer.line_highlights is False
+        assert beta_viewer.line_highlights is False
+
+        await pilot.press("W", "H")
+        await pilot.pause(0)
+
+        assert alpha_viewer.soft_wrap is True
+        assert beta_viewer.soft_wrap is True
+        assert alpha_viewer.line_highlights is True
+        assert beta_viewer.line_highlights is True
+
+        review = app.query_one(ReviewView)
+        await review.open_file(Path("gamma.py"))
+        await wait_for_condition(
+            lambda: any(
+                pane._title == "gamma.py"
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+            )
+        )
+        gamma_pane = next(
+            pane
+            for pane in app.query_one("#review-tabs", TabbedContent).query(TabPane)
+            if pane._title == "gamma.py"
+        )
+        gamma_viewer = gamma_pane.query_one(ReviewDiffView)
+        assert gamma_viewer.soft_wrap is True
+        assert gamma_viewer.line_highlights is True
+
+
+@pytest.mark.anyio
+async def test_review_diff_highlights_tint_rendered_line_background(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.pause(0)
+
+        before = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(2).crop(viewer.gutter_width, 80)._segments
+        ]
+
+        await pilot.press("H")
+        await pilot.pause(0)
+
+        after = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(2).crop(viewer.gutter_width, 80)._segments
+        ]
+        gutter_after = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(2).crop(0, viewer.gutter_width)._segments
+        ]
+
+        assert before != after
+        assert gutter_after
+        assert after
+        assert max(gutter_after, key=gutter_after.count) == max(after, key=after.count)
+
+
+@pytest.mark.anyio
+async def test_review_diff_highlights_cover_empty_added_line_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    alpha = workspace / "alpha.py"
+    alpha.write_text("start\nend\n", encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
+    alpha.write_text("start\n\nend\n", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.press("H")
+        await pilot.pause(0)
+
+        blank_diff_line = next(
+            index
+            for index, line in enumerate(viewer.diff)
+            if line["type"] == "+" and line["text"] == ""
+        )
+        blank_display_line = viewer._display_line(blank_diff_line)
+        viewer.move_cursor((blank_display_line, 0), record_width=False)
+        await pilot.pause(0)
+
+        gutter = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(blank_display_line)
+            .crop(0, viewer.gutter_width)
+            ._segments
+        ]
+        body = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(blank_display_line)
+            .crop(viewer.gutter_width, 80)
+            ._segments
+        ]
+
+        assert gutter
+        assert body
+        assert body[-1] == gutter[0]
+
+
+@pytest.mark.anyio
+async def test_review_diff_highlights_keep_cursor_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        viewer.move_cursor((2, 2), record_width=False)
+        await pilot.pause(0)
+
+        before = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(2).crop(viewer.gutter_width, 80)._segments
+        ]
+        before_line_bg = max(before, key=before.count)
+        cursor_bg = next(bg for bg in before if bg != before_line_bg)
+
+        await pilot.press("H")
+        await pilot.pause(0)
+
+        after = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(2).crop(viewer.gutter_width, 80)._segments
+        ]
+
+        assert cursor_bg in after
+
+
+@pytest.mark.anyio
+async def test_review_diff_binding_toggles_line_highlights(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.pause(0)
+
+        assert viewer.line_highlights is False
+        await pilot.press("H")
+        await pilot.pause(0)
+        assert viewer.line_highlights is True
+        await pilot.press("H")
+        await pilot.pause(0)
+        assert viewer.line_highlights is False
+
+
 @pytest.mark.anyio
 async def test_review_wrap_keeps_line_numbers_on_real_lines(
     tmp_path: Path,

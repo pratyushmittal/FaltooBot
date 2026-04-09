@@ -145,6 +145,8 @@ class ReviewView(TabPane):
         self.extra_paths: list[Path] = []
         self.search_term = ""
         self.search_whole_word = False
+        self.soft_wrap_enabled = False
+        self.line_highlights = False
 
     def compose(self) -> ComposeResult:
         with TabbedContent(initial=NO_CHANGES_PANE_ID, id="review-tabs"):
@@ -161,7 +163,8 @@ class ReviewView(TabPane):
                     review_view=self,
                     language=LANGUAGES_BY_SUFFIX.get(path.suffix.lower()),
                     theme=_syntax_highlight_theme(self.app.theme),
-                    soft_wrap=False,
+                    soft_wrap=self.soft_wrap_enabled,
+                    line_highlights=self.line_highlights,
                     read_only=True,
                     show_cursor=True,
                     show_line_numbers=True,
@@ -170,6 +173,23 @@ class ReviewView(TabPane):
                 id=_get_tab_id(path),
             )
         )
+
+    def set_display_preferences(
+        self,
+        *,
+        soft_wrap: bool | None = None,
+        line_highlights: bool | None = None,
+    ) -> None:
+        if soft_wrap is not None:
+            self.soft_wrap_enabled = soft_wrap
+        if line_highlights is not None:
+            self.line_highlights = line_highlights
+        for viewer in self.query(ReviewDiffView):
+            if soft_wrap is not None:
+                viewer.soft_wrap = soft_wrap
+            if line_highlights is not None:
+                viewer.line_highlights = line_highlights
+                viewer.refresh()
 
     def add_review(self, review: Review) -> None:
         result = upsert_review(self.reviews, review)
