@@ -103,6 +103,7 @@ def test_get_session_creates_messages_json_and_workspace(
     assert payload["messages"] == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
+    assert (Path(payload["workspace"]) / "AGENTS.md").exists()
     assert (
         tmp_path / ".faltoobot" / "sessions" / chat_key / session[1] / "messages.json"
     ).exists()

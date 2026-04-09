@@ -222,7 +222,10 @@ def get_session(
         if workspace is not None:
             messages_json["workspace"] = str(target_workspace)
         root.mkdir(parents=True, exist_ok=True)
-        Path(messages_json["workspace"]).mkdir(parents=True, exist_ok=True)
+        workspace_path = Path(messages_json["workspace"])
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
+        (workspace_path / "AGENTS.md").touch(exist_ok=True)
         _write_json_atomic(path, messages_json)
         _set_last_used(chat_key, session_id)
     return session
