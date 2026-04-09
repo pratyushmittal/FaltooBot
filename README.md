@@ -195,8 +195,10 @@ On WhatsApp:
 In terminal chat:
 
 ```text
-/tree
+/memory
 /reset
+/status
+/tree
 ```
 
 `faltoochat` supports image input, queued prompts while answering, and `Shift+Enter` for multiline input. Paste an image file path or use `Ctrl+V` to attach the current macOS clipboard image. WhatsApp chats now also support incoming image messages, including captioned images, image-only prompts, and multi-image albums.

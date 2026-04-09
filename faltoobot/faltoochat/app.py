@@ -21,7 +21,12 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from faltoobot import notify_queue, sessions
-from faltoobot.config import load_textual_theme, save_textual_theme
+from faltoobot.config import (
+    build_config,
+    config_status_text,
+    load_textual_theme,
+    save_textual_theme,
+)
 from faltoobot.faltoochat.terminal import (
     open_in_default_editor,
     textual_theme_from_terminal,
@@ -49,6 +54,7 @@ AUTO_SCROLL_RESUME_LINES = 3
 SLASH_COMMANDS = {
     "/memory": "show things you asked me to remember",
     "/reset": "start a fresh session",
+    "/status": "show bot status",
     "/tree": "open the current session messages file",
 }
 
@@ -583,6 +589,9 @@ class Composer(TextArea):
                 self.app.workspace = workspace
                 await self.app.load_messages()
                 await self.app.queue().refresh_queue()
+                return True
+            case "/status":
+                await self.app.show_local_answer(config_status_text(build_config()))
                 return True
             case _:
                 return False

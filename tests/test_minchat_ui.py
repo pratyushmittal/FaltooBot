@@ -108,6 +108,7 @@ async def test_minchat_shows_slash_command_suggestions(
         assert [str(option.prompt) for option in option_list.options] == [
             "/memory — show things you asked me to remember",
             "/reset — start a fresh session",
+            "/status — show bot status",
             "/tree — open the current session messages file",
         ]
 
@@ -179,6 +180,27 @@ async def test_minchat_memory_command_shows_saved_memory(
         transcript = app.query_one("#transcript")
         blocks = [block for block in transcript.query(Markdown)]
         assert any("Uses uv instead of pip" in block._markdown for block in blocks)
+
+
+@pytest.mark.anyio
+async def test_minchat_status_command_shows_config_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/status")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        assert any("Faltoobot status" in block._markdown for block in blocks)
+        assert any("openai_model" in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio
