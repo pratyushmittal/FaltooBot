@@ -415,6 +415,61 @@ async def test_review_diff_highlights_tint_rendered_line_background(
 
 
 @pytest.mark.anyio
+async def test_review_multiline_selection_keeps_gutter_and_padding_highlights(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    alpha = workspace / "alpha.md"
+    alpha.write_text(
+        "first line\nsecond line with enough text to leave only a little padding\nthird line\n",
+        encoding="utf-8",
+    )
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.md"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.press("H")
+        await pilot.pause(0)
+
+        before_gutter = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(1).crop(0, viewer.gutter_width)._segments
+        ]
+        before_body = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(1).crop(viewer.gutter_width, 80)._segments
+        ]
+
+        viewer.selection = type(viewer.selection)(
+            (0, 0),
+            (2, len(viewer.document.get_line(2))),
+        )
+        await pilot.pause(0)
+
+        selection_bg = viewer._theme.selection_style.bgcolor
+        after_gutter = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(1).crop(0, viewer.gutter_width)._segments
+        ]
+        after_body = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(1).crop(viewer.gutter_width, 80)._segments
+        ]
+
+        assert selection_bg in after_body
+        assert after_gutter == before_gutter
+        assert after_body[-1] == before_body[-1]
+
+
+@pytest.mark.anyio
 async def test_review_diff_highlights_cover_empty_added_line_body(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

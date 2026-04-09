@@ -169,27 +169,23 @@ class ReviewDiffView(TextArea):
         absolute_y = self.scroll_offset[1] + y
         if (context := self._display_row_context(absolute_y)) is None:
             return strip
+        base_style = _content_base_style(self, context["document_line"])
         highlight = _line_highlight_style(
             self,
             context["diff_line"],
-            base_style=Style(
-                bgcolor=(
-                    None
-                    if (base_bg := _dominant_background(strip.crop(self.gutter_width))) is None
-                    else base_bg.rich_color
-                )
-            ),
+            base_style=base_style,
         )
         strip = _apply_line_highlight(
             strip.crop(self.gutter_width),
             highlight,
-            preserve_special_backgrounds=True,
+            base_background=_style_background(base_style),
         )
         if self.show_line_numbers:
+            gutter_style = _gutter_base_style(self, context["document_line"])
             gutter = _apply_line_highlight(
                 self._gutter_strip(context),
                 highlight,
-                preserve_special_backgrounds=False,
+                base_background=_style_background(gutter_style),
             )
             strip = Strip.join([gutter, strip])
 
@@ -225,14 +221,7 @@ class ReviewDiffView(TextArea):
         }
 
     def _gutter_strip(self, context: DisplayRowContext) -> Strip:
-        theme = self._theme
-        if theme and self.cursor_location[0] == context["document_line"]:
-            gutter_style = theme.cursor_line_gutter_style
-        elif theme:
-            gutter_style = theme.gutter_style
-        else:
-            gutter_style = self.rich_style
-
+        gutter_style = _gutter_base_style(self, context["document_line"])
         gutter_width_no_margin = self.gutter_width - 2
         gutter_text = "" if context["line_number"] is None else str(context["line_number"])
         line_width = max(0, gutter_width_no_margin - 1)
@@ -585,47 +574,43 @@ def _diff_text(diff: Diff, visible_diff_lines: list[int]) -> str:
     return "\n".join(diff[index]["text"] for index in visible_diff_lines)
 
 
-def _dominant_background(strip: Strip) -> Color | None:
-    weighted_backgrounds: dict[object | None, int] = {}
-    for segment in strip._segments:
-        if segment.control:
-            continue
-        background = None if segment.style is None else segment.style.bgcolor
-        weighted_backgrounds[background] = (
-            weighted_backgrounds.get(background, 0) + segment.cell_length
-        )
-    if not weighted_backgrounds:
-        return None
-    background = max(weighted_backgrounds, key=weighted_backgrounds.get)
-    if background is None:
-        return None
-    return Color.from_rich_color(background)
-
-
 def _apply_line_highlight(
     strip: Strip,
     style: Style,
     *,
-    preserve_special_backgrounds: bool,
+    base_background: Color | None,
 ) -> Strip:
     if style.bgcolor is None:
         return strip
-    base_bg = _dominant_background(strip)
     segments = []
     for segment in strip._segments:
         current = Style() if segment.style is None else segment.style
-        if segment.control:
-            segments.append(segment)
-            continue
-        if preserve_special_backgrounds and current.bgcolor is not None and (
-            base_bg is None or current.bgcolor != base_bg.rich_color
-        ):
+        background = None if current.bgcolor is None else Color.from_rich_color(current.bgcolor)
+        if segment.control or background != base_background:
             segments.append(segment)
             continue
         segments.append(
             Segment(segment.text, current + Style(bgcolor=style.bgcolor), segment.control)
         )
     return Strip(segments, strip.cell_length)
+
+
+def _content_base_style(view: ReviewDiffView, document_line: int) -> Style:
+    theme = view._theme
+    if theme and view.highlight_cursor_line and view.cursor_location[0] == document_line:
+        return theme.cursor_line_style
+    if theme and theme.base_style is not None:
+        return theme.base_style
+    return view.rich_style
+
+
+def _gutter_base_style(view: ReviewDiffView, document_line: int) -> Style:
+    theme = view._theme
+    if theme and view.cursor_location[0] == document_line:
+        return theme.cursor_line_gutter_style
+    if theme:
+        return theme.gutter_style
+    return view.rich_style
 
 
 def _line_selection(
