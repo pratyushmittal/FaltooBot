@@ -10,7 +10,6 @@ from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageHistory, get_tools_definition
-from faltoobot.memory import memory_file_path
 
 
 def _fake_output_item(
@@ -112,7 +111,6 @@ def test_get_session_creates_messages_json_and_workspace(
 def _config(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         root=tmp_path / ".faltoobot",
-        bot_name="Faltoobot",
         openai_model="gpt-5-mini",
         openai_api_key="test",
         openai_oauth="",
@@ -186,13 +184,13 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "build_config",
         lambda: _config(tmp_path),
     )
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
     calls: list[MessageHistory] = []
     tool_defs: list[Any] = []
-    chat_key = "code@test"
-
-    path = memory_file_path(_config(tmp_path).root, chat_key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("- Uses uv instead of pip\n", encoding="utf-8")
 
     async def fake_get_streaming_reply(
         instructions: str,
@@ -200,11 +198,10 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         tools: list[Any],
         prompt_cache_key: str | None = None,
     ):
-        assert "User Memory (Always Remember):" in instructions
-        assert "Uses uv instead of pip" in instructions
+        assert instructions.startswith("system prompt")
         calls.append(list(input))
         assert prompt_cache_key == session[1]
-        tool_defs.extend(get_tools_definition(tool) for tool in tools)
+        tool_defs.extend([get_tools_definition(tool) for tool in tools])
         input.append(
             cast(
                 Any,
@@ -238,6 +235,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         )
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    chat_key = "code@test"
 
     session = sessions.get_session(chat_key=chat_key)
     workspace = Path(sessions.get_messages(session)["workspace"])
@@ -277,6 +275,13 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     assert shell_tool["description"].startswith(
         "Returns the output of a shell command. Use it to inspect files and run CLI tasks."
     )
+    load_image_tool = tool_defs_by_name["load_image"]
+    assert load_image_tool["type"] == "function"
+    assert load_image_tool["strict"] is True
+    assert load_image_tool["description"].startswith(
+        "Load image files such as jpg or png. Useful for seeing screenshots and creatives."
+    )
+
     assert "Commands are run from" in shell_tool["description"]
     assert shell_tool["parameters"] == {
         "type": "object",
@@ -298,22 +303,11 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "additionalProperties": False,
     }
 
-    load_image_tool = tool_defs_by_name["load_image"]
-    assert load_image_tool["type"] == "function"
-    assert load_image_tool["strict"] is True
-    assert load_image_tool["description"].startswith(
-        "Load image files such as jpg or png. Useful for seeing screenshots and creatives."
-    )
-
     skills_tool = tool_defs_by_name["load_skill"]
     assert skills_tool["type"] == "function"
     assert skills_tool["strict"] is True
     assert skills_tool["description"].startswith(
         "The following skills provide specialized instructions for specific tasks."
-    )
-    assert (
-        "memory: Use this skill when the user explicitly asks you to remember"
-        in (skills_tool["description"])
     )
     assert skills_tool["parameters"] == {
         "type": "object",
