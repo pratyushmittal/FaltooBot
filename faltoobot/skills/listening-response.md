@@ -1,5 +1,5 @@
 ---
-description: Listen for notifications from background scripts, cron jobs, monitors, or sub-agents, then continue the conversation when they arrive. This is useful for reminders, recurring tasks, updates, and async sub-tasks.
+description: Listen for notifications from background scripts, cron jobs, monitors, or sub-agents, then continue the conversation when they arrive. This is useful for reminders, recurring tasks, updates, and async sub-tasks. Spawned subtasks for PRs, reviews, and other coding tasks should prefer background/async execution instead of blocking the main thread.
 meta: disallow-sub-agent
 ---
 
