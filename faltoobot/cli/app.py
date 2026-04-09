@@ -40,8 +40,6 @@ from faltoobot.config import (
 from faltoobot.cli import browser as browser_runtime
 from faltoobot import notify_queue
 from faltoobot.openai_login import run_openai_login
-from faltoobot.whatsapp.app import main as run_whatsapp_bot
-from faltoobot.whatsapp.login import run_auth
 
 console = Console()
 LOG_STYLES = {
@@ -94,6 +92,31 @@ def _reexec_current_command() -> None:
 def _run_capture(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a command and return its captured stdout/stderr to the caller."""
     return subprocess.run(list(args), check=check, text=True, capture_output=True)
+
+
+def _reraised_whatsapp_import_error(exc: Exception) -> None:
+    message = str(exc)
+    if sys.platform == "darwin" and "libmagic" in message:
+        raise SystemExit(
+            "WhatsApp support requires libmagic on macOS. Install it with `brew install libmagic` and rerun the command."
+        ) from exc
+    raise exc
+
+
+def _run_whatsapp_auth(config: Config) -> None:
+    try:
+        from faltoobot.whatsapp.login import run_auth
+    except Exception as exc:
+        _reraised_whatsapp_import_error(exc)
+    asyncio.run(run_auth(config))
+
+
+def _run_whatsapp_service(config: Config) -> None:
+    try:
+        from faltoobot.whatsapp.app import main as run_whatsapp_bot
+    except Exception as exc:
+        _reraised_whatsapp_import_error(exc)
+    asyncio.run(run_whatsapp_bot(config))
 
 
 def _uid() -> str:
@@ -497,7 +520,7 @@ def _configure_whatsapp(config: Config) -> None:
         default=True,
         show_default=False,
     ):
-        asyncio.run(run_auth(build_config()))
+        _run_whatsapp_auth(build_config())
 
 
 def _run_migrations(config: Config) -> list[str]:
@@ -669,7 +692,7 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
     # comment: the public `whatsapp` command manages updates, service install/start, and log
     # following. The OS service itself needs a separate hidden entrypoint that only runs the bot.
     if args.command == SERVICE_COMMAND:
-        asyncio.run(run_whatsapp_bot(config or build_config()))
+        _run_whatsapp_service(config or build_config())
     elif args.command == "update":
         run_update_command(config)
     elif args.command == "whatsapp":

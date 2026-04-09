@@ -195,7 +195,6 @@ On WhatsApp:
 In terminal chat:
 
 ```text
-/memory
 /reset
 /status
 /tree

@@ -442,3 +442,39 @@ def test_ensure_configured_skips_present_required_values(
 
     assert calls == []
     assert result == config
+
+
+def test_run_whatsapp_auth_surfaces_libmagic_help(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+
+    original_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "faltoobot.whatsapp.login":
+            raise ImportError("failed to find libmagic. Check your installation")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    try:
+        cli._run_whatsapp_auth(config)
+    except SystemExit as exc:
+        assert str(exc) == (
+            "WhatsApp support requires libmagic on macOS. Install it with `brew install libmagic` and rerun the command."
+        )
+    else:
+        raise AssertionError("expected SystemExit")
+
+
+def test_non_whatsapp_commands_do_not_import_whatsapp(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_update(config=None):
+        calls.append("update")
+
+    monkeypatch.setattr(cli, "run_update_command", fake_update)
+
+    cli.handle_command(cli.argparse.Namespace(command="update"), None)
+
+    assert calls == ["update"]
