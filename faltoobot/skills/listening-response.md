@@ -23,12 +23,14 @@ faltoobot notify "{chat_key}" "Morning news is ready." --source="cron:morning-ne
 
 If you do not pass a message argument, `faltoobot notify` reads the message body from stdin. Use `--source` to tell the bot why the notification arrived, for example `cron:morning-news`, `sub-agent:log-review`, or `hn-monitor.py`.
 
+Cron often runs with a minimal `PATH`, so when you generate cron jobs or shell scripts that call `faltoochat` or `faltoobot`, prefer absolute paths resolved ahead of time (for example via `command -v`) or export a safe `PATH` before invoking those commands.
+
 ## Cron Job Example
 
 Send a morning news digest every day at 8 AM:
 
 ```cron
-0 8 * * * cd /path/to/project && faltoochat "Get top news items" --workspace=./morning-news 2>&1 | faltoobot notify "{chat_key}" --source="cron:morning-news"
+0 8 * * * PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"; export PATH; cd /path/to/project && FALTOOCHAT="$(command -v faltoochat)" && FALTOOBOT="$(command -v faltoobot)" && "$FALTOOCHAT" "Get top news items" --workspace=./morning-news 2>&1 | "$FALTOOBOT" notify "{chat_key}" --source="cron:morning-news"
 ```
 
 Other good cron use-cases:
@@ -49,7 +51,9 @@ You can run a background `faltoochat` task and forward its final output back int
 For example, ask it to review a pull request in a separate workspace:
 
 ```bash
-nohup sh -c 'faltoochat "Review this PR: https://github.com/some-org/some-repo/pull/1554 and summarize the main issues." --workspace=./pr-review --new-session 2>&1 | faltoobot notify "{chat_key}" --source="sub-agent:pr-review"' &
+FALTOOCHAT="$(command -v faltoochat)"
+FALTOOBOT="$(command -v faltoobot)"
+nohup sh -c '"'"$FALTOOCHAT"'" "Review this PR: https://github.com/some-org/some-repo/pull/1554 and summarize the main issues." --workspace=./pr-review --new-session 2>&1 | '"'"$FALTOOBOT"'" notify "{chat_key}" --source="sub-agent:pr-review"' &
 ```
 
 ## Python API Example
@@ -71,6 +75,7 @@ PY
 ## Practical Reminders
 
 - Use `nohup ... &` when launching background work from the shell.
+- Cron and detached shells may not inherit your interactive `PATH`; resolve `faltoochat` / `faltoobot` with `command -v` ahead of time or export a safe `PATH` in the generated script.
 - Put `2>&1` before the pipe when you also want stderr to reach `faltoobot notify`.
 - Include enough detail in the notification message so you can act on it when it arrives.
 - Prefer notifications for async completion or monitoring events; prefer normal chat turns for immediate back-and-forth.
