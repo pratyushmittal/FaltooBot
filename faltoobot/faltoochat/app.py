@@ -427,6 +427,15 @@ class FaltooChatApp(App[None]):
     async def action_load_all_messages(self) -> None:
         await self.load_messages()
 
+    async def show_local_answer(self, text: str) -> None:
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(Markdown(text, classes="answer"))
+        self.call_after_refresh(
+            transcript.scroll_end,
+            animate=False,
+            immediate=True,
+        )
+
     async def stream_reply(
         self,
         transcript: VerticalScroll,
