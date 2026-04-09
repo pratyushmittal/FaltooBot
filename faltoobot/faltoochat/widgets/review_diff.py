@@ -125,6 +125,8 @@ class ReviewDiffView(TextArea):
     async def reload_in_place(self) -> None:
         # comment: loading a file tab starts empty, so refresh the diff in place and then restore the
         # visible cursor and scroll position after the diff text is ready.
+        if await self.review_view.close_stale_file(self.file_path):
+            return
         workspace = self.app.workspace  # type: ignore[attr-defined]
         cursor = self.cursor_location
         selection = self.selection
@@ -277,15 +279,15 @@ class ReviewDiffView(TextArea):
         if location := previous_word_location(self.text, self.cursor_location):
             self.move_cursor(location, record_width=False)
 
-    def action_review_next_file_tab(self) -> None:
+    async def action_review_next_file_tab(self) -> None:
         if self._tab_switch_blocked():
             return
-        self._cycle_file_tab(1)
+        await self._cycle_file_tab(1)
 
-    def action_review_previous_file_tab(self) -> None:
+    async def action_review_previous_file_tab(self) -> None:
         if self._tab_switch_blocked():
             return
-        self._cycle_file_tab(-1)
+        await self._cycle_file_tab(-1)
 
     def _tab_switch_blocked(self) -> bool:
         now = time.monotonic()
@@ -295,19 +297,26 @@ class ReviewDiffView(TextArea):
         self.last_tab_switch_at = now
         return False
 
-    def _cycle_file_tab(self, delta: int) -> None:
+    async def _cycle_file_tab(self, delta: int) -> None:
         tabs = self.screen.query_one("#review-tabs", TabbedContent)
         pane_ids = [
             pane.id
             for pane in tabs.query(TabPane)
             if pane.id is not None and pane.query(ReviewDiffView)
         ]
-        if not pane_ids:
-            return
-        current_index = pane_ids.index(tabs.active) if tabs.active in pane_ids else 0
-        next_id = pane_ids[(current_index + delta) % len(pane_ids)]
-        tabs.active = next_id
-        tabs.get_pane(next_id).query_one(ReviewDiffView).focus()
+        while pane_ids:
+            current_index = pane_ids.index(tabs.active) if tabs.active in pane_ids else 0
+            next_id = pane_ids[(current_index + delta) % len(pane_ids)]
+            viewer = tabs.get_pane(next_id).query_one(ReviewDiffView)
+            if not await self.review_view.close_stale_file(viewer.file_path):
+                tabs.active = next_id
+                viewer.focus()
+                return
+            pane_ids = [
+                pane.id
+                for pane in tabs.query(TabPane)
+                if pane.id is not None and pane.query(ReviewDiffView)
+            ]
 
     def action_review_next_modification(self) -> None:
         if line := next_modification(

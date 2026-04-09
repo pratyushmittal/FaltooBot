@@ -231,6 +231,27 @@ class ReviewView(TabPane):
         self.active_pane.focus()
         return True
 
+    async def close_stale_file(self, path: Path) -> bool:
+        workspace = self.app.workspace  # type: ignore[attr-defined]
+        if (workspace / path).exists():
+            return False
+        _message, files = await asyncio.to_thread(
+            _get_modified_files,
+            workspace,
+            self.extra_paths,
+        )
+        if path in files:
+            return False
+        self.extra_paths = [item for item in self.extra_paths if item != path]
+        tabs = self.query_one("#review-tabs", TabbedContent)
+        pane = _get_file_pane(tabs, path)
+        if pane is None or pane.id is None:
+            return False
+        await tabs.remove_pane(pane.id)
+        if self.active_pane is not None and self.active_pane.file_path == path:
+            self.active_pane = None
+        return True
+
     async def open_file(
         self,
         path: Path,

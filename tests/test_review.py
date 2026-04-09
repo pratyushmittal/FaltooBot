@@ -306,6 +306,128 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
 
 
 @pytest.mark.anyio
+async def test_review_tab_cycle_closes_deleted_untracked_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+    (workspace / "randomfile").touch()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        review_tabs = await open_review(app, pilot)
+        review = app.query_one(ReviewView)
+        review.action_review_refresh_files()
+        await wait_for_condition(
+            lambda: any(
+                str(pane._title) == "randomfile"
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+            )
+        )
+
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        alpha_pane.query_one(ReviewDiffView).focus()
+        await pilot.pause(0.3)
+
+        await pilot.press("tab")
+        await pilot.pause(0.3)
+        await pilot.press("tab")
+        await pilot.pause(0.3)
+        assert next(
+            str(pane._title)
+            for pane in review_file_panes(app.query_one("#review-tabs", TabbedContent))
+            if pane.id == app.query_one("#review-tabs", TabbedContent).active
+        ) == "randomfile"
+
+        (workspace / "randomfile").unlink()
+
+        await pilot.press("shift+tab")
+        await pilot.pause(0.3)
+        assert next(
+            str(pane._title)
+            for pane in review_file_panes(app.query_one("#review-tabs", TabbedContent))
+            if pane.id == app.query_one("#review-tabs", TabbedContent).active
+        ) == "beta.py"
+
+        await pilot.press("tab")
+        await pilot.pause(0.3)
+
+        review_tabs = app.query_one("#review-tabs", TabbedContent)
+        assert {str(pane._title) for pane in review_file_panes(review_tabs)} == {
+            "alpha.py",
+            "beta.py",
+        }
+        assert next(
+            str(pane._title)
+            for pane in review_file_panes(review_tabs)
+            if pane.id == review_tabs.active
+        ) == "alpha.py"
+
+
+@pytest.mark.anyio
+async def test_review_reopen_closes_deleted_untracked_active_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+    (workspace / "randomfile").touch()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        review_tabs = await open_review(app, pilot)
+        review = app.query_one(ReviewView)
+        review.action_review_refresh_files()
+        await wait_for_condition(
+            lambda: any(
+                str(pane._title) == "randomfile"
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+            )
+        )
+
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        alpha_pane.query_one(ReviewDiffView).focus()
+        await pilot.pause(0.3)
+
+        await pilot.press("tab")
+        await pilot.pause(0.3)
+        await pilot.press("tab")
+        await pilot.pause(0.3)
+        assert next(
+            str(pane._title)
+            for pane in review_file_panes(app.query_one("#review-tabs", TabbedContent))
+            if pane.id == app.query_one("#review-tabs", TabbedContent).active
+        ) == "randomfile"
+
+        (workspace / "randomfile").unlink()
+
+        app.action_show_chat_tab()
+        await pilot.pause(0.3)
+        app.action_show_review_tab()
+        await pilot.pause(0.3)
+
+        review_tabs = app.query_one("#review-tabs", TabbedContent)
+        assert {str(pane._title) for pane in review_file_panes(review_tabs)} == {
+            "alpha.py",
+            "beta.py",
+        }
+        assert next(
+            str(pane._title)
+            for pane in review_file_panes(review_tabs)
+            if pane.id == review_tabs.active
+        ) in {"alpha.py", "beta.py"}
+
+
+@pytest.mark.anyio
 async def test_review_visual_line_selection_extends_with_j_and_k(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
