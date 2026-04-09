@@ -1,7 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from rich.segment import Segment
 from rich.style import Style
@@ -37,6 +37,14 @@ DIFF_MODE = "diff"
 ADD_MODE = "add"
 
 
+class DisplayRowContext(TypedDict):
+    document_line: int
+    diff_line: int
+    line_type: str
+    line_number: int | None
+    symbol: str
+
+
 class ReviewDiffView(TextArea):
     BINDINGS = [
         Binding("j,ctrl+n", "review_cursor_down", priority=True, show=False),
@@ -57,6 +65,7 @@ class ReviewDiffView(TextArea):
             "[", "review_previous_modification", "Prev Edit", priority=True, show=True
         ),
         Binding("V", "review_select_line", "Select Line", priority=True, show=True),
+        Binding("W", "review_toggle_wrap", "Wrap", priority=True, show=True),
         Binding("n", "review_jump_next", "Next Search", priority=True, show=True),
         Binding("N", "review_jump_previous", "Prev Search", priority=True, show=True),
         Binding("*", "review_search_word_under_cursor", priority=True, show=False),
@@ -87,6 +96,7 @@ class ReviewDiffView(TextArea):
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
         self.missing_language_package: str | None = None
+        kwargs.setdefault("soft_wrap", False)
         super().__init__("", language=None, **kwargs)
         self._load_diff_text()
         _register_extra_languages(self)
@@ -146,47 +156,65 @@ class ReviewDiffView(TextArea):
     def render_line(self, y: int):
         strip = super().render_line(y)
         absolute_y = self.scroll_offset[1] + y
-        if absolute_y >= len(self.visible_diff_lines):
+        if (context := self._display_row_context(absolute_y)) is None:
             return strip
-
-        diff_line = self._visible_diff_line(absolute_y)
-        line_type = self.diff[diff_line]["type"]
         if self.show_line_numbers:
             content = strip.crop(self.gutter_width)
-            gutter = self._gutter_strip(absolute_y)
+            gutter = self._gutter_strip(context)
             strip = Strip.join([gutter, content])
 
-        if line_type != "-":
+        if context["line_type"] != "-":
             return strip
         return strip.apply_style(Style(dim=True))
 
-    def _gutter_strip(self, line_index: int) -> Strip:
+    def _display_line_info(self, line_index: int) -> tuple[int, int] | None:
+        try:
+            return self.wrapped_document._offset_to_line_info[line_index]
+        except IndexError:
+            return None
+
+    def _display_row_context(self, line_index: int) -> DisplayRowContext | None:
+        line_info = self._display_line_info(line_index)
+        if line_info is None or line_info[0] >= len(self.visible_diff_lines):
+            return None
+        document_line, section_offset = line_info
+        diff_line = self._visible_diff_line(document_line)
+        line_type = self.diff[diff_line]["type"]
+        line_number = None
+        if not section_offset and line_type != "-":
+            visible_lines = sum(
+                1 for line in self.diff[: diff_line + 1] if line["type"] != "-"
+            )
+            line_number = self.line_number_start + visible_lines - 1
+        return {
+            "document_line": document_line,
+            "diff_line": diff_line,
+            "line_type": line_type,
+            "line_number": line_number,
+            "symbol": _gutter_symbol(self, diff_line),
+        }
+
+    def _gutter_strip(self, context: DisplayRowContext) -> Strip:
         theme = self._theme
-        if theme and self.cursor_location[0] == line_index:
+        if theme and self.cursor_location[0] == context["document_line"]:
             gutter_style = theme.cursor_line_gutter_style
         elif theme:
             gutter_style = theme.gutter_style
         else:
             gutter_style = self.rich_style
 
-        line_number = self._display_line_number(line_index)
         gutter_width_no_margin = self.gutter_width - 2
-        gutter_text = "" if line_number is None else str(line_number)
-        symbol = _gutter_symbol(self, line_index)
+        gutter_text = "" if context["line_number"] is None else str(context["line_number"])
         line_width = max(0, gutter_width_no_margin - 1)
         return Strip(
-            [Segment(f"{symbol}{gutter_text:>{line_width}}  ", gutter_style)],
+            [
+                Segment(
+                    f"{context['symbol']}{gutter_text:>{line_width}}  ",
+                    gutter_style,
+                )
+            ],
             self.gutter_width,
         )
-
-    def _display_line_number(self, line_index: int) -> int | None:
-        diff_line = self._visible_diff_line(line_index)
-        if self.diff[diff_line]["type"] == "-":
-            return None
-        visible_lines = sum(
-            1 for line in self.diff[: diff_line + 1] if line["type"] != "-"
-        )
-        return self.line_number_start + visible_lines - 1
 
     def jump_to_file_line(self, line_number: int) -> None:
         if not self.diff:
@@ -233,7 +261,7 @@ class ReviewDiffView(TextArea):
         self.border_subtitle = "" if self.mode == DIFF_MODE else self.mode
 
     def _visible_diff_line(self, line_index: int) -> int:
-        """Return the backing diff line for a currently visible editor row."""
+        """Return the backing diff line for a document row."""
         if not self.visible_diff_lines:
             return 0
         line_index = max(0, min(line_index, len(self.visible_diff_lines) - 1))
@@ -264,6 +292,9 @@ class ReviewDiffView(TextArea):
     def action_review_cycle_mode(self) -> None:
         self.mode = ADD_MODE if self.mode == DIFF_MODE else DIFF_MODE
         self._load_diff_text()
+
+    def action_review_toggle_wrap(self) -> None:
+        self.soft_wrap = not self.soft_wrap
 
     def action_review_scroll_home(self) -> None:
         self.move_cursor((0, 0), record_width=False)
@@ -560,8 +591,7 @@ def _get_code_for_review_submission(diff: Diff, start: int, end: int) -> str:
     )
 
 
-def _gutter_symbol(view: ReviewDiffView, line_index: int) -> str:
-    diff_line = view._visible_diff_line(line_index)
+def _gutter_symbol(view: ReviewDiffView, diff_line: int) -> str:
     if diff_line in _commented_lines(view):
         return "*"
     line = view.diff[diff_line]

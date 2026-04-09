@@ -304,6 +304,51 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
         await pilot.pause(0)
         assert viewer.cursor_location == (5, 0)
 
+        assert viewer.soft_wrap is False
+        await pilot.press("W")
+        await pilot.pause(0)
+        assert viewer.soft_wrap is True
+        await pilot.press("W")
+        await pilot.pause(0)
+        assert viewer.soft_wrap is False
+
+
+@pytest.mark.anyio
+async def test_review_wrap_keeps_line_numbers_on_real_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    alpha = workspace / "alpha.py"
+    alpha.write_text("short\nnext = 1\n", encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
+    alpha.write_text(
+        "this is a very long line that should wrap around the review diff widget width significantly\nnext = 2\n",
+        encoding="utf-8",
+    )
+
+    async with app.run_test(size=(40, 12)) as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0.3)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.pause(0.3)
+        await pilot.press("W")
+        await pilot.pause(0.3)
+
+        gutters = [
+            viewer.render_line(y).crop(0, viewer.gutter_width).text.strip()
+            for y in range(viewer.wrapped_document.height)
+        ]
+
+        assert gutters == ["-", "-", "+1", "+", "+", "+", "+2"]
+
 
 @pytest.mark.anyio
 async def test_review_tab_cycle_closes_deleted_untracked_file(
