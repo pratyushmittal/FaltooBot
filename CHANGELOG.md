@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.2.1 — 2026-04-08
+
+### Changed
+- Code and WhatsApp prompts now direct long-term memory requests into `AGENTS.md`, and new chat workspaces automatically create an empty `AGENTS.md` file.
+
+### Fixed
+- Reverted the experimental memory-skill integration, keeping only the lighter `AGENTS.md`-based memory approach.
+
 ## 2.2.0 — 2026-04-08
 
 ### Added
