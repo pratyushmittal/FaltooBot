@@ -6,12 +6,13 @@ Faltoobot now has a small public CLI surface.
 
 ### `faltoobot update`
 
-Upgrades the uv-installed tool, ensures config exists, and runs migrations.
+Upgrades the uv-installed tool, best-effort refreshes `/usr/local/bin/faltoobot` and `/usr/local/bin/faltoochat`, ensures config exists, and runs migrations.
 
 ### `faltoobot whatsapp`
 
 The main happy-path command. It:
 - runs update
+- best-effort refreshes `/usr/local/bin/faltoobot` and `/usr/local/bin/faltoochat` symlinks
 - stops any old service
 - installs the service
 - starts the service

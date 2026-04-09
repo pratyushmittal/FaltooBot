@@ -114,8 +114,12 @@ def test_run_update_command_upgrades_then_bootstraps(
         cli, "_ensure_configured", lambda: ensured.append("ran") or config
     )
     reinstalls: list[str] = []
+    shims: list[str] = []
     monkeypatch.setattr(
         cli, "_run_migrations", lambda config: migrations.append("ran") or ["sessions"]
+    )
+    monkeypatch.setattr(
+        cli, "_refresh_usr_local_bin_shims", lambda: shims.append("ran") or []
     )
     monkeypatch.setattr(cli, "_service_installed", lambda config: True)
     monkeypatch.setattr(
@@ -127,6 +131,7 @@ def test_run_update_command_upgrades_then_bootstraps(
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert ensured == ["ran"]
     assert migrations == ["ran"]
+    assert shims == ["ran"]
     assert reinstalls == ["ran"]
     assert result == config
 
@@ -442,3 +447,46 @@ def test_ensure_configured_skips_present_required_values(
 
     assert calls == []
     assert result == config
+
+
+def test_refresh_usr_local_bin_shims_creates_symlinks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir()
+    for name in cli.PUBLIC_BINARIES:
+        (tool_bin / name).write_text(f"#!/bin/sh\nexec {name}\n", encoding="utf-8")
+    usr_local_bin = tmp_path / "usr" / "local" / "bin"
+
+    monkeypatch.setattr(cli, "USR_LOCAL_BIN", usr_local_bin)
+    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: tool_bin)
+
+    refreshed = cli._refresh_usr_local_bin_shims()
+
+    assert refreshed == [usr_local_bin / name for name in cli.PUBLIC_BINARIES]
+    for name in cli.PUBLIC_BINARIES:
+        target = usr_local_bin / name
+        assert target.is_symlink()
+        assert target.resolve() == (tool_bin / name).resolve()
+
+
+def test_refresh_usr_local_bin_shims_skips_failures(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir()
+    for name in cli.PUBLIC_BINARIES:
+        (tool_bin / name).write_text(f"#!/bin/sh\nexec {name}\n", encoding="utf-8")
+    usr_local_bin = tmp_path / "usr" / "local" / "bin"
+    usr_local_bin.mkdir(parents=True)
+    blocking_file = usr_local_bin / "faltoobot"
+    blocking_file.write_text("keep me", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "USR_LOCAL_BIN", usr_local_bin)
+    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: tool_bin)
+
+    refreshed = cli._refresh_usr_local_bin_shims()
+
+    assert refreshed == [usr_local_bin / "faltoochat"]
+    assert blocking_file.read_text(encoding="utf-8") == "keep me"
+    assert (usr_local_bin / "faltoochat").is_symlink()

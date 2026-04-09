@@ -52,6 +52,8 @@ LOG_STYLES = {
 }
 LINUX_SERVICE_NAME = "faltoobot.service"
 SERVICE_COMMAND = "whatsapp-service"
+USR_LOCAL_BIN = Path("/usr/local/bin")
+PUBLIC_BINARIES = ("faltoobot", "faltoochat")
 
 
 def _require_service_platform() -> None:
@@ -94,6 +96,42 @@ def _reexec_current_command() -> None:
 def _run_capture(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a command and return its captured stdout/stderr to the caller."""
     return subprocess.run(list(args), check=check, text=True, capture_output=True)
+
+
+def _uv_tool_bin_dir() -> Path:
+    result = _run_capture(_uv_bin(), "tool", "dir", "--bin")
+    return Path(result.stdout.strip())
+
+
+def _refresh_usr_local_bin_shims() -> list[Path]:
+    """Best-effort refresh of /usr/local/bin symlinks for cron-friendly command lookup."""
+    try:
+        tool_bin_dir = _uv_tool_bin_dir()
+    except (OSError, subprocess.SubprocessError) as exc:
+        console.print(f"[dim]Skipping /usr/local/bin shim refresh: {exc}[/]")
+        return []
+
+    refreshed: list[Path] = []
+    for name in PUBLIC_BINARIES:
+        source = tool_bin_dir / name
+        target = USR_LOCAL_BIN / name
+        if not source.exists():
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink():
+                target.unlink()
+            elif target.exists():
+                raise FileExistsError(f"{target} already exists")
+            target.symlink_to(source)
+        except OSError as exc:
+            console.print(f"[dim]Skipping shim refresh for [cyan]{target}[/]: {exc}[/]")
+            continue
+        refreshed.append(target)
+    if refreshed:
+        shims = ", ".join(path.as_posix() for path in refreshed)
+        console.print(f"[dim]Refreshed command shims: [cyan]{shims}[/][/]")
+    return refreshed
 
 
 def _uid() -> str:
@@ -566,6 +604,7 @@ def run_update_command(config: Config | None = None) -> Config | None:
         _reexec_current_command()
         return None
     console.print("[dim]No required system dependencies to install.[/]")
+    _refresh_usr_local_bin_shims()
     config = _ensure_configured()
     changes = _run_migrations(config)
     final_config = build_config()
@@ -643,8 +682,13 @@ def parse_args() -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("update", help="upgrade faltoobot and run setup tasks")
-    sub.add_parser("whatsapp", help="install and run the WhatsApp service")
+    sub.add_parser(
+        "update",
+        help="upgrade faltoobot, refresh /usr/local/bin shims, and run setup tasks",
+    )
+    sub.add_parser(
+        "whatsapp", help="run update, refresh the WhatsApp service, and follow logs"
+    )
 
     sub.add_parser("logs", help="show logs in follow mode")
     browser = sub.add_parser("browser", help="launch a persistent browser with CDP")

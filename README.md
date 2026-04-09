@@ -92,6 +92,7 @@ faltoobot whatsapp
 
 This is the main command for running Faltoobot. It:
 - upgrades the installed tool with uv
+- best-effort refreshes `/usr/local/bin/faltoobot` and `/usr/local/bin/faltoochat` symlinks
 - ensures config exists
 - runs migrations
 - stops any old Faltoobot service
@@ -115,9 +116,9 @@ faltoobot logs
 faltoobot update
 ```
 
-Upgrades the installed tool with uv, ensures config exists, and runs migrations.
+Upgrades the installed tool with uv, best-effort refreshes `/usr/local/bin/faltoobot` and `/usr/local/bin/faltoochat`, ensures config exists, and runs migrations.
 
-If uv installs a newer version, Faltoobot asks you to rerun the command so the rest of the flow continues with the newer installed version.
+If uv installs a newer version, Faltoobot asks you to rerun the command so the rest of the flow continues with the newer installed version. If `/usr/local/bin` is not writable, the shim refresh is skipped and the update still succeeds.
 
 ### `faltoobot whatsapp`
 
@@ -125,7 +126,7 @@ If uv installs a newer version, Faltoobot asks you to rerun the command so the r
 faltoobot whatsapp
 ```
 
-Best command for normal use. It runs update, refreshes the background service, and follows logs.
+Best command for normal use. It runs update, refreshes the background service, and follows logs. The update step also best-effort refreshes `/usr/local/bin` command shims for cron-friendly lookup.
 
 ### `faltoobot logs`
 
