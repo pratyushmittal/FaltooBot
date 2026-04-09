@@ -1,6 +1,7 @@
 import json
 import os
 import tomllib
+from importlib.metadata import PackageNotFoundError, version as package_version
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -254,6 +255,40 @@ def build_config() -> Config:
         or os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=str(gemini["model"]),
     )
+
+
+def config_status_text(config: Config) -> str:
+    try:
+        version_text = package_version("faltoobot")
+    except PackageNotFoundError:
+        version_text = "unknown"
+
+    data = merge_config(load_toml(config.config_file))
+    entries: list[tuple[str, Any]] = []
+
+    def add_entries(prefix: str, value: Any) -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                next_prefix = f"{prefix}_{child_key}" if prefix else child_key
+                add_entries(next_prefix, child_value)
+            return
+        entries.append((prefix, value))
+
+    add_entries("", data)
+
+    lines = ["Faltoobot status", "", f"Version: {version_text}", "", "Config status"]
+    for key, value in entries:
+        rendered: str | bool | list[str]
+        if isinstance(value, str):
+            rendered = value.strip()
+            if (key.endswith("_api_key") or key.endswith("_oauth")) and rendered:
+                rendered = "<set>"
+        elif isinstance(value, list):
+            rendered = [str(item) for item in value if isinstance(item, str)]
+        else:
+            rendered = value
+        lines.append(f"• {key}={json.dumps(rendered)}")
+    return "\n".join(lines)
 
 
 def save_textual_theme(theme: str) -> None:

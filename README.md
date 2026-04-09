@@ -189,6 +189,7 @@ On WhatsApp:
 ```text
 /help
 /reset
+/status
 ```
 
 In terminal chat:

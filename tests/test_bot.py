@@ -1,5 +1,6 @@
 import asyncio
 from collections import defaultdict
+from importlib.metadata import version as package_version
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,12 +23,17 @@ from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String, build_jid
 from PIL import Image
 
+from faltoobot.config import (
+    Config,
+    default_config,
+    normalize_chat,
+    render_config,
+)
+from faltoobot.memory import memory_file_path
+from faltoobot.sessions import get_messages, get_session
 from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
-from faltoobot.config import Config, normalize_chat
-from faltoobot.memory import memory_file_path
-from faltoobot.sessions import get_messages, get_session
 
 
 def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
@@ -649,6 +655,76 @@ async def test_process_message_groups_captionless_album_images_into_one_turn(
     assert len(calls) == 1
     assert calls[0]["question"] == ""
     assert len(calls[0]["attachments"]) == expected_images
+
+
+@pytest.mark.anyio
+async def test_process_turn_locked_status_reports_version_and_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    client = FakePresenceClient()
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
+    config.root.mkdir(parents=True, exist_ok=True)
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    data = default_config()
+    data["openai"]["api_key"] = "sk-test"
+    data["openai"]["model"] = "gpt-5.2-codex"
+    data["browser"]["binary"] = (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    )
+    data["bot"]["allowed_chats"] = ["15555550123@s.whatsapp.net"]
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    async def fake_get_answer(*args: object, **kwargs: object) -> str:
+        raise AssertionError("get_answer should not run for /status")
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    event = fake_event(message_id="status-1", text="/status")
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn={
+            "event": event,
+            "chat": jid("15555550123", "s.whatsapp.net"),
+            "message_ids": ["status-1"],
+            "prompt": "/status",
+            "attachments": [],
+            "audio": None,
+        },
+    )
+
+    assert client.replies == [
+        "\n".join(
+            [
+                "Faltoobot status",
+                "",
+                f"Version: {package_version('faltoobot')}",
+                "",
+                "Config status",
+                '• openai_api_key="<set>"',
+                '• openai_oauth=""',
+                '• openai_model="gpt-5.2-codex"',
+                '• openai_thinking="high"',
+                "• openai_fast=false",
+                '• openai_transcription_model="gpt-4o-transcribe"',
+                '• gemini_gemini_api_key=""',
+                '• gemini_model="gemini-3.1-flash-image-preview"',
+                '• ui_theme=""',
+                (
+                    '• browser_binary="/Applications/Google Chrome.app/Contents/MacOS/'
+                    'Google Chrome"'
+                ),
+                "• bot_allow_groups=false",
+                '• bot_allowed_chats=["15555550123@s.whatsapp.net"]',
+                '• bot_bot_name="Faltoo"',
+            ]
+        )
+    ]
+    assert client.reply_ids == ["status-1"]
 
 
 @pytest.mark.anyio

@@ -13,7 +13,7 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import MessageAssociation
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
-from faltoobot.config import Config, normalize_chat
+from faltoobot.config import Config, config_status_text, normalize_chat
 from faltoobot.memory import format_memory_list
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import get_answer, get_messages, get_session, set_messages
@@ -39,6 +39,7 @@ HELP_TEXT = (
     "• Send any message to ask the model\n"
     "• /memory — show things you asked me to remember\n"
     "• /reset — clear this chat's memory\n"
+    "• /status — show bot status\n"
     "• /help — show this help"
 )
 
@@ -314,6 +315,9 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
         return
     if event is not None and not attachments and audio is None and prompt == "/memory":
         await client.reply_message(format_memory_list(config.root, session[0]), event)
+        return
+    if event is not None and not attachments and audio is None and prompt == "/status":
+        await client.reply_message(config_status_text(config), event)
         return
     if event is not None and not attachments and audio is None and prompt == "/reset":
         reset_session = get_session(chat_key=session[0], session_id=str(uuid4()))
