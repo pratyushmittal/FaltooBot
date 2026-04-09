@@ -43,6 +43,14 @@ def audio_message(event: Any) -> Any | None:
     return message.audioMessage if message.HasField("audioMessage") else None
 
 
+def format_voice_note_transcript(transcript: str) -> str:
+    return (
+        "The user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        f"{transcript}"
+    )
+
+
 async def transcribe_audio(
     openai_client: Any,
     audio_bytes: bytes,
@@ -109,7 +117,7 @@ async def audio_prompt(  # noqa: PLR0913
             )
             text = getattr(response, "output_text", "")
             if isinstance(text, str) and text.strip():
-                return text.strip()
-        return transcript
+                return format_voice_note_transcript(text.strip())
+        return format_voice_note_transcript(transcript)
     finally:
         await openai_client.close()

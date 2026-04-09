@@ -361,7 +361,11 @@ async def test_process_message_transcribes_voice_notes(
     session = get_session(chat_key=chat_key)
     assert client.downloads == 1
     assert client.replies == ["Done"]
-    assert prompts == ["Call mom at 6"]
+    assert prompts == [
+        "The user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        "Call mom at 6"
+    ]
     assert get_messages(session)["message_ids"] == [event.Info.ID]
 
 
@@ -437,7 +441,11 @@ async def test_audio_prompt_normalizes_urdu_script(
         normalization_model="gpt-5.4",
     )
 
-    assert transcript == "hello duniya"
+    assert transcript == (
+        "The user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        "hello duniya"
+    )
     assert calls == ["transcribe", "normalize"]
 
 
