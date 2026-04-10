@@ -9,7 +9,11 @@ from uuid import uuid4
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import MessageEv
 from neonize.proto import Neonize_pb2
-from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import MessageAssociation
+from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
+    ContextInfo,
+    Message,
+    MessageAssociation,
+)
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
@@ -49,6 +53,7 @@ class PendingAlbum(TypedDict):
     message_ids: list[str]
     attachments: list[Path]
     prompt: str
+    reply_to_text: str
     reply_event: MessageEv
 
 
@@ -275,6 +280,7 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
     sender_jid = Jid2String(source.Sender) if source is not None else session[0]
     message_ids = turn["message_ids"]
     prompt = turn["prompt"]
+    reply_to_text = turn["reply_to_text"]
     attachments = turn["attachments"]
     audio = turn["audio"]
 
@@ -332,11 +338,10 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
                 openai_api_key=config.openai_api_key,
                 transcription_prompt=TRANSCRIPTION_PROMPT,
                 model=config.openai_transcription_model,
-                normalization_model=config.openai_model,
             )
         answer = await get_answer(
             session=session,
-            question=prompt,
+            question=_prompt_with_reply_context(prompt, reply_to_text),
             attachments=attachments or None,
         )
         if answer and not _is_no_reply_answer(answer):
@@ -385,6 +390,7 @@ class Turn(TypedDict):
     chat: Neonize_pb2.JID
     message_ids: list[str]
     prompt: str
+    reply_to_text: str
     attachments: list[Path]
     audio: Any
 
@@ -396,6 +402,56 @@ def _message_text(message: Any) -> str:
     if not text and message.HasField("imageMessage"):
         text = message.imageMessage.caption
     return text.strip()
+
+
+def _message_context_info(message: Message) -> ContextInfo | None:
+    for field_name in (
+        "extendedTextMessage",
+        "imageMessage",
+        "audioMessage",
+        "albumMessage",
+    ):
+        if not message.HasField(field_name):
+            continue
+        field = getattr(message, field_name)
+        if field.HasField("contextInfo"):
+            return field.contextInfo
+    return None
+
+
+def _reply_to_text(message: Message) -> str:
+    """Return the plain-text body of the quoted WhatsApp message, if any."""
+    context_info = _message_context_info(message)
+    # comment: most WhatsApp messages are not replies, so there is no quoted message to
+    # thread into the model prompt.
+    if context_info is None or not context_info.HasField("quotedMessage"):
+        return ""
+    # comment: quoted messages can be text, captions, or transcripts; `_message_text`
+    # already normalizes those shapes into one plain-text string.
+    return _message_text(context_info.quotedMessage)
+
+
+def _quoted_reply_text(text: str, *, max_chars: int = 500) -> str:
+    snippet = text.strip()
+    if len(snippet) > max_chars:
+        snippet = f"{snippet[: max_chars - 3].rstrip()}..."
+    return "\n".join(">" if not line else f"> {line}" for line in snippet.splitlines())
+
+
+def _prompt_with_reply_context(prompt: str, reply_to_text: str) -> str:
+    if not reply_to_text:
+        return prompt
+    quoted = _quoted_reply_text(reply_to_text)
+    if not prompt:
+        return (
+            "The user sent this as a reply to an earlier message.\n\n"
+            f"Earlier message:\n{quoted}"
+        )
+    return (
+        "The user is replying to an earlier message.\n\n"
+        f"Earlier message:\n{quoted}\n\n"
+        f"User reply:\n{prompt}"
+    )
 
 
 def _album_id(message: Any, message_id: str) -> tuple[int, str | None]:
@@ -428,6 +484,7 @@ def _pending_album_turn(pending_album: PendingAlbum) -> Turn:
         "chat": pending_album["reply_event"].Info.MessageSource.Chat,
         "message_ids": pending_album["message_ids"],
         "prompt": pending_album["prompt"],
+        "reply_to_text": pending_album["reply_to_text"],
         "attachments": pending_album["attachments"],
         "audio": None,
     }
@@ -459,6 +516,7 @@ async def _handle_pending_album(  # noqa: PLR0913
     chat_jid: str,
     image_message: bool,
     user_text: str,
+    reply_to_text: str,
     message: Any,
     workspace: Path,
 ) -> bool:
@@ -486,6 +544,8 @@ async def _handle_pending_album(  # noqa: PLR0913
                 if not pending_album["prompt"]
                 else f"{pending_album['prompt']}\n{user_text}"
             )
+        if reply_to_text and not pending_album["reply_to_text"]:
+            pending_album["reply_to_text"] = reply_to_text
         if len(pending_album["attachments"]) < pending_album["expected_images"]:
             return True
         pending_albums.pop(current_album_id, None)
@@ -523,6 +583,7 @@ def _start_pending_album(
         "message_ids": [message_id],
         "attachments": [],
         "prompt": "",
+        "reply_to_text": _reply_to_text(event.Message),
         "reply_event": event,
     }
     return True
@@ -566,6 +627,7 @@ async def _parse_event(  # noqa: PLR0913
     message = event.Message
     message_id = event.Info.ID
     user_text = _message_text(message)
+    reply_to_text = _reply_to_text(message)
     audio = audio_message(event)
     image_message = message.HasField("imageMessage")
     expected_album_images, current_album_id = _album_id(message, message_id)
@@ -584,6 +646,7 @@ async def _parse_event(  # noqa: PLR0913
         chat_jid=chat_jid,
         image_message=image_message,
         user_text=user_text,
+        reply_to_text=reply_to_text,
         message=message,
         workspace=workspace,
     ):
@@ -608,6 +671,7 @@ async def _parse_event(  # noqa: PLR0913
         "chat": event.Info.MessageSource.Chat,
         "message_ids": [message_id],
         "prompt": user_text,
+        "reply_to_text": reply_to_text,
         "attachments": attachments,
         "audio": audio,
     }

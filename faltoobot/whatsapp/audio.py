@@ -5,17 +5,6 @@ from openai import AsyncOpenAI
 
 DEFAULT_AUDIO_MAX_SECONDS = 420
 AUDIO_MODEL = "gpt-4o-transcribe"
-NON_LATIN_SCRIPTS = (
-    (0x0600, 0x06FF),
-    (0x0750, 0x077F),
-    (0x08A0, 0x08FF),
-    (0x0900, 0x097F),
-)
-SCRIPT_NORMALIZATION_PROMPT = (
-    "Convert this transcript to English letters only. Do not translate the meaning. "
-    "For Hindi, Urdu, and Hinglish, produce phonetic transliteration in Roman script. "
-    "Never output Urdu or Devanagari script. Return only the converted text."
-)
 MIME_SUFFIXES = {
     "audio/aac": ".aac",
     "audio/flac": ".flac",
@@ -41,6 +30,14 @@ def audio_message(event: Any) -> Any | None:
     if message is None or not hasattr(message, "HasField"):
         return None
     return message.audioMessage if message.HasField("audioMessage") else None
+
+
+def format_voice_note_transcript(transcript: str) -> str:
+    return (
+        "The user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        f"{transcript}"
+    )
 
 
 async def transcribe_audio(
@@ -69,7 +66,6 @@ async def audio_prompt(  # noqa: PLR0913
     openai_api_key: str,
     transcription_prompt: str,
     model: str = AUDIO_MODEL,
-    normalization_model: str,
     max_seconds: int = DEFAULT_AUDIO_MAX_SECONDS,
 ) -> str:
     message = audio_message(event)
@@ -97,19 +93,6 @@ async def audio_prompt(  # noqa: PLR0913
         ).strip()
         if not transcript:
             raise AudioError("I couldn't transcribe that voice note.")
-        if any(
-            any(start <= ord(char) <= end for start, end in NON_LATIN_SCRIPTS)
-            for char in transcript
-        ):
-            response = await openai_client.responses.create(
-                model=normalization_model,
-                input=transcript,
-                instructions=SCRIPT_NORMALIZATION_PROMPT,
-                store=False,
-            )
-            text = getattr(response, "output_text", "")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
-        return transcript
+        return format_voice_note_transcript(transcript)
     finally:
         await openai_client.close()

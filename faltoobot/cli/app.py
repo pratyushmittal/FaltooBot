@@ -50,6 +50,13 @@ LOG_STYLES = {
 }
 LINUX_SERVICE_NAME = "faltoobot.service"
 SERVICE_COMMAND = "whatsapp-service"
+CRONTAB_DEFAULT_PATH_PARTS = [
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/usr/local/bin",
+]
 
 
 def _require_service_platform() -> None:
@@ -117,6 +124,78 @@ def _run_whatsapp_service(config: Config) -> None:
     except Exception as exc:
         _reraised_whatsapp_import_error(exc)
     asyncio.run(run_whatsapp_bot(config))
+
+
+def _uv_tool_bin_dir() -> Path:
+    result = _run_capture(_uv_bin(), "tool", "dir", "--bin")
+    return Path(result.stdout.strip())
+
+
+def _crontab_path_value(uv_bin_dir: Path, current: str) -> str:
+    # comment: cron PATH values are colon-separated, so keep only non-empty entries and
+    # append the uv tool bin dir when it is not already present.
+    parts = [part for part in current.split(":") if part]
+    if not parts:
+        # comment: fresh crontabs often have no PATH line at all, so start from a small
+        # default system PATH before adding the uv tool bin dir.
+        parts = list(CRONTAB_DEFAULT_PATH_PARTS)
+    uv_bin = uv_bin_dir.as_posix()
+    if uv_bin not in parts:
+        parts.append(uv_bin)
+    return ":".join(parts)
+
+
+def _load_crontab() -> str:
+    result = _run_capture("crontab", "-l", check=False)
+    if result.returncode == 0:
+        return result.stdout
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    # comment: `crontab -l` exits non-zero when the user has no crontab yet, which is
+    # expected on fresh systems.
+    if "no crontab" in output:
+        return ""
+    message = (result.stderr or result.stdout).strip() or "crontab -l failed"
+    raise subprocess.SubprocessError(message)
+
+
+def _write_crontab(text: str) -> None:
+    subprocess.run(["crontab", "-"], input=text, check=True, text=True)
+
+
+def _ensure_crontab_path() -> bool:
+    """Best-effort add the uv tool bin dir to PATH in the user's crontab."""
+    try:
+        uv_bin_dir = _uv_tool_bin_dir()
+        crontab_text = _load_crontab()
+    except (OSError, subprocess.SubprocessError) as exc:
+        console.print(f"[dim]Skipping crontab PATH update: {exc}[/]")
+        return False
+
+    lines = crontab_text.splitlines()
+    changed = False
+    found_path = False
+    for index, line in enumerate(lines):
+        if not line.startswith("PATH="):
+            continue
+        found_path = True
+        updated = _crontab_path_value(uv_bin_dir, line.split("=", 1)[1])
+        if updated == line.split("=", 1)[1]:
+            continue
+        lines[index] = f"PATH={updated}"
+        changed = True
+    if not found_path:
+        lines.insert(
+            0, f"PATH={_crontab_path_value(uv_bin_dir, os.environ.get('PATH', ''))}"
+        )
+        changed = True
+    if not changed:
+        return False
+    text = "\n".join(lines)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    _write_crontab(text)
+    console.print(f"[dim]Updated crontab PATH with [cyan]{uv_bin_dir}[/][/]")
+    return True
 
 
 def _uid() -> str:
@@ -600,6 +679,7 @@ def run_update_command(config: Config | None = None) -> Config | None:
         return None
     console.print("[dim]No required system dependencies to install.[/]")
     config = _ensure_configured()
+    _ensure_crontab_path()
     changes = _run_migrations(config)
     final_config = build_config()
     # comment: only refresh services on update when one was already installed before this update run.
@@ -653,6 +733,7 @@ def run_configure_command(
         _configure_gemini(config)
     else:  # comment: only internal callers choose the configure mode.
         raise SystemExit(f"unknown configure mode: {mode}")
+    _ensure_crontab_path()
     _restart_service(build_config())
 
 
@@ -676,8 +757,13 @@ def parse_args() -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("update", help="upgrade faltoobot and run setup tasks")
-    sub.add_parser("whatsapp", help="install and run the WhatsApp service")
+    sub.add_parser(
+        "update",
+        help="upgrade faltoobot, refresh crontab PATH, and run setup tasks",
+    )
+    sub.add_parser(
+        "whatsapp", help="run update, refresh the WhatsApp service, and follow logs"
+    )
 
     sub.add_parser("logs", help="show logs in follow mode")
     browser = sub.add_parser("browser", help="launch a persistent browser with CDP")

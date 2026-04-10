@@ -113,6 +113,10 @@ def test_run_update_command_upgrades_then_bootstraps(
     monkeypatch.setattr(
         cli, "_ensure_configured", lambda: ensured.append("ran") or config
     )
+    crontab: list[str] = []
+    monkeypatch.setattr(
+        cli, "_ensure_crontab_path", lambda: crontab.append("ran") or True
+    )
     reinstalls: list[str] = []
     monkeypatch.setattr(
         cli, "_run_migrations", lambda config: migrations.append("ran") or ["sessions"]
@@ -126,6 +130,7 @@ def test_run_update_command_upgrades_then_bootstraps(
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert ensured == ["ran"]
+    assert crontab == ["ran"]
     assert migrations == ["ran"]
     assert reinstalls == ["ran"]
     assert result == config
@@ -152,6 +157,11 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
     monkeypatch.setattr(cli, "_reexec_current_command", lambda: reexecs.append("ran"))
+    monkeypatch.setattr(
+        cli,
+        "_ensure_crontab_path",
+        lambda: (_ for _ in ()).throw(AssertionError("should not run")),
+    )
 
     result = cli.run_update_command(config)
 
@@ -193,11 +203,14 @@ def test_run_configure_command_runs_selected_setup(tmp_path: Path, monkeypatch) 
     calls: list[str] = []
 
     monkeypatch.setattr(cli, "_configure_openai", lambda config: calls.append("openai"))
+    monkeypatch.setattr(
+        cli, "_ensure_crontab_path", lambda: calls.append("cron") or True
+    )
     monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
 
     cli.run_configure_command(config, mode="openai")
 
-    assert calls == ["openai", "restart"]
+    assert calls == ["openai", "cron", "restart"]
 
 
 def test_run_configure_command_runs_gemini_setup(tmp_path: Path, monkeypatch) -> None:
@@ -205,11 +218,14 @@ def test_run_configure_command_runs_gemini_setup(tmp_path: Path, monkeypatch) ->
     calls: list[str] = []
 
     monkeypatch.setattr(cli, "_configure_gemini", lambda config: calls.append("gemini"))
+    monkeypatch.setattr(
+        cli, "_ensure_crontab_path", lambda: calls.append("cron") or True
+    )
     monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
 
     cli.run_configure_command(config, mode="gemini")
 
-    assert calls == ["gemini", "restart"]
+    assert calls == ["gemini", "cron", "restart"]
 
 
 def test_configure_gemini_saves_api_key(tmp_path: Path, monkeypatch) -> None:
@@ -475,3 +491,54 @@ def test_non_whatsapp_commands_do_not_import_whatsapp(monkeypatch) -> None:
     cli.handle_command(cli.argparse.Namespace(command="update"), None)
 
     assert calls == ["update"]
+
+
+def test_crontab_path_value_appends_uv_bin() -> None:
+    value = cli._crontab_path_value(Path("/tmp/uv-bin"), "/usr/bin:/bin")
+
+    assert value == "/usr/bin:/bin:/tmp/uv-bin"
+
+
+def test_ensure_crontab_path_inserts_path_for_empty_crontab(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: Path("/tmp/uv-bin"))
+    monkeypatch.setattr(cli, "_load_crontab", lambda: "")
+    monkeypatch.setattr(cli.os, "environ", {"PATH": "/usr/bin:/bin"})
+    written: list[str] = []
+    monkeypatch.setattr(cli, "_write_crontab", lambda text: written.append(text))
+
+    changed = cli._ensure_crontab_path()
+
+    assert changed is True
+    assert written == ["PATH=/usr/bin:/bin:/tmp/uv-bin\n"]
+
+
+def test_ensure_crontab_path_updates_existing_path(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: Path("/tmp/uv-bin"))
+    monkeypatch.setattr(
+        cli,
+        "_load_crontab",
+        lambda: "PATH=/usr/bin:/bin\n* * * * * faltoochat\n",
+    )
+    written: list[str] = []
+    monkeypatch.setattr(cli, "_write_crontab", lambda text: written.append(text))
+
+    changed = cli._ensure_crontab_path()
+
+    assert changed is True
+    assert written == ["PATH=/usr/bin:/bin:/tmp/uv-bin\n* * * * * faltoochat\n"]
+
+
+def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: Path("/tmp/uv-bin"))
+    monkeypatch.setattr(
+        cli, "_load_crontab", lambda: "PATH=/usr/bin:/bin:/tmp/uv-bin\n"
+    )
+    monkeypatch.setattr(
+        cli,
+        "_write_crontab",
+        lambda text: (_ for _ in ()).throw(AssertionError("should not write")),
+    )
+
+    changed = cli._ensure_crontab_path()
+
+    assert changed is False
