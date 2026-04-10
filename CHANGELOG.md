@@ -2,6 +2,19 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.3.0 — 2026-04-10
+
+### Added
+- Review diff now highlights added, removed, staged, and reviewed lines with softer theme-aware colors, and diff wrapping is enabled by default.
+
+### Changed
+- `faltoobot update` and `faltoobot configure` now update the user's crontab `PATH`, so cron jobs can find `faltoochat` and `faltoobot` more reliably.
+- Browser setup and login flows are now better aligned with real browser sign-in behavior.
+
+### Fixed
+- Non-WhatsApp CLI commands no longer fail on fresh macOS installs when `libmagic` is missing.
+- WhatsApp replies now include quoted-reply context more cleanly, truncate very long quoted messages, and keep voice-note transcripts in a single pass.
+
 ## 2.2.1 — 2026-04-08
 
 ### Changed
