@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import time
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
-from playwright.sync_api import BrowserType, Page, sync_playwright
+from playwright.sync_api import sync_playwright
 
 CDP_PORT = 9222
 PROFILE_DIR_NAME = "faltoobot"
@@ -18,37 +20,51 @@ def browser_profile_dir(root: Path) -> Path:
     return root / PROFILE_DIR_NAME
 
 
-def _page(context: object) -> Page:
-    pages = list(getattr(context, "pages", []))
-    if pages:
-        return pages[0]
-    return context.new_page()  # type: ignore[no-any-return]
+def default_browser_binary() -> str | None:
+    if sys.platform == "darwin":
+        chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if chrome.exists():
+            return str(chrome)
+        return None
+    for name in (
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+    ):
+        if binary := shutil.which(name):
+            return binary
+    return None
+
+
+def _browser_command(binary: str, profile_dir: Path, url: str | None) -> list[str]:
+    command = [
+        binary,
+        f"--user-data-dir={profile_dir}",
+        f"--remote-debugging-port={CDP_PORT}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if url:
+        command.append(url)
+    return command
 
 
 def open_browser(*, root: Path, binary: str, url: str | None = None) -> None:
     profile_dir = browser_profile_dir(root)
     profile_dir.mkdir(parents=True, exist_ok=True)
+    process = subprocess.Popen(_browser_command(binary, profile_dir, url))
 
-    with sync_playwright() as playwright:
-        browser_type: BrowserType = playwright.chromium
-        context = browser_type.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            executable_path=binary,
-            headless=False,
-            args=[f"--remote-debugging-port={CDP_PORT}"],
-        )
-        page = _page(context)
-        if url:
-            page.goto(url, wait_until="domcontentloaded")
-
-        print(f"Browser launched: {binary}")
-        print(f"CDP: http://127.0.0.1:{CDP_PORT}")
-        print(f"Profile: {profile_dir}")
-        print("Press Ctrl+C to close the browser.")
+    print(f"Browser launched: {binary}")
+    print(f"CDP: http://127.0.0.1:{CDP_PORT}")
+    print(f"Profile: {profile_dir}")
+    print("Press Ctrl+C to close the browser.")
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            context.close()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()

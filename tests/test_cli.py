@@ -289,7 +289,7 @@ def test_run_notify_command_reads_message_from_stdin(monkeypatch) -> None:
     assert "Hello from stdin" in message
 
 
-def test_run_browser_command_installs_playwright_when_binary_missing(
+def test_run_browser_command_installs_playwright_chrome_when_binary_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = make_config(tmp_path)
@@ -298,10 +298,9 @@ def test_run_browser_command_installs_playwright_when_binary_missing(
 
     monkeypatch.setattr(cli, "build_config", lambda: config)
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
+    installed = iter([None, "/tmp/chrome"])
     monkeypatch.setattr(
-        cli.browser_runtime,
-        "playwright_chromium_binary",
-        lambda: "/tmp/chromium",
+        cli.browser_runtime, "default_browser_binary", lambda: next(installed)
     )
     monkeypatch.setattr(
         cli.browser_runtime,
@@ -313,17 +312,17 @@ def test_run_browser_command_installs_playwright_when_binary_missing(
 
     cli.run_browser_command(cli.argparse.Namespace(url="https://example.com"), config)
 
-    assert calls == [(sys.executable, "-m", "playwright", "install", "chromium")]
+    assert calls == [(sys.executable, "-m", "playwright", "install", "chrome")]
     assert seen == {
         "root": str(config.root),
-        "binary": "/tmp/chromium",
+        "binary": "/tmp/chrome",
         "url": "https://example.com",
     }
     data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["browser"]["binary"] == "/tmp/chromium"
+    assert data["browser"]["binary"] == "/tmp/chrome"
 
 
-def test_run_configure_command_browser_mode_installs_playwright_chromium(
+def test_run_configure_command_browser_mode_installs_playwright_chrome(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = make_config(tmp_path)
@@ -331,18 +330,16 @@ def test_run_configure_command_browser_mode_installs_playwright_chromium(
 
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(
-        cli.browser_runtime,
-        "playwright_chromium_binary",
-        lambda: "/tmp/chromium",
+        cli.browser_runtime, "default_browser_binary", lambda: "/tmp/chrome"
     )
     monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 1)
     monkeypatch.setattr(cli, "_restart_service", lambda config: None)
 
     cli.run_configure_command(config, mode="browser")
 
-    assert calls == [(sys.executable, "-m", "playwright", "install", "chromium")]
+    assert calls == [(sys.executable, "-m", "playwright", "install", "chrome")]
     data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["browser"]["binary"] == "/tmp/chromium"
+    assert data["browser"]["binary"] == "/tmp/chrome"
 
 
 def test_run_browser_command_rejects_missing_configured_binary(

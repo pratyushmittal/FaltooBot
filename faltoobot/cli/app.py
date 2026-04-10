@@ -383,9 +383,14 @@ def _write_config(data: dict[str, dict[str, Any]], config_file: Path) -> None:
     config_file.write_text(render_config(data), encoding="utf-8")
 
 
-def _install_playwright_chromium() -> str:
-    _run_cmd(sys.executable, "-m", "playwright", "install", "chromium")
-    return browser_runtime.playwright_chromium_binary()
+def _install_playwright_chrome() -> str:
+    _run_cmd(sys.executable, "-m", "playwright", "install", "chrome")
+    binary = browser_runtime.default_browser_binary()
+    if binary:
+        return binary
+    raise SystemExit(
+        "Playwright installed Chrome, but Faltoobot could not find the browser binary."
+    )
 
 
 def _configure_browser(config: Config) -> None:
@@ -395,13 +400,13 @@ def _configure_browser(config: Config) -> None:
     browser = data["browser"]
     choice = _prompt_menu(
         "Browser setup",
-        ["Install Playwright Chromium", "Use custom browser binary"],
+        ["Install Playwright Chrome", "Use custom browser binary"],
         default=1,
     )
     if choice == 1:
         console.print()
-        console.print("Installing Playwright Chromium...")
-        data["browser"]["binary"] = _install_playwright_chromium()
+        console.print("Installing Playwright Chrome...")
+        data["browser"]["binary"] = _install_playwright_chrome()
     else:
         data["browser"]["binary"] = _prompt_text(
             "Browser binary",
@@ -418,9 +423,14 @@ def _ensure_browser_binary(config: Config) -> str:
         raise SystemExit(
             f"Configured browser binary not found: {config.browser_binary}"
         )
+    if binary := browser_runtime.default_browser_binary():
+        data = merge_config(load_toml(config.config_file))
+        data["browser"]["binary"] = binary
+        _write_config(data, config.config_file)
+        return binary
     console.print()
-    console.print("[cyan]Installing Playwright Chromium for browser use...[/]")
-    binary = _install_playwright_chromium()
+    console.print("[cyan]Installing Playwright Chrome for browser use...[/]")
+    binary = _install_playwright_chrome()
     data = merge_config(load_toml(config.config_file))
     data["browser"]["binary"] = binary
     _write_config(data, config.config_file)
