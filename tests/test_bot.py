@@ -14,6 +14,8 @@ from neonize.proto.waCommon.WACommon_pb2 import MessageKey
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
     AlbumMessage,
     AudioMessage,
+    ContextInfo,
+    ExtendedTextMessage,
     ImageMessage,
     Message,
     MessageAssociation,
@@ -108,6 +110,66 @@ def fake_album_event(*, message_id: str = "album-1", images: int = 2) -> Message
     )
     message = Message()
     message.albumMessage.CopyFrom(AlbumMessage(expectedImageCount=images))
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
+def _quoted_context(quoted_text: str) -> ContextInfo:
+    return ContextInfo(
+        stanzaID="quoted-1",
+        participant="15555555555555@lid",
+        remoteJID="15555555555555@lid",
+        quotedMessage=Message(conversation=quoted_text),
+    )
+
+
+def fake_reply_text_event(
+    *,
+    message_id: str = "reply-1",
+    text: str,
+    quoted_text: str,
+) -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+    )
+    message = Message()
+    message.extendedTextMessage.CopyFrom(
+        ExtendedTextMessage(text=text, contextInfo=_quoted_context(quoted_text))
+    )
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
+def fake_reply_audio_event(
+    *,
+    message_id: str = "voice-reply-1",
+    quoted_text: str,
+    audio_seconds: int = 7,
+) -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+    )
+    message = Message()
+    message.audioMessage.CopyFrom(
+        AudioMessage(
+            mimetype="audio/ogg",
+            seconds=audio_seconds,
+            PTT=True,
+            contextInfo=_quoted_context(quoted_text),
+        )
+    )
     return cast(
         MessageEv,
         SimpleNamespace(
@@ -361,8 +423,102 @@ async def test_process_message_transcribes_voice_notes(
     session = get_session(chat_key=chat_key)
     assert client.downloads == 1
     assert client.replies == ["Done"]
-    assert prompts == ["Call mom at 6"]
+
+    assert prompts == [
+        "The user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        "Call mom at 6"
+    ]
     assert get_messages(session)["message_ids"] == [event.Info.ID]
+
+
+@pytest.mark.anyio
+async def test_process_message_includes_reply_quote_text_in_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient()
+    prompts: list[str] = []
+
+    async def fake_get_answer(*, question: str, **_: object) -> str:
+        prompts.append(question)
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_reply_text_event(
+            text="Yes, do that", quoted_text="Please summarize the PDF"
+        ),
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.replies == ["Done"]
+    assert prompts == [
+        "The user is replying to an earlier message.\n\n"
+        "Earlier message:\n> Please summarize the PDF\n\n"
+        "User reply:\nYes, do that"
+    ]
+
+
+def test_prompt_with_reply_context_truncates_long_quotes() -> None:
+    earlier = "x" * 510
+    max_quoted_chars = 503
+
+    prompt = runtime._prompt_with_reply_context("ok", earlier)
+
+    assert "> " in prompt
+    assert "...\n\nUser reply:\nok" in prompt
+    assert (
+        len(prompt.split("Earlier message:\n", 1)[1].split("\n\nUser reply:", 1)[0])
+        <= max_quoted_chars
+    )
+
+
+@pytest.mark.anyio
+async def test_process_message_includes_reply_quote_text_for_voice_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient()
+    prompts: list[str] = []
+
+    async def fake_transcribe_audio(
+        openai_client: object,
+        audio_bytes: bytes,
+        *,
+        mimetype: str,
+        prompt: str,
+        model: str,
+    ) -> str:
+        return "Sure, tomorrow morning"
+
+    async def fake_get_answer(*, question: str, **_: object) -> str:
+        prompts.append(question)
+        return "Done"
+
+    monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_reply_audio_event(quoted_text="Can you send the update by tomorrow?"),
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.replies == ["Done"]
+    assert prompts == [
+        "The user is replying to an earlier message.\n\n"
+        "Earlier message:\n> Can you send the update by tomorrow?\n\n"
+        "User reply:\nThe user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        "Sure, tomorrow morning"
+    ]
 
 
 @pytest.mark.anyio
@@ -399,7 +555,7 @@ async def test_process_message_rejects_long_voice_notes(
 
 
 @pytest.mark.anyio
-async def test_audio_prompt_normalizes_urdu_script(
+async def test_audio_prompt_returns_transcript_without_second_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = FakePresenceClient()
@@ -411,19 +567,11 @@ async def test_audio_prompt_normalizes_urdu_script(
             calls.append("transcribe")
             return "ہیلو دنیا"
 
-    class FakeResponses:
-        async def create(self, **kwargs: object) -> SimpleNamespace:
-            calls.append("normalize")
-            assert kwargs["instructions"] == audio.SCRIPT_NORMALIZATION_PROMPT
-            assert kwargs["input"] == "ہیلو دنیا"
-            return SimpleNamespace(output_text="hello duniya")
-
     async def fake_close() -> None:
         return None
 
     openai_client = SimpleNamespace(
         audio=SimpleNamespace(transcriptions=FakeTranscriptions()),
-        responses=FakeResponses(),
         close=fake_close,
     )
 
@@ -434,11 +582,14 @@ async def test_audio_prompt_normalizes_urdu_script(
         event,
         openai_api_key="key",
         transcription_prompt="Use English letters only.",
-        normalization_model="gpt-5.4",
     )
 
-    assert transcript == "hello duniya"
-    assert calls == ["transcribe", "normalize"]
+    assert transcript == (
+        "The user sent a voice note. "
+        "The following text is a transcription of that voice note:\n\n"
+        "ہیلو دنیا"
+    )
+    assert calls == ["transcribe"]
 
 
 @pytest.mark.anyio
@@ -691,6 +842,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
             "chat": jid("15555550123", "s.whatsapp.net"),
             "message_ids": ["status-1"],
             "prompt": "/status",
+            "reply_to_text": "",
             "attachments": [],
             "audio": None,
         },
@@ -772,8 +924,6 @@ async def test_process_message_reset_creates_new_session_for_chat(
     ]
     assert get_messages(second)["messages"] == []
     assert get_messages(second)["message_ids"] == ["msg-1", "msg-2"]
-
-
 
 
 class _DummyClient:
@@ -872,6 +1022,7 @@ async def test_process_turn_locked_sends_notification_turn(
             "chat": jid("15555550123", "s.whatsapp.net"),
             "message_ids": ["notify_1"],
             "prompt": "queued user message",
+            "reply_to_text": "",
             "attachments": [],
             "audio": None,
         },
@@ -957,6 +1108,7 @@ async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
             "chat": jid("15555550123", "s.whatsapp.net"),
             "message_ids": ["notify_2"],
             "prompt": "queued user message",
+            "reply_to_text": "",
             "attachments": [],
             "audio": None,
         },

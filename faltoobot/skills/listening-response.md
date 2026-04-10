@@ -23,6 +23,7 @@ faltoobot notify "{chat_key}" "Morning news is ready." --source="cron:morning-ne
 
 If you do not pass a message argument, `faltoobot notify` reads the message body from stdin. Use `--source` to tell the bot why the notification arrived, for example `cron:morning-news`, `sub-agent:log-review`, or `hn-monitor.py`.
 
+
 ## Cron Job Example
 
 Send a morning news digest every day at 8 AM:
@@ -43,6 +44,8 @@ Other good cron use-cases:
 `faltoochat` is an AI agent installed on the system. You give it a task in natural language, and it works on that task using AI / LLMs. It can also take `--workspace` to run the task from that folder. The workspace can be a relative path.
 
 You can use `faltoochat` both for one-off sub-agent tasks and from cron jobs using natural-language prompts.
+
+Spawned subtasks for PRs, reviews, and other coding tasks should prefer background/async execution instead of blocking the main thread.
 
 You can run a background `faltoochat` task and forward its final output back into this chat through `faltoobot notify`.
 
