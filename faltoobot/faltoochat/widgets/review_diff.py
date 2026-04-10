@@ -1,7 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from rich.segment import Segment
 from rich.style import Style
@@ -31,18 +31,12 @@ from .review_comment_modal import ReviewCommentModal
 from .search_in_file import SearchInFile
 
 if TYPE_CHECKING:
+    from ..app import FaltooChatApp
     from ..review import ReviewView
 
 TAB_SWITCH_COOLDOWN = 0.2
 DIFF_MODE = "diff"
 ADD_MODE = "add"
-GUTTER_HIGHLIGHT_BLEND = 0.35
-GUTTER_HIGHLIGHT_COLORS = {
-    "removed": Color.parse("#b56f78"),
-    "added": Color.parse("#6fa06f"),
-    "staged": Color.parse("#6f8fb8"),
-    "reviewed": Color.parse("#c3a162"),
-}
 
 
 class DisplayRowContext(TypedDict):
@@ -73,8 +67,9 @@ class ReviewDiffView(TextArea):
             "[", "review_previous_modification", "Prev Edit", priority=True, show=True
         ),
         Binding("V", "review_select_line", "Select Line", priority=True, show=True),
-        Binding("W", "review_toggle_wrap", "Wrap", priority=True, show=True),
-        Binding("H", "review_toggle_line_highlights", "Highlights", priority=True, show=True),
+        Binding(
+            "H", "review_toggle_line_highlights", "Highlights", priority=True, show=True
+        ),
         Binding("n", "review_jump_next", "Next Search", priority=True, show=True),
         Binding("N", "review_jump_previous", "Prev Search", priority=True, show=True),
         Binding("*", "review_search_word_under_cursor", priority=True, show=False),
@@ -107,7 +102,7 @@ class ReviewDiffView(TextArea):
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
         self.missing_language_package: str | None = None
-        kwargs.setdefault("soft_wrap", False)
+        kwargs.setdefault("soft_wrap", True)
         super().__init__("", language=None, **kwargs)
         self._load_diff_text()
         _register_extra_languages(self)
@@ -148,7 +143,7 @@ class ReviewDiffView(TextArea):
         # visible cursor and scroll position after the diff text is ready.
         if await self.review_view.close_stale_file(self.file_path):
             return
-        workspace = self.app.workspace  # type: ignore[attr-defined]
+        workspace = cast("FaltooChatApp", self.app).workspace
         cursor = self.cursor_location
         selection = self.selection
         scroll_x, scroll_y = self.scroll_offset
@@ -223,7 +218,9 @@ class ReviewDiffView(TextArea):
     def _gutter_strip(self, context: DisplayRowContext) -> Strip:
         gutter_style = _gutter_base_style(self, context["document_line"])
         gutter_width_no_margin = self.gutter_width - 2
-        gutter_text = "" if context["line_number"] is None else str(context["line_number"])
+        gutter_text = (
+            "" if context["line_number"] is None else str(context["line_number"])
+        )
         line_width = max(0, gutter_width_no_margin - 1)
         return Strip(
             [
@@ -312,11 +309,6 @@ class ReviewDiffView(TextArea):
         self.mode = ADD_MODE if self.mode == DIFF_MODE else DIFF_MODE
         self._load_diff_text()
 
-    def action_review_toggle_wrap(self) -> None:
-        self.review_view.set_display_preferences(
-            soft_wrap=not self.review_view.soft_wrap_enabled,
-        )
-
     def action_review_toggle_line_highlights(self) -> None:
         self.review_view.set_display_preferences(
             line_highlights=not self.review_view.line_highlights,
@@ -362,7 +354,9 @@ class ReviewDiffView(TextArea):
             if pane.id is not None and pane.query(ReviewDiffView)
         ]
         while pane_ids:
-            current_index = pane_ids.index(tabs.active) if tabs.active in pane_ids else 0
+            current_index = (
+                pane_ids.index(tabs.active) if tabs.active in pane_ids else 0
+            )
             next_id = pane_ids[(current_index + delta) % len(pane_ids)]
             viewer = tabs.get_pane(next_id).query_one(ReviewDiffView)
             if not await self.review_view.close_stale_file(viewer.file_path):
@@ -494,7 +488,7 @@ class ReviewDiffView(TextArea):
     async def action_review_stage_lines(self) -> None:
         await self.reload_in_place()
         start, end = _review_range(self)
-        workspace = self.app.workspace  # type: ignore[attr-defined]
+        workspace = cast("FaltooChatApp", self.app).workspace
         target = get_selected_change_state(
             self.diff, self._visible_diff_line(self.cursor_location[0]), start, end
         )
@@ -518,7 +512,7 @@ class ReviewDiffView(TextArea):
         await self.reload_in_place()
 
     async def action_review_stage_file(self) -> None:
-        workspace = self.app.workspace  # type: ignore[attr-defined]
+        workspace = cast("FaltooChatApp", self.app).workspace
         if error := await asyncio.to_thread(stage_file, workspace, self.file_path):
             self.app.notify(error, severity="warning")
             return
@@ -585,20 +579,28 @@ def _apply_line_highlight(
     segments = []
     for segment in strip._segments:
         current = Style() if segment.style is None else segment.style
-        background = None if current.bgcolor is None else Color.from_rich_color(current.bgcolor)
+        background = (
+            None if current.bgcolor is None else Color.from_rich_color(current.bgcolor)
+        )
         if segment.control or background != base_background:
             segments.append(segment)
             continue
         segments.append(
-            Segment(segment.text, current + Style(bgcolor=style.bgcolor), segment.control)
+            Segment(
+                segment.text, current + Style(bgcolor=style.bgcolor), segment.control
+            )
         )
     return Strip(segments, strip.cell_length)
 
 
 def _content_base_style(view: ReviewDiffView, document_line: int) -> Style:
     theme = view._theme
-    if theme and view.highlight_cursor_line and view.cursor_location[0] == document_line:
-        return theme.cursor_line_style
+    if (
+        theme
+        and view.highlight_cursor_line
+        and view.cursor_location[0] == document_line
+    ):
+        return theme.cursor_line_style or view.rich_style
     if theme and theme.base_style is not None:
         return theme.base_style
     return view.rich_style
@@ -607,9 +609,9 @@ def _content_base_style(view: ReviewDiffView, document_line: int) -> Style:
 def _gutter_base_style(view: ReviewDiffView, document_line: int) -> Style:
     theme = view._theme
     if theme and view.cursor_location[0] == document_line:
-        return theme.cursor_line_gutter_style
+        return theme.cursor_line_gutter_style or view.rich_style
     if theme:
-        return theme.gutter_style
+        return theme.gutter_style or view.rich_style
     return view.rich_style
 
 
@@ -660,17 +662,30 @@ def _style_background(style: Style) -> Color | None:
     return None if style.bgcolor is None else Color.from_rich_color(style.bgcolor)
 
 
-def _gutter_target_color(view: ReviewDiffView, diff_line: int) -> Color | None:
+def _get_target_color(
+    view: ReviewDiffView,
+    diff_line: int,
+    *,
+    base: Color,
+) -> Color | None:
+    theme = view.app.current_theme
+    shift = theme.luminosity_spread * 2
+    blending = 0.25
     if diff_line in _commented_lines(view):
-        return GUTTER_HIGHLIGHT_COLORS["reviewed"]
-    line = view.diff[diff_line]
-    if line["is_staged"] and line["type"] in {"+", "-"}:
-        return GUTTER_HIGHLIGHT_COLORS["staged"]
-    if line["type"] == "-":
-        return GUTTER_HIGHLIGHT_COLORS["removed"]
-    if line["type"] == "+":
-        return GUTTER_HIGHLIGHT_COLORS["added"]
-    return None
+        target = Color.parse(theme.primary).lighten(shift)
+    else:
+        line = view.diff[diff_line]
+        if line["is_staged"] and line["type"] in {"+", "-"}:
+            staged = theme.secondary or theme.primary
+            target = Color.parse(staged).lighten(shift)
+            blending = 0.18
+        elif line["type"] == "-":
+            target = Color.parse(theme.error).lighten(shift)
+        elif line["type"] == "+":
+            target = Color.parse(theme.success).lighten(shift)
+        else:
+            return None
+    return base.blend(target, blending)
 
 
 def _line_highlight_style(
@@ -681,12 +696,14 @@ def _line_highlight_style(
 ) -> Style:
     if not view.line_highlights:
         return Style()
-    if (target := _gutter_target_color(view, diff_line)) is None:
-        return Style()
-    base = _style_background(base_style or Style()) or _style_background(view.rich_style) or Color.parse("#232323")
-    return Style(
-        bgcolor=base.blend(target, GUTTER_HIGHLIGHT_BLEND).rich_color,
+    base = (
+        _style_background(base_style or Style())
+        or _style_background(view.rich_style)
+        or Color.parse("#232323")
     )
+    if (target := _get_target_color(view, diff_line, base=base)) is None:
+        return Style()
+    return Style(bgcolor=target.rich_color)
 
 
 def _gutter_symbol(view: ReviewDiffView, diff_line: int) -> str:

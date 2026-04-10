@@ -1,7 +1,7 @@
-from rich.style import Style
 from textual.color import Color
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 from faltoobot.faltoochat.diff import Diff, get_diff
 from faltoobot.faltoochat.git import (
@@ -17,8 +17,6 @@ from faltoobot.faltoochat.editor_utils import (
     word_under_cursor,
 )
 from faltoobot.faltoochat.widgets.review_diff import (
-    GUTTER_HIGHLIGHT_BLEND,
-    GUTTER_HIGHLIGHT_COLORS,
     ReviewDiffView,
     _line_highlight_style,
     _review_range,
@@ -26,6 +24,28 @@ from faltoobot.faltoochat.widgets.review_diff import (
 
 
 EXPECTED_GUTTER_WIDTH = 6
+
+
+def _set_theme_colors(monkeypatch) -> dict[str, Color]:
+    colors = {
+        "error_light": Color.parse("#b56f78").lighten(0.30),
+        "success_light": Color.parse("#6fa06f").lighten(0.30),
+        "primary_light": Color.parse("#6f8fb8").lighten(0.30),
+        "secondary_light": Color.parse("#4a6fa5").lighten(0.30),
+    }
+
+    class ThemeStub:
+        error = "#b56f78"
+        success = "#6fa06f"
+        primary = "#6f8fb8"
+        secondary = "#4a6fa5"
+        luminosity_spread = 0.15
+
+    class AppStub:
+        current_theme = ThemeStub()
+
+    monkeypatch.setattr(ReviewDiffView, "app", property(lambda self: AppStub()))
+    return colors
 
 
 class ReviewViewStub:
@@ -99,27 +119,22 @@ def test_selected_patch_stages_insertions_at_the_right_location(tmp_path: Path) 
     )
 
 
-
-
-def test_review_diff_highlights_tint_the_full_line_background() -> None:
+def test_review_diff_highlights_tint_the_full_line_background(monkeypatch) -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "+", "text": "added"}],
         file_path=Path("alpha.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
         show_line_numbers=True,
     )
+    colors = _set_theme_colors(monkeypatch)
     viewer.line_highlights = True
-    base_style = Style(bgcolor="#1f1f1f")
+    base = Color.parse("#232323")
+    style = _line_highlight_style(viewer, 0)
 
-    style = _line_highlight_style(viewer, 0, base_style=base_style)
-
-    assert style.bgcolor == Color.parse("#1f1f1f").blend(
-        GUTTER_HIGHLIGHT_COLORS["added"],
-        GUTTER_HIGHLIGHT_BLEND,
-    ).rich_color
+    assert style.bgcolor == base.blend(colors["success_light"], 0.25).rich_color
 
 
-def test_review_diff_highlight_colors_match_status_priority() -> None:
+def test_review_diff_highlight_colors_match_status_priority(monkeypatch) -> None:
     review_view = review_view_stub()
     review_view.reviews = [
         {
@@ -136,38 +151,27 @@ def test_review_diff_highlight_colors_match_status_priority() -> None:
             {"is_staged": True, "type": "+", "text": "staged"},
         ],
         file_path=Path("alpha.py"),
-        review_view=review_view,  # type: ignore[arg-type]
+        review_view=cast(Any, review_view),
     )
+    colors = _set_theme_colors(monkeypatch)
     viewer.line_highlights = True
-    base_style = Style(color="#808080", bgcolor="#1f1f1f")
+    base = Color.parse("#232323")
+    reviewed = _line_highlight_style(viewer, 0)
+    removed = _line_highlight_style(viewer, 1)
+    added = _line_highlight_style(viewer, 2)
+    staged = _line_highlight_style(viewer, 3)
 
-    reviewed = _line_highlight_style(viewer, 0, base_style=base_style)
-    removed = _line_highlight_style(viewer, 1, base_style=base_style)
-    added = _line_highlight_style(viewer, 2, base_style=base_style)
-    staged = _line_highlight_style(viewer, 3, base_style=base_style)
+    assert reviewed.bgcolor == base.blend(colors["primary_light"], 0.25).rich_color
+    assert removed.bgcolor == base.blend(colors["error_light"], 0.25).rich_color
+    assert added.bgcolor == base.blend(colors["success_light"], 0.25).rich_color
+    assert staged.bgcolor == base.blend(colors["secondary_light"], 0.18).rich_color
 
-    assert reviewed.bgcolor == Color.parse("#1f1f1f").blend(
-        GUTTER_HIGHLIGHT_COLORS["reviewed"],
-        GUTTER_HIGHLIGHT_BLEND,
-    ).rich_color
-    assert removed.bgcolor == Color.parse("#1f1f1f").blend(
-        GUTTER_HIGHLIGHT_COLORS["removed"],
-        GUTTER_HIGHLIGHT_BLEND,
-    ).rich_color
-    assert added.bgcolor == Color.parse("#1f1f1f").blend(
-        GUTTER_HIGHLIGHT_COLORS["added"],
-        GUTTER_HIGHLIGHT_BLEND,
-    ).rich_color
-    assert staged.bgcolor == Color.parse("#1f1f1f").blend(
-        GUTTER_HIGHLIGHT_COLORS["staged"],
-        GUTTER_HIGHLIGHT_BLEND,
-    ).rich_color
 
 def test_review_diff_gutter_width_reserves_space_for_diff_symbol() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(105)],
         file_path=Path("alpha.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
         show_line_numbers=True,
     )
 
@@ -178,7 +182,7 @@ def test_review_diff_falls_back_to_plain_text_for_missing_language() -> None:
     viewer = ReviewDiffView(
         [],
         file_path=Path("alpha.rb"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
         language="ruby",
     )
 
@@ -190,7 +194,7 @@ def test_review_diff_registers_typescript_languages() -> None:
     viewer = ReviewDiffView(
         [],
         file_path=Path("alpha.ts"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
     )
 
     assert "typescript" in viewer.available_languages
@@ -206,7 +210,7 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode() -> None:
             {"is_staged": False, "type": "", "text": "c = 3"},
         ],
         file_path=Path("alpha.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
     )
 
     viewer.action_review_cycle_mode()
@@ -227,7 +231,7 @@ def test_review_range_uses_selected_text_to_include_last_selected_line() -> None
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(10)],
         file_path=Path("alpha.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
     )
     viewer.selection = type(viewer.selection)((2, 0), (8, 0))
 
@@ -287,7 +291,7 @@ def test_jump_to_file_line_skips_deleted_lines() -> None:
             {"is_staged": False, "type": "+", "text": "e = 50"},
         ],
         file_path=Path("alpha.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
     )
 
     viewer.jump_to_file_line(4)
@@ -302,7 +306,7 @@ def test_review_next_word_and_previous_word() -> None:
             {"is_staged": False, "type": "", "text": "gamma delta"},
         ],
         file_path=Path("alpha.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
     )
     viewer.move_cursor((0, 1), record_width=False)
     viewer.action_review_next_word()
@@ -320,7 +324,7 @@ def test_word_under_cursor_uses_current_word() -> None:
             {"is_staged": True, "type": "+", "text": 'value = "beta staged"'},
         ],
         file_path=Path("beta.py"),
-        review_view=review_view_stub(),  # type: ignore[arg-type]
+        review_view=cast(Any, review_view_stub()),
     )
     viewer.move_cursor((1, 10), record_width=False)
 

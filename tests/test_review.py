@@ -2,6 +2,7 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from textual.app import App, ComposeResult
@@ -304,18 +305,11 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
         await pilot.pause(0)
         assert viewer.cursor_location == (5, 0)
 
-        assert viewer.soft_wrap is False
-        await pilot.press("W")
-        await pilot.pause(0)
         assert viewer.soft_wrap is True
-        await pilot.press("W")
-        await pilot.pause(0)
-        assert viewer.soft_wrap is False
-
 
 
 @pytest.mark.anyio
-async def test_review_diff_wrap_and_highlight_toggles_apply_app_wide(
+async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wide(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -338,12 +332,12 @@ async def test_review_diff_wrap_and_highlight_toggles_apply_app_wide(
         alpha_viewer.focus()
         await pilot.pause(0)
 
-        assert alpha_viewer.soft_wrap is False
-        assert beta_viewer.soft_wrap is False
+        assert alpha_viewer.soft_wrap is True
+        assert beta_viewer.soft_wrap is True
         assert alpha_viewer.line_highlights is False
         assert beta_viewer.line_highlights is False
 
-        await pilot.press("W", "H")
+        await pilot.press("H")
         await pilot.pause(0)
 
         assert alpha_viewer.soft_wrap is True
@@ -454,7 +448,11 @@ async def test_review_multiline_selection_keeps_gutter_and_padding_highlights(
         )
         await pilot.pause(0)
 
-        selection_bg = viewer._theme.selection_style.bgcolor
+        selection_bg = (
+            viewer._theme.selection_style.bgcolor
+            if viewer._theme and viewer._theme.selection_style
+            else None
+        )
         after_gutter = [
             segment.style.bgcolor if segment.style else None
             for segment in viewer.render_line(1).crop(0, viewer.gutter_width)._segments
@@ -659,21 +657,31 @@ async def test_review_tab_cycle_closes_deleted_untracked_file(
         await pilot.pause(0.3)
         await pilot.press("tab")
         await pilot.pause(0.3)
-        assert next(
-            str(pane._title)
-            for pane in review_file_panes(app.query_one("#review-tabs", TabbedContent))
-            if pane.id == app.query_one("#review-tabs", TabbedContent).active
-        ) == "randomfile"
+        assert (
+            next(
+                str(pane._title)
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+                if pane.id == app.query_one("#review-tabs", TabbedContent).active
+            )
+            == "randomfile"
+        )
 
         (workspace / "randomfile").unlink()
 
         await pilot.press("shift+tab")
         await pilot.pause(0.3)
-        assert next(
-            str(pane._title)
-            for pane in review_file_panes(app.query_one("#review-tabs", TabbedContent))
-            if pane.id == app.query_one("#review-tabs", TabbedContent).active
-        ) == "beta.py"
+        assert (
+            next(
+                str(pane._title)
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+                if pane.id == app.query_one("#review-tabs", TabbedContent).active
+            )
+            == "beta.py"
+        )
 
         await pilot.press("tab")
         await pilot.pause(0.3)
@@ -683,11 +691,14 @@ async def test_review_tab_cycle_closes_deleted_untracked_file(
             "alpha.py",
             "beta.py",
         }
-        assert next(
-            str(pane._title)
-            for pane in review_file_panes(review_tabs)
-            if pane.id == review_tabs.active
-        ) == "alpha.py"
+        assert (
+            next(
+                str(pane._title)
+                for pane in review_file_panes(review_tabs)
+                if pane.id == review_tabs.active
+            )
+            == "alpha.py"
+        )
 
 
 @pytest.mark.anyio
@@ -723,11 +734,16 @@ async def test_review_reopen_closes_deleted_untracked_active_file(
         await pilot.pause(0.3)
         await pilot.press("tab")
         await pilot.pause(0.3)
-        assert next(
-            str(pane._title)
-            for pane in review_file_panes(app.query_one("#review-tabs", TabbedContent))
-            if pane.id == app.query_one("#review-tabs", TabbedContent).active
-        ) == "randomfile"
+        assert (
+            next(
+                str(pane._title)
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+                if pane.id == app.query_one("#review-tabs", TabbedContent).active
+            )
+            == "randomfile"
+        )
 
         (workspace / "randomfile").unlink()
 
@@ -1251,9 +1267,18 @@ async def test_search_project_warns_when_rg_missing(
             yield Static("ready")
 
     app = ModalApp()
-    app.notify = lambda message, *, severity="information", **_kwargs: seen.append(  # type: ignore[method-assign]
-        (message, severity)
-    )
+
+    def fake_notify(
+        message: str,
+        *,
+        title: str = "",
+        severity: str = "information",
+        timeout: int | float | None = None,
+        markup: bool = True,
+    ) -> None:
+        seen.append((message, severity))
+
+    app.notify = cast(Any, fake_notify)
 
     async with app.run_test() as pilot:
         app.push_screen(SearchProject(workspace=Path(".")))

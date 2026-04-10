@@ -145,7 +145,7 @@ class ReviewView(TabPane):
         self.extra_paths: list[Path] = []
         self.search_term = ""
         self.search_whole_word = False
-        self.soft_wrap_enabled = False
+        self.soft_wrap_enabled = True
         self.line_highlights = False
 
     def compose(self) -> ComposeResult:
@@ -180,6 +180,7 @@ class ReviewView(TabPane):
         soft_wrap: bool | None = None,
         line_highlights: bool | None = None,
     ) -> None:
+        """Apply shared display preferences to all open review diff viewers."""
         if soft_wrap is not None:
             self.soft_wrap_enabled = soft_wrap
         if line_highlights is not None:
@@ -225,7 +226,8 @@ class ReviewView(TabPane):
         )
 
     def action_review_search_project(self) -> None:
-        workspace = self.app.workspace  # type: ignore[attr-defined]
+        app = cast("FaltooChatApp", self.app)
+        workspace = app.workspace
 
         def on_result(result: "ProjectSearchResult | None") -> None:
             if result is None:
@@ -237,7 +239,6 @@ class ReviewView(TabPane):
                 )
             )
 
-        app = cast("FaltooChatApp", self.app)
         app.push_screen(SearchProject(workspace=workspace), on_result)
 
     def set_active_tab(self, path: Path) -> bool:
@@ -252,7 +253,7 @@ class ReviewView(TabPane):
         return True
 
     async def close_stale_file(self, path: Path) -> bool:
-        workspace = self.app.workspace  # type: ignore[attr-defined]
+        workspace = cast("FaltooChatApp", self.app).workspace
         if (workspace / path).exists():
             return False
         _message, files = await asyncio.to_thread(
@@ -353,7 +354,7 @@ class ReviewView(TabPane):
             return
 
         active_path = None if self.active_pane is None else self.active_pane.file_path
-        workspace = self.app.workspace  # type: ignore[attr-defined]
+        workspace = cast("FaltooChatApp", self.app).workspace
 
         if close_unmodified:
             message, files = await asyncio.to_thread(_get_modified_files, workspace)
