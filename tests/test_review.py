@@ -1509,6 +1509,31 @@ async def test_review_file_modal_uses_option_index_for_selection() -> None:
 
 
 @pytest.mark.anyio
+async def test_review_modal_keeps_long_code_scrollable() -> None:
+    from textual.containers import VerticalScroll
+    from textual.widgets import Static
+
+    class ModalApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("ready")
+
+    app = ModalApp()
+    code = "\n".join(f"line {index}" for index in range(40))
+
+    async with app.run_test() as pilot:
+        app.push_screen(ReviewCommentModal(Path("gamma.py"), 1, 40, code))
+        await pilot.pause(0)
+
+        modal = app.screen
+        assert isinstance(modal, ReviewCommentModal)
+        code_scroll = modal.query_one("#review-comment-code-scroll", VerticalScroll)
+        dialog = modal.query_one("#review-comment-dialog")
+        comment_input = modal.query_one("#review-comment-input", TextArea)
+        assert dialog.outer_size.height == min(modal.size.height - 4, round(modal.size.width * 2 / 3))
+        assert code_scroll.outer_size.height > comment_input.outer_size.height
+
+
+@pytest.mark.anyio
 async def test_review_modal_treats_code_as_plain_text() -> None:
     from textual.widgets import Static
 
