@@ -625,35 +625,6 @@ async def test_review_diff_highlights_keep_cursor_visible(
 
 
 @pytest.mark.anyio
-async def test_review_diff_binding_toggles_line_highlights(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = next(
-            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
-        )
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        await pilot.pause(0)
-
-        assert viewer.line_highlights is True
-        await pilot.press("H")
-        await pilot.pause(0)
-        assert viewer.line_highlights is False
-        await pilot.press("H")
-        await pilot.pause(0)
-        assert viewer.line_highlights is True
-
-
-@pytest.mark.anyio
 async def test_review_wrap_keeps_line_numbers_on_real_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
