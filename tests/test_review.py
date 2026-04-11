@@ -177,6 +177,17 @@ async def open_review(app: FaltooChatApp, pilot) -> TabbedContent:
     return app.query_one("#review-tabs", TabbedContent)
 
 
+def assert_review_search_bindings(app: FaltooChatApp) -> None:
+    bindings = app.screen.active_bindings
+    descriptions = {binding.binding.description for binding in bindings.values()}
+    assert "Next Change" in descriptions
+    assert "Previous Change" in descriptions
+    assert "Next Match" in descriptions
+    assert "Previous Match" in descriptions
+    assert "Search File" in descriptions
+    assert bindings["escape"].binding.description == "Exit Search"
+
+
 @pytest.mark.anyio
 async def test_review_search_project_opens_with_no_modified_files(
     tmp_path: Path,
@@ -1344,7 +1355,7 @@ async def test_telescope_debounces_callable_searches() -> None:
         app.push_screen(
             Telescope[str](
                 items=lambda query: seen.append(query) or [query],
-                title="Search",
+                title="Search File",
                 placeholder="Type",
             )
         )
@@ -1681,61 +1692,6 @@ async def test_review_modal_supports_multiline_comments(
         assert app.query_one(ReviewView).reviews[-1]["comment"] == "Line1\nLine2"
 
 
-@pytest.mark.anyio
-async def test_review_footer_bindings_follow_search_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = next(
-            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
-        )
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        await pilot.pause(0)
-
-        bindings = app.screen.active_bindings
-        descriptions = {binding.binding.description for binding in bindings.values()}
-        assert "Next Edit" in descriptions
-        assert "Prev Edit" in descriptions
-        assert "Next Search" in descriptions
-        assert "Prev Search" in descriptions
-        assert "Search" in descriptions
-        assert bindings["escape"].binding.description == "Leave Search"
-
-        await pilot.press("/")
-        await pilot.pause(0)
-        search_modal = app.screen
-        search_input = search_modal.query_one("#review-search-input")
-        await pilot.click(search_input)
-        await pilot.press("5", "0", "enter")
-        await pilot.pause(0)
-
-        bindings = app.screen.active_bindings
-        descriptions = {binding.binding.description for binding in bindings.values()}
-        assert "Next Edit" in descriptions
-        assert "Prev Edit" in descriptions
-        assert "Next Search" in descriptions
-        assert "Prev Search" in descriptions
-        assert bindings["escape"].binding.description == "Leave Search"
-
-        await pilot.press("escape")
-        await pilot.pause(0)
-
-        bindings = app.screen.active_bindings
-        descriptions = {binding.binding.description for binding in bindings.values()}
-        assert "Next Edit" in descriptions
-        assert "Prev Edit" in descriptions
-        assert "Next Search" in descriptions
-        assert "Prev Search" in descriptions
-        assert bindings["escape"].binding.description == "Leave Search"
 
 
 @pytest.mark.anyio
@@ -1756,6 +1712,9 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
 
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
+        await pilot.pause(0)
+
+        assert_review_search_bindings(app)
 
         await pilot.press("/")
         await pilot.pause(0)
@@ -1767,6 +1726,7 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
 
         assert app.query_one(ReviewView).search_term == "50"
         assert viewer.cursor_location == (6, 4)
+        assert_review_search_bindings(app)
 
         await pilot.press("n")
         await pilot.pause(0)
@@ -1776,3 +1736,4 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
         await pilot.pause(0)
 
         assert app.query_one(ReviewView).search_term == ""
+        assert_review_search_bindings(app)

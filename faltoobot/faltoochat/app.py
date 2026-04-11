@@ -32,6 +32,7 @@ from faltoobot.faltoochat.terminal import (
     textual_theme_from_terminal,
 )
 from faltoobot.gpt_utils import MessageItem
+from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
     decompose_local_message_item,
     get_local_user_message_item,
@@ -46,7 +47,7 @@ from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
 from .review import ReviewView
 from .stream import get_event_text
-from .widgets import QueueWidget
+from .widgets import BindingsErrorModal, QueueWidget
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
@@ -91,18 +92,6 @@ async def _write_stream_chunk(
 
 
 class FaltooChatApp(App[None]):
-    BINDINGS = [
-        Binding("ctrl+1", "show_chat_tab", "Chat", priority=True, show=False),
-        Binding("ctrl+2", "show_review_tab", "Review", priority=True, show=False),
-        Binding(
-            "ctrl+r",
-            "toggle_review_tab",
-            "Toggle Review",
-            priority=True,
-            show=False,
-        ),
-    ]
-
     CSS = """
     App {
         color: $text;
@@ -254,6 +243,8 @@ class FaltooChatApp(App[None]):
         self,
         session: sessions.Session,
     ) -> None:
+        self._keybindings, self._binding_errors = load_keybindings()
+        apply_faltoochat_keybindings(self._keybindings)
         self._persist_theme_changes = False
         super().__init__()
         if (saved_theme := load_textual_theme()) in self.available_themes:
@@ -265,6 +256,7 @@ class FaltooChatApp(App[None]):
         self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.is_answering = False
         self._is_polling_notifications = False
+
 
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)
@@ -349,6 +341,8 @@ class FaltooChatApp(App[None]):
         self.query_one("#slash-commands", OptionList).display = False
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
         await self.queue().refresh_queue()
+        if self._binding_errors:
+            self.push_screen(BindingsErrorModal("\n".join(self._binding_errors)))
         self.set_interval(1.0, self._poll_notifications)
 
     def _poll_notifications(self) -> None:

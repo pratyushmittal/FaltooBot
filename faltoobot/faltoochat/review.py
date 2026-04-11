@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, TypeAlias, cast
 
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
-from textual.binding import Binding
 from textual.widgets import Static, TabbedContent, TabPane, Tabs
+
 
 from .git import get_unstaged_files, is_git_workspace
 from .review_api import Review, Reviews, review_to_message_item, upsert_review
@@ -102,13 +102,6 @@ class ReviewEmpty(Static):
 
 
 class ReviewView(TabPane):
-    BINDINGS = [
-        Binding(
-            "@", "review_search_project", "Search Project", priority=True, show=True
-        ),
-        Binding("R", "review_refresh_files", "Refresh Files", priority=True, show=True),
-    ]
-
     DEFAULT_CSS = """
     ReviewView {
         width: 1fr;

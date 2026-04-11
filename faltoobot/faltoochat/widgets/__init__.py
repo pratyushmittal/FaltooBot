@@ -1,3 +1,4 @@
+from .modal import BindingsErrorModal, TextModal
 from .queue import QueueWidget
 from .review_comment_modal import ReviewCommentModal
 from .review_diff import ReviewDiffView
@@ -7,6 +8,7 @@ from .search_in_file import SearchInFile
 from .telescope import Telescope
 
 __all__ = [
+    "BindingsErrorModal",
     "QueueWidget",
     "ReviewCommentModal",
     "ReviewDiffView",
@@ -14,4 +16,5 @@ __all__ = [
     "SearchInFile",
     "SearchProject",
     "Telescope",
+    "TextModal",
 ]
