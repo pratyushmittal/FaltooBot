@@ -2,11 +2,11 @@ import argparse
 import asyncio
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
 from textual import events, getters
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import (
@@ -47,7 +47,7 @@ from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
 from .review import ReviewView
 from .stream import get_event_text
-from .widgets import BindingsErrorModal, QueueWidget
+from .widgets import BindingsErrorModal, KeybindingsModal, QueueWidget
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
@@ -257,6 +257,13 @@ class FaltooChatApp(App[None]):
         self.is_answering = False
         self._is_polling_notifications = False
 
+    def get_system_commands(self, screen) -> Iterable[SystemCommand]:
+        yield from super().get_system_commands(screen)
+        yield SystemCommand(
+            "Keybindings",
+            "Show all current keybindings",
+            lambda: self.push_screen(KeybindingsModal.from_screen(self, screen)),
+        )
 
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)

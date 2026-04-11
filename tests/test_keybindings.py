@@ -3,18 +3,35 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import TabbedContent, TabPane
+from textual.widgets import Static, TabbedContent, TabPane
 
 from faltoobot import sessions
+from faltoobot.config import app_root
 from faltoobot.faltoochat.app import FaltooChatApp
+from faltoobot.faltoochat.widgets.modal import TextModal
 from faltoobot.faltoochat.widgets.review_diff import ReviewDiffView
 from faltoobot.keybindings import (
     default_keybindings,
     load_keybindings,
 )
 
+class DemoModal(TextModal):
+    modal_title = "Demo"
+
+
+class DemoApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield Static("demo")
+
+
+TEXT_MODAL_DEFAULT_WIDTH = 96
+TEXT_MODAL_DEFAULT_HEIGHT = 24
+
+
 EXPECTED_DEFAULT_APP_BINDINGS = [
+
     {
         "key": "ctrl+1",
         "action": "show_chat_tab",
@@ -471,6 +488,21 @@ def test_load_keybindings_overrides_review_actions_and_supports_explicit_unbind(
 
 
 @pytest.mark.anyio
+async def test_text_modal_uses_default_dimensions_when_not_overridden() -> None:
+    class AppWithModal(DemoApp):
+        def on_mount(self) -> None:
+            self.push_screen(DemoModal("hello"))
+
+    app = AppWithModal()
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        dialog = app.screen.query_one("#text-modal-dialog")
+        assert dialog.styles.width.value == TEXT_MODAL_DEFAULT_WIDTH
+        assert dialog.styles.height.value == TEXT_MODAL_DEFAULT_HEIGHT
+
+
+@pytest.mark.anyio
 async def test_app_keeps_default_command_palette_binding_without_bindings_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -506,6 +538,69 @@ async def test_app_uses_command_palette_binding_override_from_bindings_toml(
         assert app.screen.__class__.__name__ == "CommandPalette"
 
 
+@pytest.mark.anyio
+async def test_app_system_commands_include_keybindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _workspace, app = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        titles = {command.title for command in app.get_system_commands(app.screen)}
+        assert "Keybindings" in titles
+
+
+@pytest.mark.anyio
+async def test_keybindings_system_command_opens_modal_with_current_bindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    _write_bindings(
+        home,
+        '[app]\ncommand_palette = ["ctrl+k"]\n\n[review]\nreview_next_modification = ["z", "x"]\n',
+    )
+    workspace, app = _build_app(tmp_path, monkeypatch)
+    _create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await _open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.pause(0)
+
+        key_display = app.get_key_display(
+            app.screen.active_bindings[app.COMMAND_PALETTE_BINDING].binding
+        )
+        command = next(
+            command
+            for command in app.get_system_commands(app.screen)
+            if command.title == "Keybindings"
+        )
+        command.callback()
+        await pilot.pause(0)
+
+        assert app.screen.__class__.__name__ == "KeybindingsModal"
+        subheading = app.screen.query_one("#keybindings-subheading").render().plain
+        content = app.screen.query_one("#keybindings-content").render().plain
+        assert "Action" not in content
+        assert key_display in content
+        assert "Command Palette" in content
+        assert str(app_root() / "bindings.toml") in subheading
+        assert any(
+            (("z, x" in line) or ("x, z" in line)) and "Next Change" in line
+            for line in content.splitlines()
+        )
+        assert "review_next_modification" not in content
+        assert "Copy" not in content
+        assert "Paste" not in content
 
 
 def test_load_keybindings_reports_unknown_context_and_unknown_action(

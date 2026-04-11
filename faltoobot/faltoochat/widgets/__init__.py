@@ -1,4 +1,4 @@
-from .modal import BindingsErrorModal, TextModal
+from .modal import BindingsErrorModal, KeybindingsModal, TextModal
 from .queue import QueueWidget
 from .review_comment_modal import ReviewCommentModal
 from .review_diff import ReviewDiffView
@@ -9,6 +9,7 @@ from .telescope import Telescope
 
 __all__ = [
     "BindingsErrorModal",
+    "KeybindingsModal",
     "QueueWidget",
     "ReviewCommentModal",
     "ReviewDiffView",
