@@ -13,3 +13,4 @@ website/dist/
 website/.astro/
 
 .coverage
+dist/

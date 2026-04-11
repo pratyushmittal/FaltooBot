@@ -177,6 +177,17 @@ async def open_review(app: FaltooChatApp, pilot) -> TabbedContent:
     return app.query_one("#review-tabs", TabbedContent)
 
 
+def assert_review_search_bindings(app: FaltooChatApp) -> None:
+    bindings = app.screen.active_bindings
+    descriptions = {binding.binding.description for binding in bindings.values()}
+    assert "Next Change" in descriptions
+    assert "Previous Change" in descriptions
+    assert "Next Match" in descriptions
+    assert "Previous Match" in descriptions
+    assert "Search File" in descriptions
+    assert bindings["escape"].binding.description == "Exit Search"
+
+
 @pytest.mark.anyio
 async def test_review_search_project_opens_with_no_modified_files(
     tmp_path: Path,
@@ -345,6 +356,12 @@ async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wid
         assert alpha_viewer.line_highlights is False
         assert beta_viewer.line_highlights is False
 
+        await pilot.press("H")
+        await pilot.pause(0)
+
+        assert alpha_viewer.line_highlights is True
+        assert beta_viewer.line_highlights is True
+
         review = app.query_one(ReviewView)
         await review.open_file(Path("gamma.py"))
         await wait_for_condition(
@@ -363,6 +380,50 @@ async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wid
         gamma_viewer = gamma_pane.query_one(ReviewDiffView)
         assert gamma_viewer.soft_wrap is True
         assert gamma_viewer.line_highlights is False
+
+
+@pytest.mark.anyio
+async def test_review_diff_updates_theme_colors_when_app_theme_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    alpha = workspace / "alpha.py"
+    alpha.write_text('value = "alpha"\n', encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
+    alpha.write_text('value = "beta"\n', encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        app.theme = "textual-dark"
+        await pilot.pause(0)
+
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.pause(0)
+
+        before_theme = viewer.theme
+        before_color = (
+            viewer._theme.base_style.color
+            if viewer._theme and viewer._theme.base_style
+            else None
+        )
+
+        app.theme = "textual-light"
+        await pilot.pause(0)
+
+        assert viewer.theme == "github_light"
+        assert viewer._theme is not None
+        assert viewer._theme.base_style is not None
+        assert viewer._theme.base_style.color != before_color
+        assert before_theme != viewer.theme
 
 
 @pytest.mark.anyio
@@ -405,7 +466,9 @@ async def test_review_diff_highlights_tint_rendered_line_background(
         assert before != after
         assert gutter_before
         assert before
-        assert max(gutter_before, key=gutter_before.count) == max(before, key=before.count)
+        assert max(gutter_before, key=gutter_before.count) == max(
+            before, key=before.count
+        )
 
 
 @pytest.mark.anyio
@@ -815,6 +878,30 @@ async def test_review_visual_line_selection_extends_with_j_and_k(
         await pilot.pause(0)
         assert viewer.selection.start == (cursor[0], 0)
         assert viewer.selection.end == (cursor[0] + 2, 0)
+
+
+@pytest.mark.anyio
+async def test_review_modal_still_closes_after_switching_tabs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        await open_review(app, pilot)
+        await pilot.press("@")
+        await pilot.pause(0)
+        assert isinstance(app.screen, SearchProject)
+
+        await pilot.press("ctrl+1")
+        await pilot.pause(0)
+        await pilot.press("ctrl+2")
+        await pilot.pause(0)
+        await pilot.press("escape")
+        await pilot.pause(0)
+
+        assert not isinstance(app.screen, SearchProject)
 
 
 @pytest.mark.anyio
@@ -1347,7 +1434,7 @@ async def test_telescope_debounces_callable_searches() -> None:
         app.push_screen(
             Telescope[str](
                 items=lambda query: seen.append(query) or [query],
-                title="Search",
+                title="Search File",
                 placeholder="Type",
             )
         )
@@ -1435,6 +1522,33 @@ async def test_review_file_modal_uses_option_index_for_selection() -> None:
         await pilot.pause(0)
 
         assert selected == [Path("beta.py")]
+
+
+@pytest.mark.anyio
+async def test_review_modal_keeps_long_code_scrollable() -> None:
+    from textual.containers import VerticalScroll
+    from textual.widgets import Static
+
+    class ModalApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("ready")
+
+    app = ModalApp()
+    code = "\n".join(f"line {index}" for index in range(40))
+
+    async with app.run_test() as pilot:
+        app.push_screen(ReviewCommentModal(Path("gamma.py"), 1, 40, code))
+        await pilot.pause(0)
+
+        modal = app.screen
+        assert isinstance(modal, ReviewCommentModal)
+        code_scroll = modal.query_one("#review-comment-code-scroll", VerticalScroll)
+        dialog = modal.query_one("#review-comment-dialog")
+        comment_input = modal.query_one("#review-comment-input", TextArea)
+        assert dialog.outer_size.height == min(
+            modal.size.height - 4, round(modal.size.width * 2 / 3)
+        )
+        assert code_scroll.outer_size.height > comment_input.outer_size.height
 
 
 @pytest.mark.anyio
@@ -1685,63 +1799,6 @@ async def test_review_modal_supports_multiline_comments(
 
 
 @pytest.mark.anyio
-async def test_review_footer_bindings_follow_search_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = next(
-            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
-        )
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        await pilot.pause(0)
-
-        bindings = app.screen.active_bindings
-        descriptions = {binding.binding.description for binding in bindings.values()}
-        assert "Next Edit" in descriptions
-        assert "Prev Edit" in descriptions
-        assert "Next Search" in descriptions
-        assert "Prev Search" in descriptions
-        assert "Search" in descriptions
-        assert bindings["escape"].binding.description == "Leave Search"
-
-        await pilot.press("/")
-        await pilot.pause(0)
-        search_modal = app.screen
-        search_input = search_modal.query_one("#review-search-input")
-        await pilot.click(search_input)
-        await pilot.press("5", "0", "enter")
-        await pilot.pause(0)
-
-        bindings = app.screen.active_bindings
-        descriptions = {binding.binding.description for binding in bindings.values()}
-        assert "Next Edit" in descriptions
-        assert "Prev Edit" in descriptions
-        assert "Next Search" in descriptions
-        assert "Prev Search" in descriptions
-        assert bindings["escape"].binding.description == "Leave Search"
-
-        await pilot.press("escape")
-        await pilot.pause(0)
-
-        bindings = app.screen.active_bindings
-        descriptions = {binding.binding.description for binding in bindings.values()}
-        assert "Next Edit" in descriptions
-        assert "Prev Edit" in descriptions
-        assert "Next Search" in descriptions
-        assert "Prev Search" in descriptions
-        assert bindings["escape"].binding.description == "Leave Search"
-
-
-@pytest.mark.anyio
 async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1759,6 +1816,9 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
 
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
+        await pilot.pause(0)
+
+        assert_review_search_bindings(app)
 
         await pilot.press("/")
         await pilot.pause(0)
@@ -1770,6 +1830,7 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
 
         assert app.query_one(ReviewView).search_term == "50"
         assert viewer.cursor_location == (6, 4)
+        assert_review_search_bindings(app)
 
         await pilot.press("n")
         await pilot.pause(0)
@@ -1779,3 +1840,4 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
         await pilot.pause(0)
 
         assert app.query_one(ReviewView).search_term == ""
+        assert_review_search_bindings(app)

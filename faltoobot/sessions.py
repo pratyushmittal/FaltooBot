@@ -41,6 +41,7 @@ class MessagesJson(TypedDict):
     id: str
     chat_key: str
     workspace: str
+    system_prompt: str
     messages: MessageHistory
     message_ids: list[str]
 
@@ -102,12 +103,17 @@ def _basic_messages_json(
     workspace: Path,
     current: dict[str, Any],
 ) -> MessagesJson:
+    system_prompt = current.get("system_prompt")
+    prompt_text = system_prompt if isinstance(system_prompt, str) else ""
+    messages = [item for item in current.get("messages", [])]
+    message_ids = [item for item in current.get("message_ids", [])]
     return {
         "id": session_id,
         "chat_key": chat_key,
         "workspace": str(workspace),
-        "messages": [item for item in current.get("messages", [])],
-        "message_ids": [item for item in current.get("message_ids", [])],
+        "system_prompt": prompt_text,
+        "messages": messages,
+        "message_ids": message_ids,
     }
 
 
@@ -280,6 +286,21 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
         _write_json_atomic(_messages_path(chat_key, session_id), messages_json)
 
 
+def _cached_system_prompt(
+    messages_json: MessagesJson,
+    config: Config,
+    *,
+    chat_key: str,
+    workspace: Path,
+) -> str:
+    system_prompt = messages_json["system_prompt"]
+    if system_prompt:
+        return system_prompt
+    system_prompt = get_system_instructions(config, chat_key, workspace)
+    messages_json["system_prompt"] = system_prompt
+    return system_prompt
+
+
 async def _upload_attachments(
     attachments: Sequence[Attachment],
     workspace: Path,
@@ -378,7 +399,6 @@ async def get_answer_streaming(
         messages_json["messages"].append(user_message)
         if message_id:
             messages_json["message_ids"].append(message_id)
-        set_messages(session, messages_json)
 
         tools: list[Tool] = [
             get_run_shell_call_tool(Path(messages_json["workspace"])),
@@ -392,8 +412,16 @@ async def get_answer_streaming(
             # comment: only expose the skill-loading tool when there is at least one local skill to load.
             tools.append(load_skill_tool)
 
+        instructions = _cached_system_prompt(
+            messages_json,
+            config,
+            chat_key=session[0],
+            workspace=workspace,
+        )
+        set_messages(session, messages_json)
+
         async for event in get_streaming_reply(
-            instructions=get_system_instructions(config, session[0], workspace),
+            instructions=instructions,
             input=messages_json["messages"],
             tools=tools,
             prompt_cache_key=_prompt_cache_key(messages_json),

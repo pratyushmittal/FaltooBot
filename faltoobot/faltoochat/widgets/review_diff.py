@@ -10,9 +10,9 @@ import tree_sitter_lua
 import tree_sitter_typescript
 from textual import events
 from textual.color import Color
-from textual.binding import Binding
 from textual.strip import Strip
 from textual.widgets import TabbedContent, TabPane, TextArea
+
 
 from ..diff import Diff, get_diff
 from ..editor_utils import (
@@ -48,40 +48,6 @@ class DisplayRowContext(TypedDict):
 
 
 class ReviewDiffView(TextArea):
-    BINDINGS = [
-        Binding("j,ctrl+n", "review_cursor_down", priority=True, show=False),
-        Binding("k,ctrl+p", "review_cursor_up", priority=True, show=False),
-        Binding("h", "cursor_left", priority=True, show=False),
-        Binding("l", "cursor_right", priority=True, show=False),
-        Binding("g", "review_scroll_home", priority=True, show=False),
-        Binding("G", "review_scroll_end", priority=True, show=False),
-        Binding("w", "review_next_word", priority=True, show=False),
-        Binding("b", "review_previous_word", priority=True, show=False),
-        Binding("tab", "review_next_file_tab", priority=True, show=True),
-        Binding("shift+tab", "review_previous_file_tab", priority=True, show=False),
-        Binding(
-            "r", "review_refresh_current_file", "Refresh", priority=True, show=True
-        ),
-        Binding("]", "review_next_modification", "Next Edit", priority=True, show=True),
-        Binding(
-            "[", "review_previous_modification", "Prev Edit", priority=True, show=True
-        ),
-        Binding("V", "review_select_line", "Select Line", priority=True, show=True),
-        Binding(
-            "H", "review_toggle_line_highlights", "Highlights", priority=True, show=True
-        ),
-        Binding("n", "review_jump_next", "Next Search", priority=True, show=True),
-        Binding("N", "review_jump_previous", "Prev Search", priority=True, show=True),
-        Binding("*", "review_search_word_under_cursor", priority=True, show=False),
-        Binding("slash", "review_search", "Search", priority=True, show=True),
-        Binding("escape", "review_escape", "Leave Search", priority=True, show=True),
-        Binding("m", "review_cycle_mode", "Mode", priority=True, show=True),
-        Binding("a,c", "review_add", priority=True, show=True),
-        Binding("s", "review_stage_lines", priority=True, show=True),
-        Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
-        Binding("shift+enter", "review_submit_reviews", priority=True, show=True),
-    ]
-
     def __init__(
         self,
         diff: Diff,
@@ -263,6 +229,12 @@ class ReviewDiffView(TextArea):
 
     def action_review_cursor_up(self) -> None:
         self._move_cursor_lines(-1)
+
+    def action_review_page_down(self) -> None:
+        self.action_cursor_page_down()
+
+    def action_review_page_up(self) -> None:
+        self.action_cursor_page_up()
 
     def action_review_select_line(self) -> None:
         self.line_selection_anchor = self.cursor_location[0]

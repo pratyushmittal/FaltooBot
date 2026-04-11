@@ -2,11 +2,11 @@ import argparse
 import asyncio
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
 from textual import events, getters
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import (
@@ -32,6 +32,7 @@ from faltoobot.faltoochat.terminal import (
     textual_theme_from_terminal,
 )
 from faltoobot.gpt_utils import MessageItem
+from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
     decompose_local_message_item,
     get_local_user_message_item,
@@ -44,9 +45,9 @@ from .messages_rendering import (
 )
 from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
-from .review import ReviewView
+from .review import ReviewView, _syntax_highlight_theme
 from .stream import get_event_text
-from .widgets import QueueWidget
+from .widgets import BindingsErrorModal, KeybindingsModal, QueueWidget, ReviewDiffView
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
@@ -91,18 +92,6 @@ async def _write_stream_chunk(
 
 
 class FaltooChatApp(App[None]):
-    BINDINGS = [
-        Binding("ctrl+1", "show_chat_tab", "Chat", priority=True, show=False),
-        Binding("ctrl+2", "show_review_tab", "Review", priority=True, show=False),
-        Binding(
-            "ctrl+r",
-            "toggle_review_tab",
-            "Toggle Review",
-            priority=True,
-            show=False,
-        ),
-    ]
-
     CSS = """
     App {
         color: $text;
@@ -254,6 +243,8 @@ class FaltooChatApp(App[None]):
         self,
         session: sessions.Session,
     ) -> None:
+        self._keybindings, self._binding_errors = load_keybindings()
+        apply_faltoochat_keybindings(self._keybindings)
         self._persist_theme_changes = False
         super().__init__()
         if (saved_theme := load_textual_theme()) in self.available_themes:
@@ -266,6 +257,15 @@ class FaltooChatApp(App[None]):
         self.is_answering = False
         self._is_polling_notifications = False
 
+    def get_system_commands(self, screen) -> Iterable[SystemCommand]:
+        """Return commands shown in Textual's command palette (Ctrl+P) for the active screen."""
+        yield from super().get_system_commands(screen)
+        yield SystemCommand(
+            "Keybindings",
+            "Show all current keybindings",
+            lambda: self.push_screen(KeybindingsModal.from_screen(self, screen)),
+        )
+
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)
 
@@ -274,6 +274,12 @@ class FaltooChatApp(App[None]):
         if not self._persist_theme_changes:
             return
         save_textual_theme(theme_name)
+        syntax_theme = _syntax_highlight_theme(theme_name)
+        for viewer in self.query(ReviewDiffView):
+            # comment: a plain refresh won't switch the syntax palette because the
+            # TextArea theme name is stored on the widget and only initialized once.
+            viewer.theme = syntax_theme
+            viewer.refresh()
 
     def tabs(self) -> TabbedContent:
         return self.query_one("#tabs", TabbedContent)
@@ -285,6 +291,9 @@ class FaltooChatApp(App[None]):
         self.tabs().active = "chat-tab"
         transcript = self.query_one("#transcript", VerticalScroll)
         self.call_after_refresh(transcript.scroll_end, animate=False)
+        if self.screen.is_modal:
+            # comment: focus inside the active modal instead of closing it.
+            return
         self.call_after_refresh(self.focus_composer)
 
     def action_show_review_tab(self) -> None:
@@ -349,6 +358,8 @@ class FaltooChatApp(App[None]):
         self.query_one("#slash-commands", OptionList).display = False
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
         await self.queue().refresh_queue()
+        if self._binding_errors:
+            self.push_screen(BindingsErrorModal(self._binding_errors))
         self.set_interval(1.0, self._poll_notifications)
 
     def _poll_notifications(self) -> None:
@@ -589,7 +600,9 @@ class Composer(TextArea):
                 return True
             case "/status":
                 await self.app.show_local_answer(
-                    config_status_text(build_config(), sessions.get_last_usage(self.app.session))
+                    config_status_text(
+                        build_config(), sessions.get_last_usage(self.app.session)
+                    )
                 )
                 return True
             case _:

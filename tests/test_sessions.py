@@ -99,6 +99,7 @@ def test_get_session_creates_messages_json_and_workspace(
 
     assert payload["id"] == session[1]
     assert payload["chat_key"] == chat_key
+    assert payload["system_prompt"] == ""
     assert payload["messages"] == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
@@ -257,6 +258,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
     payload = sessions.get_messages(session)
 
     assert answer == "hello"
+    assert payload["system_prompt"] == "system prompt"
     assert duplicate == ""
     assert len(calls) == 1
     assert calls[0] == [
@@ -339,6 +341,60 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
             },
         },
     ]
+
+
+@pytest.mark.anyio
+async def test_get_answer_caches_system_prompt_per_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+
+    calls = {"count": 0}
+
+    def fake_get_system_instructions(
+        config: Any, chat_key: str, workspace: Path
+    ) -> str:
+        calls["count"] += 1
+        return f"system prompt {calls['count']}"
+
+    monkeypatch.setattr(
+        sessions, "get_system_instructions", fake_get_system_instructions
+    )
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+        prompt_cache_key: str | None = None,
+    ):
+        assert instructions == "system prompt 1"
+        reply = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "ok"}],
+        }
+        input.append(cast(Any, reply))
+        yield FakeCompletedEvent(
+            [reply],
+            {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 2,
+            },
+        )
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+
+    session = sessions.get_session(chat_key="code@test")
+    assert await sessions.get_answer(session=session, question="one") == "ok"
+    assert await sessions.get_answer(session=session, question="two") == "ok"
+
+    payload = sessions.get_messages(session)
+    assert calls["count"] == 1
+    assert payload["system_prompt"] == "system prompt 1"
 
 
 @pytest.mark.anyio

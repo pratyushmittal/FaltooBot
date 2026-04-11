@@ -2,7 +2,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static, TextArea
 
@@ -34,14 +34,21 @@ class ReviewCommentModal(ModalScreen[str | None]):
     #review-comment-dialog {
         width: 80;
         max-width: 80;
-        height: auto;
         padding: 1 2;
         background: $surface;
         border: round $primary;
     }
 
-    #review-comment-code {
+    #review-comment-code-scroll {
+        width: 1fr;
+        height: 1fr;
         margin: 1 0;
+        border: round $panel;
+        padding: 0 1;
+    }
+
+    #review-comment-code {
+        width: 1fr;
         color: $text-muted;
     }
 
@@ -72,7 +79,8 @@ class ReviewCommentModal(ModalScreen[str | None]):
             yield Static(
                 f"Add review for {self.file_path}:{self.line_number_start}-{self.line_number_end}"
             )
-            yield Static(self.code, id="review-comment-code", markup=False)
+            with VerticalScroll(id="review-comment-code-scroll"):
+                yield Static(self.code, id="review-comment-code", markup=False)
             yield ReviewCommentEditor(
                 self.initial_comment,
                 id="review-comment-input",
@@ -83,6 +91,10 @@ class ReviewCommentModal(ModalScreen[str | None]):
             )
 
     def on_mount(self) -> None:
+        dialog = self.query_one("#review-comment-dialog")
+        dialog_height = min(self.size.height - 4, round(self.size.width * 2 / 3))
+        dialog.styles.height = dialog_height
+        dialog.styles.max_height = dialog_height
         self.query_one("#review-comment-input", ReviewCommentEditor).focus()
 
     def action_cancel(self) -> None:
