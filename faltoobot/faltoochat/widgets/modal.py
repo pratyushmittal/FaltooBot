@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from rich.console import RenderableType
@@ -137,8 +138,67 @@ class BindingsErrorModal(TextModal):
     dismiss_on_any_key = True
     dialog_id = "bindings-error-dialog"
     title_id = "bindings-error-title"
+    scroll_id = "bindings-error-scroll"
     content_id = "bindings-error-message"
     help_id = "bindings-error-help"
+    subheading_id = "bindings-error-subheading"
+
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("\n".join(errors), subheading=_keybindings_subheading())
+
+    DEFAULT_CSS = TextModal.DEFAULT_CSS + """
+    #bindings-error-dialog {
+        width: 80;
+        max-width: 80;
+        height: 24;
+        max-height: 24;
+        padding: 1 2;
+        background: $surface;
+        border: round $error;
+    }
+
+    #bindings-error-title {
+        width: 1fr;
+        margin: 0 0 1 0;
+        text-style: bold;
+        color: $error;
+        content-align: center middle;
+    }
+
+    #bindings-error-scroll {
+        width: 1fr;
+        height: 1fr;
+        border: round $panel;
+        padding: 1;
+    }
+
+    #bindings-error-message {
+        width: 1fr;
+    }
+
+    #bindings-error-subheading {
+        width: 1fr;
+        margin: 0 0 1 0;
+        color: $text-muted;
+    }
+
+    #bindings-error-help {
+        width: 1fr;
+        margin: 1 0 0 0;
+        color: $text-muted;
+        content-align: right middle;
+    }
+    """
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one(f"#{self.content_id}", Static).update(
+            _highlight_bindings_errors(
+                str(self.content),
+                self.app.current_theme.primary,
+                self.app.current_theme.secondary or self.app.current_theme.primary,
+            )
+        )
 
 
 class KeybindingsModal(TextModal):
@@ -214,9 +274,10 @@ def _render_keybindings(app: "FaltooChatApp", screen) -> Text:
     for _key, (_node, binding, _enabled, _tooltip) in sorted(screen.active_bindings.items()):
         if binding.action not in descriptions:
             continue
-        key_display = app.get_key_display(binding)
-        if key_display not in grouped[binding.action]:
-            grouped[binding.action].append(key_display)
+        for key in binding.key.split(","):
+            key_display = app.get_key_display(replace(binding, key=key))
+            if key_display not in grouped[binding.action]:
+                grouped[binding.action].append(key_display)
     rows = [
         (", ".join(keys), descriptions[action])
         for action, keys in grouped.items()
@@ -251,4 +312,22 @@ def _keybindings_subheading() -> Text:
     text.append(path_text)
     text.stylize("dim", start, start + len(path_text))
     text.stylize(f"link file://{path}", start, start + len(path_text))
+    return text
+
+
+def _highlight_bindings_errors(content: str, action_color: str, key_color: str) -> Text:
+    text = Text()
+    highlight_index = 0
+    while content:
+        start = content.find("[")
+        end = content.find("]", start + 1) if start != -1 else -1
+        if start == -1 or end == -1:
+            text.append(content)
+            break
+        text.append(content[:start])
+        segment = content[start : end + 1]
+        color = action_color if highlight_index % 2 == 0 else key_color
+        text.append(segment, style=f"bold {color}")
+        content = content[end + 1 :]
+        highlight_index += 1
     return text

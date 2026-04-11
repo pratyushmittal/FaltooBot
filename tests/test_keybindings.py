@@ -603,6 +603,25 @@ async def test_keybindings_system_command_opens_modal_with_current_bindings(
         assert "Paste" not in content
 
 
+def test_load_keybindings_ignores_duplicate_keys_after_first_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bindings(
+        home,
+        '[review]\nreview_next_modification = ["z"]\nreview_previous_modification = ["z"]\n',
+    )
+
+    bindings_by_context, errors = load_keybindings()
+    actions = _actions(bindings_by_context["review"])
+
+    assert actions["review_next_modification"] == "z"
+    assert actions["review_previous_modification"] == "["
+    assert errors == ["Cannot bind [z] to [review_previous_modification]; already bound to [review_next_modification]."]
+
+
 def test_load_keybindings_reports_unknown_context_and_unknown_action(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -699,6 +718,28 @@ async def test_app_uses_review_bindings_toml_overrides(
 
 
 @pytest.mark.anyio
+async def test_app_shows_duplicate_key_errors_with_descriptions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    _write_bindings(
+        home,
+        '[review]\nreview_next_modification = ["z"]\nreview_previous_modification = ["z"]\n',
+    )
+    _workspace, app = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        assert app.screen.__class__.__name__ == "BindingsErrorModal"
+        subheading = app.screen.query_one("#bindings-error-subheading").render().plain
+        subheading = app.screen.query_one("#bindings-error-subheading").render().plain
+        message = app.screen.query_one("#bindings-error-message").render().plain
+        assert str(app_root() / "bindings.toml") in subheading
+        assert "Cannot bind [z] to [review_previous_modification]; already bound to [review_next_modification]." in message
+
+
+@pytest.mark.anyio
 async def test_app_shows_dismissible_modal_for_invalid_bindings_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -713,7 +754,11 @@ async def test_app_shows_dismissible_modal_for_invalid_bindings_config(
     async with app.run_test() as pilot:
         await pilot.pause(0)
         assert app.screen.__class__.__name__ == "BindingsErrorModal"
+        dialog = app.screen.query_one("#bindings-error-dialog")
+        assert (dialog.styles.width.value, dialog.styles.height.value) == (80, 24)  # noqa: PLR2004
+        subheading = app.screen.query_one("#bindings-error-subheading").render().plain
         message = app.screen.query_one("#bindings-error-message").render().plain
+        assert str(app_root() / "bindings.toml") in subheading
         assert "Unknown review binding action: review_nope" in message
         assert "Unknown bindings context: banana" in message
 

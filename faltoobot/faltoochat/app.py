@@ -349,7 +349,7 @@ class FaltooChatApp(App[None]):
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
         await self.queue().refresh_queue()
         if self._binding_errors:
-            self.push_screen(BindingsErrorModal("\n".join(self._binding_errors)))
+            self.push_screen(BindingsErrorModal(self._binding_errors))
         self.set_interval(1.0, self._poll_notifications)
 
     def _poll_notifications(self) -> None:

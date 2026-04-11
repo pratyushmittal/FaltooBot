@@ -116,6 +116,7 @@ def load_keybindings(root: Path | None = None) -> tuple[BindingsByContext, list[
 def _validate_overrides(data: dict[str, Any]) -> tuple[BindingOverrides, list[str]]:
     overrides: BindingOverrides = {}
     errors: list[str] = []
+    known_keys: dict[str, str] = {}
     for context_name, context_value in data.items():
         if context_name not in KNOWN_CONTEXTS:
             errors.append(f"Unknown bindings context: {context_name}")
@@ -133,6 +134,14 @@ def _validate_overrides(data: dict[str, Any]) -> tuple[BindingOverrides, list[st
                     f"Binding action must be a list[str]: {context_name}.{action_name}"
                 )
                 continue
+            effective_keys = keys[:1] if context_name == "app" and action_name == "command_palette" else keys
+            if conflict := next((key for key in effective_keys if key in known_keys), None):
+                errors.append(
+                    f"Cannot bind [{conflict}] to [{action_name}]; already bound to [{known_keys[conflict]}]."
+                )
+                continue
+            for key in effective_keys:
+                known_keys[key] = action_name
             overrides[action_name] = keys
     return overrides, errors
 
