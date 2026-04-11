@@ -1,5 +1,7 @@
 import io
+import json
 import shlex
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +47,53 @@ def test_write_run_script_uses_whatsapp_service(tmp_path: Path) -> None:
         f"exec {shlex.quote(sys.executable)} -m faltoobot.cli.app {cli.SERVICE_COMMAND}"
         in text
     )
+
+
+def test_write_run_script_exports_image_api_keys_from_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "open-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gem-key")
+
+    cli._write_run_script(config)
+
+    text = config.run_script.read_text()
+    assert "export OPENAI_API_KEY=open-key" in text
+    assert "export GEMINI_API_KEY=gem-key" in text
+    assert stat.S_IMODE(config.run_script.stat().st_mode) == stat.S_IRWXU
+
+
+def test_write_run_script_keeps_image_api_keys_in_clean_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "open-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gem-key")
+    monkeypatch.setattr(
+        cli,
+        "_run_entrypoint",
+        lambda: [
+            sys.executable,
+            "-c",
+            (
+                "import json, os; print(json.dumps({"
+                "'openai': os.environ.get('OPENAI_API_KEY', ''), "
+                "'gemini': os.environ.get('GEMINI_API_KEY', '')}))"
+            ),
+        ],
+    )
+
+    cli._write_run_script(config)
+
+    result = subprocess.run(
+        ["env", "-i", f"HOME={config.home}", config.run_script.as_posix()],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert json.loads(result.stdout) == {"openai": "open-key", "gemini": "gem-key"}
 
 
 def test_write_systemd_service_redirects_to_log(tmp_path: Path) -> None:
