@@ -54,3 +54,22 @@ def test_default_browser_binary_prefers_google_chrome_on_macos(monkeypatch) -> N
     monkeypatch.setattr(Path, "exists", lambda self: self == chrome)
 
     assert browser.default_browser_binary() == str(chrome)
+
+
+def test_open_browser_reuses_existing_cdp_browser(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    calls: list[object] = []
+
+    monkeypatch.setattr(browser, "_cdp_is_running", lambda: True)
+    monkeypatch.setattr(
+        browser.subprocess,
+        "Popen",
+        lambda args: calls.append(args),
+    )
+
+    browser.open_browser(root=tmp_path, binary="/tmp/chrome", url=None)
+
+    assert browser.browser_profile_dir(tmp_path).is_dir()
+    assert calls == []
+    assert "Browser already running." in capsys.readouterr().out

@@ -15,7 +15,7 @@ Use these runtime values when opening or reusing the browser:
 Preferred pattern:
 - if a persistent browser is already running on `{cdp_url}`, connect to it with `connect_over_cdp(...)`
 - otherwise launch a new persistent browser with the same binary, profile, and CDP port
-- it is okay to open a new persistent browser context as long as it uses the same profile
+- the same profile folder can reuse saved login sessions across browser restarts, but do not launch a second persistent browser against that profile while another one is already open
 
 Example:
 
