@@ -57,7 +57,6 @@ CRONTAB_DEFAULT_PATH_PARTS = [
     "/sbin",
     "/usr/local/bin",
 ]
-PASSTHROUGH_ENV_VARS = ("OPENAI_API_KEY", "GEMINI_API_KEY")
 
 
 def _require_service_platform() -> None:
@@ -233,23 +232,12 @@ def _shell_join(parts: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def _run_script_env_exports() -> list[str]:
-    exports: list[str] = []
-    for name in PASSTHROUGH_ENV_VARS:
-        value = os.environ.get(name, "").strip()
-        if not value:
-            continue
-        exports.append(f"export {name}={shlex.quote(value)}")
-    return exports
-
-
 def _write_run_script(config: Config) -> None:
     config.root.mkdir(parents=True, exist_ok=True)
     config.run_script.write_text(
         "\n".join(
             [
                 "#!/bin/sh",
-                *_run_script_env_exports(),
                 f"cd {shlex.quote(config.root.as_posix())}",
                 f"exec {_shell_join(_run_entrypoint())}",
                 "",

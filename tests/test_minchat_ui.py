@@ -240,8 +240,6 @@ async def test_minchat_enter_applies_highlighted_slash_command(
         assert composer.text == "/reset"
 
 
-
-
 @pytest.mark.anyio
 async def test_minchat_status_command_shows_config_status_and_last_usage(
     tmp_path: Path,
@@ -272,7 +270,7 @@ async def test_minchat_status_command_shows_config_status_and_last_usage(
         assert any("Faltoobot status" in block._markdown for block in blocks)
         assert any("openai_model" in block._markdown for block in blocks)
         assert any("Session usage" in block._markdown for block in blocks)
-        assert any('\"total_tokens\": 5' in block._markdown for block in blocks)
+        assert any('"total_tokens": 5' in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio

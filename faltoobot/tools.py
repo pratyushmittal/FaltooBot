@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from collections.abc import Awaitable
@@ -25,6 +26,16 @@ def _clipped_text(value: str | bytes | None) -> str:
     return (value or "")[:MAX_SHELL_OUTPUT]
 
 
+def _tool_env() -> dict[str, str]:
+    env = dict(os.environ)
+    config = build_config()
+    if config.gemini_api_key:
+        # comment: image-generation shell examples use google-genai, which expects the Gemini key
+        # in the process environment rather than in code snippets.
+        env["GEMINI_API_KEY"] = config.gemini_api_key
+    return env
+
+
 def run_shell_call_in_workspace(workspace: str, command: str, timeout_ms: int) -> str:
     try:
         process = subprocess.run(
@@ -33,6 +44,7 @@ def run_shell_call_in_workspace(workspace: str, command: str, timeout_ms: int) -
             text=False,
             timeout=timeout_ms / 1000,
             cwd=workspace,
+            env=_tool_env(),
         )
     except subprocess.TimeoutExpired as exc:
         result = {

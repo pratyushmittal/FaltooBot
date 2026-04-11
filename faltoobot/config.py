@@ -292,11 +292,13 @@ def config_status_text(
             rendered = value
         lines.append(f"• {key}={json.dumps(rendered)}")
     if last_usage is not None:
-        lines.extend([
-            "",
-            "Session usage",
-            f"• last_usage={json.dumps(last_usage)}",
-        ])
+        lines.extend(
+            [
+                "",
+                "Session usage",
+                f"• last_usage={json.dumps(last_usage)}",
+            ]
+        )
     return "\n".join(lines)
 
 

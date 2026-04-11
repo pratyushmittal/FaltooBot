@@ -324,7 +324,9 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
         await client.reply_message(HELP_TEXT, event)
         return
     if event is not None and not attachments and audio is None and prompt == "/status":
-        await client.reply_message(config_status_text(config, get_last_usage(session)), event)
+        await client.reply_message(
+            config_status_text(config, get_last_usage(session)), event
+        )
         return
     if event is not None and not attachments and audio is None and prompt == "/reset":
         reset_session = get_session(chat_key=session[0], session_id=str(uuid4()))
