@@ -826,6 +826,30 @@ async def test_review_visual_line_selection_extends_with_j_and_k(
 
 
 @pytest.mark.anyio
+async def test_review_modal_still_closes_after_switching_tabs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        await open_review(app, pilot)
+        await pilot.press("@")
+        await pilot.pause(0)
+        assert isinstance(app.screen, SearchProject)
+
+        await pilot.press("ctrl+1")
+        await pilot.pause(0)
+        await pilot.press("ctrl+2")
+        await pilot.pause(0)
+        await pilot.press("escape")
+        await pilot.pause(0)
+
+        assert not isinstance(app.screen, SearchProject)
+
+
+@pytest.mark.anyio
 async def test_review_grep_opens_modal_and_jumps_to_selected_line(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

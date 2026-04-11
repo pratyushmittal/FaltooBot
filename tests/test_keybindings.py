@@ -552,6 +552,33 @@ async def test_app_system_commands_include_keybindings(
 
 
 @pytest.mark.anyio
+async def test_modal_still_closes_after_switching_tabs_underneath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = _build_app(tmp_path, monkeypatch)
+    _create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        command = next(
+            command
+            for command in app.get_system_commands(app.screen)
+            if command.title == "Keybindings"
+        )
+        command.callback()
+        await pilot.pause(0)
+
+        assert app.screen.__class__.__name__ == "KeybindingsModal"
+
+        await pilot.press("ctrl+2")
+        await pilot.pause(0)
+        await pilot.press("escape")
+        await pilot.pause(0)
+
+        assert app.screen.__class__.__name__ != "KeybindingsModal"
+
+
+@pytest.mark.anyio
 async def test_keybindings_system_command_opens_modal_with_current_bindings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

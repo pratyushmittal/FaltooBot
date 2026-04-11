@@ -284,6 +284,8 @@ class FaltooChatApp(App[None]):
         self.tabs().active = "chat-tab"
         transcript = self.query_one("#transcript", VerticalScroll)
         self.call_after_refresh(transcript.scroll_end, animate=False)
+        if self.screen.is_modal:
+            return
         self.call_after_refresh(self.focus_composer)
 
     def action_show_review_tab(self) -> None:
