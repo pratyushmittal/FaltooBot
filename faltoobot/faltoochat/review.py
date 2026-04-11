@@ -208,7 +208,7 @@ class ReviewView(TabPane):
             app.focus_composer()
             self.reviews.clear()
             return
-        app.run_worker(app.submit_message(message_item), exclusive=True)
+        await app.handle_message(message_item)
         self.reviews.clear()
 
     def action_review_refresh_files(self) -> None:

@@ -394,6 +394,9 @@ class FaltooChatApp(App[None]):
         if self.is_answering:
             await self.queue().add_to_queue(message_item)
             return
+        self.is_answering = True
+        composer = self.query_one("#composer", Composer)
+        composer.border_subtitle = "answering"
         # exclusive=True tells Textual to cancel all previous workers before starting the new one
         self.run_worker(self.submit_message(message_item), exclusive=True)
 
@@ -499,11 +502,8 @@ class FaltooChatApp(App[None]):
 
         await _stop_answer_stream(answer_stream)
 
-    async def submit_message(self, message_item: MessageItem):
-        # comment: mark the turn as active before the first await so new messages queue behind it.
-        self.is_answering = True
+    async def submit_message(self, message_item: MessageItem) -> None:
         composer = self.query_one("#composer", Composer)
-        composer.border_subtitle = "answering"
         try:
             # render user message
             transcript = self.query_one("#transcript", VerticalScroll)

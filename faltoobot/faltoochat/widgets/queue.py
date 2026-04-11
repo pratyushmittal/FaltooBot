@@ -137,7 +137,7 @@ class QueueWidget(Vertical):
                 continue
             submit_queue.remove_from_queue(self.app.session, message_id)
             await self.refresh_queue()
-            await self.app.submit_message(message_item)
+            await self.app.handle_message(message_item)
             return
 
     def select(self, index: int) -> None:
