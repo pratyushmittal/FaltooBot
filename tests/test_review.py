@@ -404,13 +404,18 @@ async def test_review_diff_updates_theme_colors_when_app_theme_changes(
         await pilot.pause(0)
 
         before_theme = viewer.theme
-        before_color = viewer._theme.base_style.color if viewer._theme else None
+        before_color = (
+            viewer._theme.base_style.color
+            if viewer._theme and viewer._theme.base_style
+            else None
+        )
 
         app.theme = "textual-light"
         await pilot.pause(0)
 
         assert viewer.theme == "github_light"
         assert viewer._theme is not None
+        assert viewer._theme.base_style is not None
         assert viewer._theme.base_style.color != before_color
         assert before_theme != viewer.theme
 
@@ -1529,7 +1534,9 @@ async def test_review_modal_keeps_long_code_scrollable() -> None:
         code_scroll = modal.query_one("#review-comment-code-scroll", VerticalScroll)
         dialog = modal.query_one("#review-comment-dialog")
         comment_input = modal.query_one("#review-comment-input", TextArea)
-        assert dialog.outer_size.height == min(modal.size.height - 4, round(modal.size.width * 2 / 3))
+        assert dialog.outer_size.height == min(
+            modal.size.height - 4, round(modal.size.width * 2 / 3)
+        )
         assert code_scroll.outer_size.height > comment_input.outer_size.height
 
 
@@ -1778,8 +1785,6 @@ async def test_review_modal_supports_multiline_comments(
         await pilot.pause(0)
 
         assert app.query_one(ReviewView).reviews[-1]["comment"] == "Line1\nLine2"
-
-
 
 
 @pytest.mark.anyio
