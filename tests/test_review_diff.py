@@ -437,14 +437,16 @@ async def _mounted_review_diff(diff: Diff) -> tuple[ReviewDiffApp, ReviewDiffVie
     async def _noop_reload_in_place() -> None:
         return None
 
-    viewer.reload_in_place = _noop_reload_in_place  # type: ignore[method-assign]
+    viewer.reload_in_place = cast(Any, _noop_reload_in_place)
     return ReviewDiffApp(viewer), viewer
 
 
 @pytest.mark.anyio
 async def test_review_page_bindings_move_by_visible_page() -> None:
-    diff = [{"is_staged": False, "type": "", "text": str(index)} for index in range(200)]
-    app, viewer = await _mounted_review_diff(diff)
+    diff = [
+        {"is_staged": False, "type": "", "text": str(index)} for index in range(200)
+    ]
+    app, viewer = await _mounted_review_diff(cast(Diff, diff))
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
@@ -463,8 +465,10 @@ async def test_review_page_bindings_move_by_visible_page() -> None:
 
 @pytest.mark.anyio
 async def test_review_page_bindings_clamp_at_buffer_edges() -> None:
-    diff = [{"is_staged": False, "type": "", "text": str(index)} for index in range(200)]
-    app, viewer = await _mounted_review_diff(diff)
+    diff = [
+        {"is_staged": False, "type": "", "text": str(index)} for index in range(200)
+    ]
+    app, viewer = await _mounted_review_diff(cast(Diff, diff))
 
     async with app.run_test() as pilot:
         await pilot.pause(0)

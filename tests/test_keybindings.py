@@ -1,6 +1,7 @@
 import asyncio
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from textual.app import App, ComposeResult
@@ -10,12 +11,13 @@ from textual.widgets import Static, TabbedContent, TabPane
 from faltoobot import sessions
 from faltoobot.config import app_root
 from faltoobot.faltoochat.app import FaltooChatApp
-from faltoobot.faltoochat.widgets.modal import TextModal
+from faltoobot.faltoochat.widgets.keybinding_modals import TextModal
 from faltoobot.faltoochat.widgets.review_diff import ReviewDiffView
 from faltoobot.keybindings import (
     default_keybindings,
     load_keybindings,
 )
+
 
 class DemoModal(TextModal):
     modal_title = "Demo"
@@ -31,7 +33,6 @@ TEXT_MODAL_DEFAULT_HEIGHT = 24
 
 
 EXPECTED_DEFAULT_APP_BINDINGS = [
-
     {
         "key": "ctrl+1",
         "action": "show_chat_tab",
@@ -339,7 +340,9 @@ def _context_snapshot(bindings: list[Binding]) -> list[dict[str, object]]:
     ]
 
 
-def _expected_context(snapshot: list[dict[str, str | bool | None]]) -> list[dict[str, object]]:
+def _expected_context(
+    snapshot: list[dict[str, str | bool | None]],
+) -> list[dict[str, object]]:
     return [
         {
             "action": str(binding["action"]),
@@ -351,11 +354,7 @@ def _expected_context(snapshot: list[dict[str, str | bool | None]]) -> list[dict
 
 
 def _actions(bindings: list[Binding]) -> dict[str, str]:
-    return {
-        binding.action: binding.key
-        for binding in bindings
-        if binding.key
-    }
+    return {binding.action: binding.key for binding in bindings if binding.key}
 
 
 def _write_bindings(home: Path, text: str) -> None:
@@ -423,16 +422,21 @@ async def _open_review(app: FaltooChatApp, pilot) -> TabbedContent:
 
 def test_default_review_bindings_snapshot() -> None:
     assert {
-        "ReviewView": _snapshot([
-            binding
-            for binding in default_keybindings("review")
-            if binding.action in {"review_search_project", "review_refresh_files"}
-        ]),
-        "ReviewDiffView": _snapshot([
-            binding
-            for binding in default_keybindings("review")
-            if binding.action not in {"review_search_project", "review_refresh_files"}
-        ]),
+        "ReviewView": _snapshot(
+            [
+                binding
+                for binding in default_keybindings("review")
+                if binding.action in {"review_search_project", "review_refresh_files"}
+            ]
+        ),
+        "ReviewDiffView": _snapshot(
+            [
+                binding
+                for binding in default_keybindings("review")
+                if binding.action
+                not in {"review_search_project", "review_refresh_files"}
+            ]
+        ),
     } == EXPECTED_DEFAULT_REVIEW_BINDINGS
 
 
@@ -460,7 +464,7 @@ def test_load_keybindings_keeps_default_command_palette_when_empty_list(
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    _write_bindings(home, '[app]\ncommand_palette = []\n')
+    _write_bindings(home, "[app]\ncommand_palette = []\n")
 
     bindings_by_context, errors = load_keybindings()
 
@@ -514,8 +518,8 @@ async def test_text_modal_uses_default_dimensions_when_not_overridden() -> None:
     async with app.run_test() as pilot:
         await pilot.pause(0)
         dialog = app.screen.query_one("#text-modal-dialog")
-        assert dialog.styles.width.value == TEXT_MODAL_DEFAULT_WIDTH
-        assert dialog.styles.height.value == TEXT_MODAL_DEFAULT_HEIGHT
+        assert cast(Any, dialog.styles.width).value == TEXT_MODAL_DEFAULT_WIDTH
+        assert cast(Any, dialog.styles.height).value == TEXT_MODAL_DEFAULT_HEIGHT
 
 
 @pytest.mark.anyio
@@ -631,8 +635,10 @@ async def test_keybindings_system_command_opens_modal_with_current_bindings(
         await pilot.pause(0)
 
         assert app.screen.__class__.__name__ == "KeybindingsModal"
-        subheading = app.screen.query_one("#keybindings-subheading").render().plain
-        content = app.screen.query_one("#keybindings-content").render().plain
+        subheading = cast(
+            Any, app.screen.query_one("#keybindings-subheading").render()
+        ).plain
+        content = cast(Any, app.screen.query_one("#keybindings-content").render()).plain
         assert "Action" not in content
         assert key_display in content
         assert "Command Palette" in content
@@ -662,7 +668,9 @@ def test_load_keybindings_ignores_duplicate_keys_after_first_override(
 
     assert actions["review_next_modification"] == "z"
     assert actions["review_previous_modification"] == "["
-    assert errors == ["Cannot bind [z] to [review_previous_modification]; already bound to [review_next_modification]."]
+    assert errors == [
+        "Cannot bind [z] to [review_previous_modification]; already bound to [review_next_modification]."
+    ]
 
 
 def test_load_keybindings_reports_unknown_context_and_unknown_action(
@@ -775,11 +783,17 @@ async def test_app_shows_duplicate_key_errors_with_descriptions(
     async with app.run_test() as pilot:
         await pilot.pause(0)
         assert app.screen.__class__.__name__ == "BindingsErrorModal"
-        subheading = app.screen.query_one("#bindings-error-subheading").render().plain
-        subheading = app.screen.query_one("#bindings-error-subheading").render().plain
-        message = app.screen.query_one("#bindings-error-message").render().plain
+        subheading = cast(
+            Any, app.screen.query_one("#bindings-error-subheading").render()
+        ).plain
+        message = cast(
+            Any, app.screen.query_one("#bindings-error-message").render()
+        ).plain
         assert str(app_root() / "bindings.toml") in subheading
-        assert "Cannot bind [z] to [review_previous_modification]; already bound to [review_next_modification]." in message
+        assert (
+            "Cannot bind [z] to [review_previous_modification]; already bound to [review_next_modification]."
+            in message
+        )
 
 
 @pytest.mark.anyio
@@ -798,9 +812,16 @@ async def test_app_shows_dismissible_modal_for_invalid_bindings_config(
         await pilot.pause(0)
         assert app.screen.__class__.__name__ == "BindingsErrorModal"
         dialog = app.screen.query_one("#bindings-error-dialog")
-        assert (dialog.styles.width.value, dialog.styles.height.value) == (80, 24)  # noqa: PLR2004
-        subheading = app.screen.query_one("#bindings-error-subheading").render().plain
-        message = app.screen.query_one("#bindings-error-message").render().plain
+        assert (
+            cast(Any, dialog.styles.width).value,
+            cast(Any, dialog.styles.height).value,
+        ) == (80, 24)  # noqa: PLR2004
+        subheading = cast(
+            Any, app.screen.query_one("#bindings-error-subheading").render()
+        ).plain
+        message = cast(
+            Any, app.screen.query_one("#bindings-error-message").render()
+        ).plain
         assert str(app_root() / "bindings.toml") in subheading
         assert "Unknown review binding action: review_nope" in message
         assert "Unknown bindings context: banana" in message

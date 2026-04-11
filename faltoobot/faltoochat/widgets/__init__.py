@@ -1,4 +1,4 @@
-from .modal import BindingsErrorModal, KeybindingsModal, TextModal
+from .keybinding_modals import BindingsErrorModal, KeybindingsModal
 from .queue import QueueWidget
 from .review_comment_modal import ReviewCommentModal
 from .review_diff import ReviewDiffView
@@ -17,5 +17,4 @@ __all__ = [
     "SearchInFile",
     "SearchProject",
     "Telescope",
-    "TextModal",
 ]

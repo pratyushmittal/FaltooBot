@@ -1,7 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 import tomllib
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from textual.binding import Binding
 
@@ -35,7 +35,9 @@ DEFAULT_KEYBINDINGS: BindingsByContext = {
     ],
     "chat": [],
     "review": [
-        Binding("@", "review_search_project", "Search Project", priority=True, show=True),
+        Binding(
+            "@", "review_search_project", "Search Project", priority=True, show=True
+        ),
         Binding("R", "review_refresh_files", "Refresh Files", priority=True, show=True),
         Binding("j,ctrl+n", "review_cursor_down", priority=True, show=False),
         Binding("k,ctrl+p", "review_cursor_up", priority=True, show=False),
@@ -56,9 +58,15 @@ DEFAULT_KEYBINDINGS: BindingsByContext = {
             priority=True,
             show=True,
         ),
-        Binding("]", "review_next_modification", "Next Change", priority=True, show=True),
         Binding(
-            "[", "review_previous_modification", "Previous Change", priority=True, show=True
+            "]", "review_next_modification", "Next Change", priority=True, show=True
+        ),
+        Binding(
+            "[",
+            "review_previous_modification",
+            "Previous Change",
+            priority=True,
+            show=True,
         ),
         Binding("V", "review_select_line", "Select Line", priority=True, show=True),
         Binding("W", "review_toggle_wrap", "Toggle Wrap", priority=True, show=True),
@@ -136,8 +144,14 @@ def _validate_overrides(data: dict[str, Any]) -> tuple[BindingOverrides, list[st
                     f"Binding action must be a list[str]: {context_name}.{action_name}"
                 )
                 continue
-            effective_keys = keys[:1] if context_name == "app" and action_name == "command_palette" else keys
-            if conflict := next((key for key in effective_keys if key in known_keys), None):
+            effective_keys = (
+                keys[:1]
+                if context_name == "app" and action_name == "command_palette"
+                else keys
+            )
+            if conflict := next(
+                (key for key in effective_keys if key in known_keys), None
+            ):
                 errors.append(
                     f"Cannot bind [{conflict}] to [{action_name}]; already bound to [{known_keys[conflict]}]."
                 )
@@ -156,13 +170,14 @@ def _parse_keys(value: Any) -> KeyList | None:
     return [item.strip() for item in value]
 
 
-
 def _merge_keybindings(overrides: BindingOverrides) -> BindingsByContext:
     merged: BindingsByContext = {}
     for context, defaults in DEFAULT_KEYBINDINGS.items():
         merged[context] = []
         for binding in defaults:
-            default_keys = [key.strip() for key in binding.key.split(",") if key.strip()]
+            default_keys = [
+                key.strip() for key in binding.key.split(",") if key.strip()
+            ]
             keys = overrides.get(binding.action, default_keys)
             if context == "app" and binding.action == "command_palette":
                 merged[context].append(replace(binding, key=(keys or default_keys)[0]))
@@ -180,7 +195,9 @@ def bindings_with_compact_palette_footer(
     # doesn't offer a per-view way to keep the command-palette key on the right
     # while hiding its description. Add a review-local hidden binding so the
     # focused review diff keeps the older compact footer behavior.
-    review_diff_keys = {key for binding in bindings for key in binding.key.split(",") if key}
+    review_diff_keys = {
+        key for binding in bindings for key in binding.key.split(",") if key
+    }
     if command_palette.key in review_diff_keys:
         return bindings
     return [*bindings, replace(command_palette, description="", show=False)]
@@ -193,7 +210,7 @@ def apply_faltoochat_keybindings(bindings_by_context: BindingsByContext) -> None
     command_palette = next(
         binding for binding in app_bindings if binding.action == "command_palette"
     )
-    FaltooChatApp.BINDINGS = app_bindings  # type: ignore[attr-defined]
+    FaltooChatApp.BINDINGS = cast(Any, app_bindings)  # type: ignore[attr-defined]
     FaltooChatApp.ENABLE_COMMAND_PALETTE = True  # type: ignore[attr-defined]
     FaltooChatApp.COMMAND_PALETTE_BINDING = command_palette.key  # type: ignore[attr-defined]
     FaltooChatApp._merged_bindings = FaltooChatApp._merge_bindings()  # type: ignore[attr-defined]
@@ -205,7 +222,9 @@ def apply_faltoochat_keybindings(bindings_by_context: BindingsByContext) -> None
     ReviewView._merged_bindings = ReviewView._merge_bindings()  # type: ignore[attr-defined]
 
     review_diff_bindings = [
-        binding for binding in review_bindings if binding.action not in REVIEW_VIEW_ACTIONS
+        binding
+        for binding in review_bindings
+        if binding.action not in REVIEW_VIEW_ACTIONS
     ]
     review_diff_bindings = bindings_with_compact_palette_footer(
         review_diff_bindings,

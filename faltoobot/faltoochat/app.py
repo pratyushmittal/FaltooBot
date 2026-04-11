@@ -258,6 +258,7 @@ class FaltooChatApp(App[None]):
         self._is_polling_notifications = False
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
+        """Return commands shown in Textual's command palette (Ctrl+P) for the active screen."""
         yield from super().get_system_commands(screen)
         yield SystemCommand(
             "Keybindings",
@@ -291,6 +292,7 @@ class FaltooChatApp(App[None]):
         transcript = self.query_one("#transcript", VerticalScroll)
         self.call_after_refresh(transcript.scroll_end, animate=False)
         if self.screen.is_modal:
+            # comment: focus inside the active modal instead of closing it.
             return
         self.call_after_refresh(self.focus_composer)
 
