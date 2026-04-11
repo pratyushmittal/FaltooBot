@@ -11,8 +11,10 @@ We made this recipe for headless Ubuntu machines that still need to come back as
 The goal is simple:
 - boot into a desktop session
 - create a virtual monitor even without HDMI attached
-- auto-login a desktop user
+- auto-login the real desktop user
+- land directly in an XFCE session
 - make RustDesk available after startup
+- avoid a post-boot lock screen that blocks remote access
 
 ## Setup
 
@@ -70,7 +72,7 @@ EndSection
 
 This makes Xorg expose a stable `1920x1080` desktop even when no physical monitor is connected.
 
-### 3) Turn on LightDM autologin
+### 3) Turn on LightDM autologin for the real desktop user
 
 Create:
 
@@ -91,13 +93,25 @@ allow-guest=false
 
 This makes the machine log into the `remote` user automatically and start XFCE on boot.
 
-### 4) Boot into graphical mode
+Use the actual desktop account you plan to control over RustDesk here. The important part is that LightDM should log into a real user session automatically, and that session should land in XFCE instead of stopping at the greeter or some other desktop.
+
+### 4) Make sure a lock screen does not block remote access after boot
+
+If `light-locker` is installed, remove it:
+
+```bash
+sudo apt-get purge -y light-locker
+```
+
+If you use some other screen locker, disable its autostart for the auto-login user too. After boot, RustDesk should reach the live XFCE desktop, not a locked screen.
+
+### 5) Boot into graphical mode
 
 ```bash
 sudo systemctl set-default graphical.target
 ```
 
-### 5) Enable RustDesk
+### 6) Enable RustDesk
 
 ```bash
 sudo systemctl enable rustdesk
@@ -120,6 +134,7 @@ systemctl is-active rustdesk
 systemctl get-default
 loginctl list-sessions
 ps -u remote -f
+pgrep -af 'xfce4-session|light-locker' || true
 ```
 
 You want to see:
@@ -128,6 +143,7 @@ You want to see:
 - `graphical.target` as the default target
 - user `remote` logged in
 - an XFCE session running
+- no `light-locker` process, or any other post-boot lock screen blocking the session
 
 ## Why this works
 
@@ -140,6 +156,7 @@ xserver-xorg-video-dummy
 + XFCE
 + auto-login user
 + RustDesk
++ no post-boot screen locker
 + graphical.target
 = headless machine that still boots into a usable desktop
 ```
@@ -170,6 +187,10 @@ What each part does:
 - RustDesk
   - This is the remote desktop tool you use to connect to that running desktop.
 
+- no post-boot screen locker
+  - If `light-locker` or another lock screen starts right after boot, RustDesk may reach a locked desktop instead of the usable session you wanted.
+  - For a headless machine that should always be reachable after restart, disabling that post-boot locker is usually the most reliable choice.
+
 - `graphical.target`
   - This tells systemd to boot into graphical mode instead of a pure text/CLI target.
   - It ensures the display manager and desktop stack are part of normal boot.
@@ -180,8 +201,9 @@ Put together:
 - auto-login gets a real user session running
 - XFCE provides the desktop
 - RustDesk lets you connect to it
+- no post-boot locker blocks the session
 - `graphical.target` makes the machine boot into that state every time
 
 ## In one line
 
-If you only want the minimum reliable setup, this recipe is the answer: create a dummy display, auto-login into XFCE, enable RustDesk, and boot the machine into `graphical.target`.
+If you only want the minimum reliable setup, this recipe is the answer: create a dummy display, auto-login the real user into XFCE, make sure no lock screen blocks the session after boot, enable RustDesk, and boot the machine into `graphical.target`.
