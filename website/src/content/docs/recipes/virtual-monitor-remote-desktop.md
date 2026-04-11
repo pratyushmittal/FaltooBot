@@ -80,20 +80,20 @@ Create:
 /etc/lightdm/lightdm.conf.d/50-remote-autologin.conf
 ```
 
-Use this content:
+Use content like this. This includes the exact LightDM autologin keys we used, with a concrete example user:
 
 ```ini
 [Seat:*]
-autologin-user=remote
+autologin-user=exedev
 autologin-user-timeout=0
 autologin-session=xfce
 greeter-hide-users=true
 allow-guest=false
 ```
 
-This makes the machine log into the `remote` user automatically and start XFCE on boot.
+This makes the machine log into the `exedev` user automatically and start XFCE on boot.
 
-Use the actual desktop account you plan to control over RustDesk here. The important part is that LightDM should log into a real user session automatically, and that session should land in XFCE instead of stopping at the greeter or some other desktop.
+Replace `exedev` with the actual desktop account you plan to control over RustDesk. The important part is that LightDM should log into a real user session automatically, and that session should land in XFCE instead of stopping at the greeter or some other desktop.
 
 ### 4) Make sure a lock screen does not block remote access after boot
 
