@@ -579,7 +579,9 @@ class Composer(TextArea):
                 await self.app.queue().refresh_queue()
                 return True
             case "/status":
-                await self.app.show_local_answer(config_status_text(build_config()))
+                await self.app.show_local_answer(
+                    config_status_text(build_config(), sessions.get_last_usage(self.app.session))
+                )
                 return True
             case _:
                 return False

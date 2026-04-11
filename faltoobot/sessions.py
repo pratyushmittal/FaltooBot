@@ -259,6 +259,16 @@ def get_messages(session: Session) -> MessagesJson:
         return _coerce_messages_json(chat_key, session_id, payload)
 
 
+def get_last_usage(session: Session) -> dict[str, Any] | None:
+    for item in reversed(get_messages(session)["messages"]):
+        if not isinstance(item, dict):
+            continue
+        usage = item.get("usage")
+        if isinstance(usage, dict):
+            return cast(dict[str, Any], usage)
+    return None
+
+
 def set_messages(session: Session, messages_json: MessagesJson) -> None:
     chat_key, session_id = _session_parts(session)
     get_session(
