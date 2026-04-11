@@ -368,7 +368,16 @@ class FaltooChatApp(App[None]):
                         notify_queue.format_notification_message(notification),
                         [],
                     )
-                    await self.handle_message(message_item)
+                    # comment: notification draining may claim several items at once. When the
+                    # chat is idle, `handle_message()` only *schedules* `submit_message()` in a
+                    # worker and returns immediately. The drain loop would then ack multiple
+                    # notifications before any of their workers start, and each new exclusive
+                    # worker could cancel the previous one. Process idle notifications inline so
+                    # they are persisted one-by-one before we ack them.
+                    if self.is_answering:
+                        await self.queue().add_to_queue(message_item)
+                    else:
+                        await self.submit_message(message_item)
                     notify_queue.ack_notification(path)
                     self.notify("Received sub-agent response")
                 except Exception:
