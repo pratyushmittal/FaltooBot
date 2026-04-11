@@ -146,7 +146,7 @@ class ReviewView(TabPane):
         self.search_term = ""
         self.search_whole_word = False
         self.soft_wrap_enabled = True
-        self.line_highlights = False
+        self.line_highlights = True
 
     def compose(self) -> ComposeResult:
         with TabbedContent(initial=NO_CHANGES_PANE_ID, id="review-tabs"):

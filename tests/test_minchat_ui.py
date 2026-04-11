@@ -160,11 +160,21 @@ async def test_minchat_enter_applies_highlighted_slash_command(
 
 
 @pytest.mark.anyio
-async def test_minchat_status_command_shows_config_status(
+async def test_minchat_status_command_shows_config_status_and_last_usage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": "answer",
+            "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 5},
+        }
+    ]
+    sessions.set_messages(app.session, messages_json)
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
@@ -178,6 +188,8 @@ async def test_minchat_status_command_shows_config_status(
         blocks = [block for block in transcript.query(Markdown)]
         assert any("Faltoobot status" in block._markdown for block in blocks)
         assert any("openai_model" in block._markdown for block in blocks)
+        assert any("Session usage" in block._markdown for block in blocks)
+        assert any('\"total_tokens\": 5' in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio

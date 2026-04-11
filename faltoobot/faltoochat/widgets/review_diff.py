@@ -91,7 +91,7 @@ class ReviewDiffView(TextArea):
         **kwargs,
     ) -> None:
         requested_language = kwargs.pop("language", None)
-        line_highlights = kwargs.pop("line_highlights", False)
+        line_highlights = kwargs.pop("line_highlights", True)
         self.file_path = file_path
         self.review_view = review_view
         self.diff = diff
