@@ -370,6 +370,7 @@ class FaltooChatApp(App[None]):
         self.run_worker(self._drain_notifications(), exclusive=False)
 
     async def _drain_notifications(self) -> None:
+        """Deliver queued notifications for this chat and ack or requeue them."""
         try:
             for path, notification in notify_queue.claim_notifications(
                 lambda item: item["chat_key"] == self.session[0]
@@ -590,7 +591,11 @@ class Composer(TextArea):
                 await self.app.queue().refresh_queue()
                 return True
             case "/status":
-                await self.app.show_local_answer(config_status_text(build_config()))
+                await self.app.show_local_answer(
+                    config_status_text(
+                        build_config(), sessions.get_last_usage(self.app.session)
+                    )
+                )
                 return True
             case _:
                 return False

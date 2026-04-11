@@ -14,6 +14,9 @@ from faltoobot.faltoochat.widgets import QueueWidget
 from textual.widgets import Markdown, OptionList, TabbedContent
 
 
+EXPECTED_NOTIFICATION_COUNT = 2
+
+
 async def wait_for_condition(check: Any) -> None:
     while True:
         if check():
@@ -89,6 +92,86 @@ def build_app(
 
 
 @pytest.mark.anyio
+async def test_minchat_drains_multiple_notifications_without_dropping_earlier_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    processed: list[str] = []
+    acked: list[str] = []
+    claimed_once = False
+
+    notifications = [
+        (
+            tmp_path / "notify-1.json",
+            {
+                "id": "notify_1",
+                "chat_key": app.session[0],
+                "message": "first background result",
+                "created_at": "2026-04-11T00:00:00+00:00",
+            },
+        ),
+        (
+            tmp_path / "notify-2.json",
+            {
+                "id": "notify_2",
+                "chat_key": app.session[0],
+                "message": "second background result",
+                "created_at": "2026-04-11T00:00:01+00:00",
+            },
+        ),
+    ]
+
+    def fake_claim_notifications(_matches: Any):
+        nonlocal claimed_once
+        if claimed_once:
+            return []
+        claimed_once = True
+        return notifications
+
+    async def fake_get_answer_streaming(
+        *,
+        session: sessions.Session,
+        question: str,
+        attachments: list[sessions.Attachment] | None = None,
+    ):
+        processed.append(question)
+        await asyncio.sleep(0)
+        if False:
+            yield None
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.notify_queue.claim_notifications",
+        fake_claim_notifications,
+    )
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.notify_queue.ack_notification",
+        lambda path: acked.append(path.name),
+    )
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.notify_queue.requeue_notification",
+        lambda path: None,
+    )
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        app._poll_notifications()
+        await asyncio.wait_for(
+            wait_for_condition(lambda: len(acked) == EXPECTED_NOTIFICATION_COUNT),
+            timeout=1,
+        )
+
+    assert len(processed) == EXPECTED_NOTIFICATION_COUNT
+    assert processed[0].endswith("first background result")
+    assert processed[1].endswith("second background result")
+    assert acked == ["notify-1.json", "notify-2.json"]
+
+
+@pytest.mark.anyio
 async def test_minchat_shows_slash_command_suggestions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -157,14 +240,22 @@ async def test_minchat_enter_applies_highlighted_slash_command(
         assert composer.text == "/reset"
 
 
-
-
 @pytest.mark.anyio
-async def test_minchat_status_command_shows_config_status(
+async def test_minchat_status_command_shows_config_status_and_last_usage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": "answer",
+            "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 5},
+        }
+    ]
+    sessions.set_messages(app.session, messages_json)
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
@@ -178,6 +269,8 @@ async def test_minchat_status_command_shows_config_status(
         blocks = [block for block in transcript.query(Markdown)]
         assert any("Faltoobot status" in block._markdown for block in blocks)
         assert any("openai_model" in block._markdown for block in blocks)
+        assert any("Session usage" in block._markdown for block in blocks)
+        assert any('"total_tokens": 5' in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio

@@ -257,7 +257,10 @@ def build_config() -> Config:
     )
 
 
-def config_status_text(config: Config) -> str:
+def config_status_text(
+    config: Config,
+    last_usage: dict[str, Any] | None = None,
+) -> str:
     try:
         version_text = package_version("faltoobot")
     except PackageNotFoundError:
@@ -288,6 +291,14 @@ def config_status_text(config: Config) -> str:
         else:
             rendered = value
         lines.append(f"• {key}={json.dumps(rendered)}")
+    if last_usage is not None:
+        lines.extend(
+            [
+                "",
+                "Session usage",
+                f"• last_usage={json.dumps(last_usage)}",
+            ]
+        )
     return "\n".join(lines)
 
 

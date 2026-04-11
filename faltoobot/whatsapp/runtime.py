@@ -19,7 +19,13 @@ from neonize.utils.jid import Jid2String
 
 from faltoobot.config import Config, config_status_text, normalize_chat
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
-from faltoobot.sessions import get_answer, get_messages, get_session, set_messages
+from faltoobot.sessions import (
+    get_answer,
+    get_last_usage,
+    get_messages,
+    get_session,
+    set_messages,
+)
 
 from .audio import AudioError, audio_message, audio_prompt
 
@@ -318,7 +324,9 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
         await client.reply_message(HELP_TEXT, event)
         return
     if event is not None and not attachments and audio is None and prompt == "/status":
-        await client.reply_message(config_status_text(config), event)
+        await client.reply_message(
+            config_status_text(config, get_last_usage(session)), event
+        )
         return
     if event is not None and not attachments and audio is None and prompt == "/reset":
         reset_session = get_session(chat_key=session[0], session_id=str(uuid4()))

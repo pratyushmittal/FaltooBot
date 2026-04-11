@@ -245,7 +245,7 @@ def _write_run_script(config: Config) -> None:
         ),
         encoding="utf-8",
     )
-    config.run_script.chmod(0o755)
+    config.run_script.chmod(0o700)
 
 
 def _write_darwin_launch_agent(config: Config) -> None:

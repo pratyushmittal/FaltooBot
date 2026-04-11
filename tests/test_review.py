@@ -379,7 +379,7 @@ async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wid
         )
         gamma_viewer = gamma_pane.query_one(ReviewDiffView)
         assert gamma_viewer.soft_wrap is True
-        assert gamma_viewer.line_highlights is True
+        assert gamma_viewer.line_highlights is False
 
 
 @pytest.mark.anyio
@@ -450,6 +450,10 @@ async def test_review_diff_highlights_tint_rendered_line_background(
             segment.style.bgcolor if segment.style else None
             for segment in viewer.render_line(2).crop(viewer.gutter_width, 80)._segments
         ]
+        gutter_before = [
+            segment.style.bgcolor if segment.style else None
+            for segment in viewer.render_line(2).crop(0, viewer.gutter_width)._segments
+        ]
 
         await pilot.press("H")
         await pilot.pause(0)
@@ -458,15 +462,13 @@ async def test_review_diff_highlights_tint_rendered_line_background(
             segment.style.bgcolor if segment.style else None
             for segment in viewer.render_line(2).crop(viewer.gutter_width, 80)._segments
         ]
-        gutter_after = [
-            segment.style.bgcolor if segment.style else None
-            for segment in viewer.render_line(2).crop(0, viewer.gutter_width)._segments
-        ]
 
         assert before != after
-        assert gutter_after
-        assert after
-        assert max(gutter_after, key=gutter_after.count) == max(after, key=after.count)
+        assert gutter_before
+        assert before
+        assert max(gutter_before, key=gutter_before.count) == max(
+            before, key=before.count
+        )
 
 
 @pytest.mark.anyio
@@ -476,6 +478,12 @@ async def test_review_multiline_selection_keeps_gutter_and_padding_highlights(
 ) -> None:
     workspace, app = build_app(tmp_path, monkeypatch)
     alpha = workspace / "alpha.md"
+    alpha.write_text(
+        "first line\nsecond line\nthird line\n",
+        encoding="utf-8",
+    )
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
     alpha.write_text(
         "first line\nsecond line with enough text to leave only a little padding\nthird line\n",
         encoding="utf-8",
@@ -491,9 +499,6 @@ async def test_review_multiline_selection_keeps_gutter_and_padding_highlights(
 
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
-        await pilot.press("H")
-        await pilot.pause(0)
-
         before_gutter = [
             segment.style.bgcolor if segment.style else None
             for segment in viewer.render_line(1).crop(0, viewer.gutter_width)._segments
@@ -550,9 +555,6 @@ async def test_review_diff_highlights_cover_empty_added_line_body(
 
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
-        await pilot.press("H")
-        await pilot.pause(0)
-
         blank_diff_line = next(
             index
             for index, line in enumerate(viewer.diff)
@@ -599,6 +601,9 @@ async def test_review_diff_highlights_keep_cursor_visible(
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
         viewer.move_cursor((2, 2), record_width=False)
+        await pilot.pause(0)
+
+        await pilot.press("H")
         await pilot.pause(0)
 
         before = [
