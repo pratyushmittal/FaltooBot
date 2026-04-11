@@ -379,7 +379,7 @@ async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wid
         )
         gamma_viewer = gamma_pane.query_one(ReviewDiffView)
         assert gamma_viewer.soft_wrap is True
-        assert gamma_viewer.line_highlights is False
+        assert gamma_viewer.line_highlights is True
 
 
 @pytest.mark.anyio

@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.4.1 — 2026-04-11
+
+### Changed
+- Review diffs now start with line highlighting enabled, and browser/tool runtime configuration is read more consistently from current config state instead of baked service-script environment exports.
+
+### Fixed
+- Review now expands untracked directories into reviewable files instead of trying to diff the directory itself.
+
 ## 2.4.0 — 2026-04-11
 
 ### Added
