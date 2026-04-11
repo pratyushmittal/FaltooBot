@@ -45,9 +45,9 @@ from .messages_rendering import (
 )
 from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
-from .review import ReviewView
+from .review import ReviewView, _syntax_highlight_theme
 from .stream import get_event_text
-from .widgets import BindingsErrorModal, KeybindingsModal, QueueWidget
+from .widgets import BindingsErrorModal, KeybindingsModal, QueueWidget, ReviewDiffView
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
@@ -273,6 +273,12 @@ class FaltooChatApp(App[None]):
         if not self._persist_theme_changes:
             return
         save_textual_theme(theme_name)
+        syntax_theme = _syntax_highlight_theme(theme_name)
+        for viewer in self.query(ReviewDiffView):
+            # comment: a plain refresh won't switch the syntax palette because the
+            # TextArea theme name is stored on the widget and only initialized once.
+            viewer.theme = syntax_theme
+            viewer.refresh()
 
     def tabs(self) -> TabbedContent:
         return self.query_one("#tabs", TabbedContent)

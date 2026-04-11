@@ -377,6 +377,45 @@ async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wid
 
 
 @pytest.mark.anyio
+async def test_review_diff_updates_theme_colors_when_app_theme_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    alpha = workspace / "alpha.py"
+    alpha.write_text('value = "alpha"\n', encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
+    alpha.write_text('value = "beta"\n', encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        app.theme = "textual-dark"
+        await pilot.pause(0)
+
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.pause(0)
+
+        before_theme = viewer.theme
+        before_color = viewer._theme.base_style.color if viewer._theme else None
+
+        app.theme = "textual-light"
+        await pilot.pause(0)
+
+        assert viewer.theme == "github_light"
+        assert viewer._theme is not None
+        assert viewer._theme.base_style.color != before_color
+        assert before_theme != viewer.theme
+
+
+@pytest.mark.anyio
 async def test_review_diff_highlights_tint_rendered_line_background(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
