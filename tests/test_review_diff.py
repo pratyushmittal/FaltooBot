@@ -369,8 +369,17 @@ def test_get_unstaged_files_uses_git_paths_without_loading_full_diffs(
     beta.write_text("b = 2\n", encoding="utf-8")
     git(workspace, "add", "beta.py")
     (workspace / "gamma.py").write_text("c = 3\n", encoding="utf-8")
+    nested = workspace / "tmp-review-repro"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("", encoding="utf-8")
+    (nested / ".git").mkdir()
+    (nested / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
 
-    assert get_unstaged_files(workspace) == [Path("alpha.py"), Path("gamma.py")]
+    assert get_unstaged_files(workspace) == [
+        Path("alpha.py"),
+        Path("gamma.py"),
+        Path("tmp-review-repro/AGENTS.md"),
+    ]
 
 
 def test_stage_lines_replaces_staged_additions_changed_unstaged(tmp_path: Path) -> None:

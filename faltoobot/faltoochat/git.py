@@ -111,6 +111,22 @@ def _git_paths(workspace: Path, *args: str) -> list[Path]:
     return [Path(path) for path in result.stdout.split("\0") if path]
 
 
+def _untracked_file_paths(workspace: Path, path: Path) -> list[Path]:
+    full_path = workspace / path
+    if full_path.is_file():
+        return [path]
+    if not full_path.is_dir():
+        return []
+    files: list[Path] = []
+    for child in sorted(full_path.rglob("*")):
+        # comment: nested repositories or tooling directories can exist inside an untracked
+        # folder; skip their metadata and only surface real files for review.
+        if not child.is_file() or ".git" in child.relative_to(full_path).parts:
+            continue
+        files.append(child.relative_to(workspace))
+    return files
+
+
 def get_unstaged_files(workspace: Path) -> list[Path]:
     """Return modified or untracked file paths that still have unstaged changes."""
     tracked_paths = _git_paths(workspace, "diff", "--name-only", "-z")
@@ -123,11 +139,17 @@ def get_unstaged_files(workspace: Path) -> list[Path]:
     )
     files: list[Path] = []
     seen: set[Path] = set()
-    for path in [*tracked_paths, *untracked_paths]:
+    for path in tracked_paths:
         if path in seen:
             continue
         seen.add(path)
         files.append(path)
+    for path in untracked_paths:
+        for file_path in _untracked_file_paths(workspace, path):
+            if file_path in seen:
+                continue
+            seen.add(file_path)
+            files.append(file_path)
     return files
 
 

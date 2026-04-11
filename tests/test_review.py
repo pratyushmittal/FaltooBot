@@ -345,14 +345,20 @@ async def test_review_diff_defaults_to_wrap_and_highlight_toggle_applies_app_wid
 
         assert alpha_viewer.soft_wrap is True
         assert beta_viewer.soft_wrap is True
-        assert alpha_viewer.line_highlights is False
-        assert beta_viewer.line_highlights is False
+        assert alpha_viewer.line_highlights is True
+        assert beta_viewer.line_highlights is True
 
         await pilot.press("H")
         await pilot.pause(0)
 
         assert alpha_viewer.soft_wrap is True
         assert beta_viewer.soft_wrap is True
+        assert alpha_viewer.line_highlights is False
+        assert beta_viewer.line_highlights is False
+
+        await pilot.press("H")
+        await pilot.pause(0)
+
         assert alpha_viewer.line_highlights is True
         assert beta_viewer.line_highlights is True
 
@@ -633,13 +639,13 @@ async def test_review_diff_binding_toggles_line_highlights(
         viewer.focus()
         await pilot.pause(0)
 
-        assert viewer.line_highlights is False
-        await pilot.press("H")
-        await pilot.pause(0)
         assert viewer.line_highlights is True
         await pilot.press("H")
         await pilot.pause(0)
         assert viewer.line_highlights is False
+        await pilot.press("H")
+        await pilot.pause(0)
+        assert viewer.line_highlights is True
 
 
 @pytest.mark.anyio
