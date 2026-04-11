@@ -231,6 +231,12 @@ class ReviewDiffView(TextArea):
     def action_review_cursor_up(self) -> None:
         self._move_cursor_lines(-1)
 
+    def action_review_page_down(self) -> None:
+        self.action_cursor_page_down()
+
+    def action_review_page_up(self) -> None:
+        self.action_cursor_page_up()
+
     def action_review_select_line(self) -> None:
         self.line_selection_anchor = self.cursor_location[0]
         self.line_selection_cursor = self.cursor_location[0]

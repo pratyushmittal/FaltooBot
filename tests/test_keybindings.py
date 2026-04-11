@@ -151,6 +151,22 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
             "key_display": None,
         },
         {
+            "key": "ctrl+f",
+            "action": "review_page_down",
+            "description": "Page Down",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "ctrl+b",
+            "action": "review_page_up",
+            "description": "Page Up",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
             "key": "tab",
             "action": "review_next_file_tab",
             "description": "",

@@ -45,6 +45,8 @@ DEFAULT_KEYBINDINGS: BindingsByContext = {
         Binding("G", "review_scroll_end", priority=True, show=False),
         Binding("w", "review_next_word", priority=True, show=False),
         Binding("b", "review_previous_word", priority=True, show=False),
+        Binding("ctrl+f", "review_page_down", "Page Down", priority=True, show=True),
+        Binding("ctrl+b", "review_page_up", "Page Up", priority=True, show=True),
         Binding("tab", "review_next_file_tab", priority=True, show=True),
         Binding("shift+tab", "review_previous_file_tab", priority=True, show=False),
         Binding(

@@ -1,3 +1,5 @@
+import pytest
+from textual.app import App, ComposeResult
 from textual.color import Color
 import subprocess
 from pathlib import Path
@@ -24,6 +26,22 @@ from faltoobot.faltoochat.widgets.review_diff import (
 
 
 EXPECTED_GUTTER_WIDTH = 6
+
+
+class ReviewDiffApp(App[None]):
+    CSS = """
+    ReviewDiffView {
+        width: 40;
+        height: 10;
+    }
+    """
+
+    def __init__(self, viewer: ReviewDiffView) -> None:
+        super().__init__()
+        self.viewer = viewer
+
+    def compose(self) -> ComposeResult:
+        yield self.viewer
 
 
 def _set_theme_colors(monkeypatch) -> dict[str, Color]:
@@ -405,3 +423,58 @@ def test_stage_lines_works_for_untracked_file(tmp_path: Path) -> None:
 
     assert error is None
     assert git(workspace, "show", ":alpha.py") == "value = 1\nvalue = 2\n"
+
+
+async def _mounted_review_diff(diff: Diff) -> tuple[ReviewDiffApp, ReviewDiffView]:
+    viewer = ReviewDiffView(
+        diff,
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+        show_line_numbers=True,
+        show_cursor=True,
+    )
+
+    async def _noop_reload_in_place() -> None:
+        return None
+
+    viewer.reload_in_place = _noop_reload_in_place  # type: ignore[method-assign]
+    return ReviewDiffApp(viewer), viewer
+
+
+@pytest.mark.anyio
+async def test_review_page_bindings_move_by_visible_page() -> None:
+    diff = [{"is_staged": False, "type": "", "text": str(index)} for index in range(200)]
+    app, viewer = await _mounted_review_diff(diff)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+
+        page_height = viewer.content_size.height
+        assert page_height > 0
+
+        viewer.action_review_page_down()
+        await pilot.pause(0)
+        assert viewer.cursor_location == (page_height, 0)
+
+        viewer.action_review_page_up()
+        await pilot.pause(0)
+        assert viewer.cursor_location == (0, 0)
+
+
+@pytest.mark.anyio
+async def test_review_page_bindings_clamp_at_buffer_edges() -> None:
+    diff = [{"is_staged": False, "type": "", "text": str(index)} for index in range(200)]
+    app, viewer = await _mounted_review_diff(diff)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+
+        viewer.move_cursor((viewer.document.line_count - 1, 0), record_width=False)
+        viewer.action_review_page_down()
+        await pilot.pause(0)
+        assert viewer.cursor_location == (viewer.document.line_count - 1, 0)
+
+        viewer.move_cursor((0, 0), record_width=False)
+        viewer.action_review_page_up()
+        await pilot.pause(0)
+        assert viewer.cursor_location == (0, 0)
