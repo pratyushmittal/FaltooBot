@@ -2,6 +2,20 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.4.0 — 2026-04-11
+
+### Added
+- Faltoochat now includes a keybindings command-palette modal and review-page scroll bindings for easier navigation and discoverability.
+
+### Changed
+- System prompts are now cached per session, so prompt edits do not invalidate the active conversation mid-session.
+- Browser session reuse is more reliable when attaching Faltoochat automation to an existing logged-in browser profile.
+- Review comment quoting and selection behavior are more polished, including scrollable long selections and cleaner quoting in the modal.
+
+### Fixed
+- Review diff colors now refresh correctly when the app theme changes.
+- Switching tabs while a modal is open now keeps focus in the modal instead of unexpectedly returning focus to the composer.
+
 ## 2.3.0 — 2026-04-10
 
 ### Added
