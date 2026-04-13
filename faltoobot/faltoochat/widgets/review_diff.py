@@ -658,8 +658,14 @@ def _review_range(view: ReviewDiffView) -> tuple[int, int]:
     end = view.selection.end[0]
     if end < start:
         start, end = end, start
-    # comment: Textual selections ending at column 0 point at the start of the next line.
-    if view.selection.end[1] == 0 and end > start:
+    # comment: line-mode selections use column-0 endpoints as a sentinel for the
+    # next full line, but arbitrary text selections ending at the start of a later
+    # line should still include that line in the review range.
+    if (
+        view.line_selection_anchor is not None
+        and view.selection.end[1] == 0
+        and end > start
+    ):
         end -= 1
     return (
         view._visible_diff_line(start),

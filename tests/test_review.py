@@ -1546,6 +1546,38 @@ async def test_review_modal_treats_code_as_plain_text() -> None:
 
 
 @pytest.mark.anyio
+async def test_review_add_includes_empty_line_when_selection_ends_at_line_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    sample = workspace / "sample.py"
+    sample.write_text("one = 1\nthree = 3\n", encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
+    sample.write_text("one = 1\n\nthree = 3\n", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        sample_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "sample.py"
+        )
+        review_tabs.active = sample_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = sample_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        viewer.selection = type(viewer.selection)((0, 0), (1, 0))
+
+        await pilot.press("a")
+        await pilot.pause(0)
+        modal = app.screen
+        assert isinstance(modal, ReviewCommentModal)
+        assert (modal.line_number_start, modal.line_number_end) == (1, 2)
+        assert modal.code == "one = 1\n+"
+
+
+@pytest.mark.anyio
 async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1582,7 +1614,8 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
             "comment": "Unchanged",
         }
 
-        viewer.selection = type(viewer.selection)((1, 0), (4, 0))
+        viewer.move_cursor((1, 0), record_width=False)
+        await pilot.press("V", "j")
         await pilot.press("a")
         await pilot.pause(0)
         modal = app.screen
