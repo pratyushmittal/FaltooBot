@@ -392,18 +392,22 @@ class ReviewDiffView(TextArea):
             ]
 
     def action_review_next_modification(self) -> None:
-        if line := next_modification(
+        line = next_modification(
             self.diff, self._visible_diff_line(self.cursor_location[0])
-        ):
-            target = self._display_line(line)
-            self.move_cursor((target, 0), center=True, record_width=False)
+        )
+        if line is None:
+            return
+        target = self._display_line(line)
+        self.move_cursor((target, 0), center=True, record_width=False)
 
     def action_review_previous_modification(self) -> None:
-        if line := previous_modification(
+        line = previous_modification(
             self.diff, self._visible_diff_line(self.cursor_location[0])
-        ):
-            target = self._display_line(line)
-            self.move_cursor((target, 0), center=True, record_width=False)
+        )
+        if line is None:
+            return
+        target = self._display_line(line)
+        self.move_cursor((target, 0), center=True, record_width=False)
 
     def action_review_jump_next(self) -> None:
         if not self.review_view.search_term:

@@ -268,6 +268,22 @@ def test_review_range_excludes_next_line_for_visual_line_selection() -> None:
     assert _review_range(viewer) == (2, 7)
 
 
+def test_review_previous_modification_can_jump_to_first_line() -> None:
+    viewer = ReviewDiffView(
+        [
+            {"is_staged": False, "type": "+", "text": "added"},
+            {"is_staged": False, "type": "", "text": "context"},
+        ],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    viewer.move_cursor((1, 0), record_width=False)
+
+    viewer.action_review_previous_modification()
+
+    assert viewer.cursor_location == (0, 0)
+
+
 def test_next_modification_jumps_to_next_block_start() -> None:
     diff: Diff = [
         {"is_staged": False, "type": "", "text": "ctx"},
