@@ -13,100 +13,21 @@ KeyList: TypeAlias = list[str]
 BindingsByContext: TypeAlias = dict[str, list[Binding]]
 BindingOverrides: TypeAlias = dict[str, KeyList]
 
-DEFAULT_KEYBINDINGS: BindingsByContext = {
-    "app": [
-        Binding("ctrl+1", "show_chat_tab", "Chat Tab", priority=True, show=False),
-        Binding("ctrl+2", "show_review_tab", "Review Tab", priority=True, show=False),
-        Binding(
-            "ctrl+r",
-            "toggle_review_tab",
-            "Toggle Review Tab",
-            priority=True,
-            show=False,
-        ),
-        Binding(
-            "ctrl+p",
-            "command_palette",
-            "Command Palette",
-            show=False,
-            priority=True,
-            tooltip="Open the command palette",
-        ),
-    ],
-    "chat": [],
-    "review": [
-        Binding(
-            "@", "review_search_project", "Search Project", priority=True, show=True
-        ),
-        Binding("R", "review_refresh_files", "Refresh Files", priority=True, show=True),
-        Binding("j,ctrl+n", "review_cursor_down", priority=True, show=False),
-        Binding("k,ctrl+p", "review_cursor_up", priority=True, show=False),
-        Binding("h", "cursor_left", priority=True, show=False),
-        Binding("l", "cursor_right", priority=True, show=False),
-        Binding("g", "review_scroll_home", priority=True, show=False),
-        Binding("G", "review_scroll_end", priority=True, show=False),
-        Binding("w", "review_next_word", priority=True, show=False),
-        Binding("b", "review_previous_word", priority=True, show=False),
-        Binding("ctrl+f", "review_page_down", "Page Down", priority=True, show=True),
-        Binding("ctrl+b", "review_page_up", "Page Up", priority=True, show=True),
-        Binding("tab", "review_next_file_tab", priority=True, show=True),
-        Binding("shift+tab", "review_previous_file_tab", priority=True, show=False),
-        Binding(
-            "r",
-            "review_refresh_current_file",
-            "Refresh File",
-            priority=True,
-            show=True,
-        ),
-        Binding(
-            "]", "review_next_modification", "Next Change", priority=True, show=True
-        ),
-        Binding(
-            "[",
-            "review_previous_modification",
-            "Previous Change",
-            priority=True,
-            show=True,
-        ),
-        Binding("V", "review_select_line", "Select Line", priority=True, show=True),
-        Binding("W", "review_toggle_wrap", "Toggle Wrap", priority=True, show=True),
-        Binding(
-            "H",
-            "review_toggle_line_highlights",
-            "Line Highlights",
-            priority=True,
-            show=True,
-        ),
-        Binding("n", "review_jump_next", "Next Match", priority=True, show=True),
-        Binding(
-            "N",
-            "review_jump_previous",
-            "Previous Match",
-            priority=True,
-            show=True,
-        ),
-        Binding("*", "review_search_word_under_cursor", priority=True, show=False),
-        Binding("slash", "review_search", "Search File", priority=True, show=True),
-        Binding("escape", "review_escape", "Exit Search", priority=True, show=True),
-        Binding("m", "review_cycle_mode", "Review Mode", priority=True, show=True),
-        Binding("a,c", "review_add", priority=True, show=True),
-        Binding("s", "review_stage_lines", priority=True, show=True),
-        Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
-        Binding("shift+enter", "review_submit_reviews", priority=True, show=True),
-    ],
-    "modal": [],
-}
-
-KNOWN_CONTEXTS = tuple(DEFAULT_KEYBINDINGS)
-KNOWN_ACTIONS_BY_CONTEXT: dict[str, set[str]] = {
-    context: {binding.action for binding in bindings}
-    for context, bindings in DEFAULT_KEYBINDINGS.items()
-}
 REVIEW_VIEW_ACTIONS = {"review_search_project", "review_refresh_files"}
 
 
-def default_keybindings(context: str) -> list[Binding]:
-    return [replace(binding) for binding in DEFAULT_KEYBINDINGS[context]]
+def _default_keybindings() -> BindingsByContext:
+    from faltoobot.faltoochat.app import FaltooChatApp
+
+    return {
+        "app": [replace(binding) for binding in FaltooChatApp.DEFAULT_BINDINGS],
+        "chat": [],
+        "review": [
+            *[replace(binding) for binding in ReviewView.DEFAULT_BINDINGS],
+            *[replace(binding) for binding in ReviewDiffView.DEFAULT_BINDINGS],
+        ],
+        "modal": [],
+    }
 
 
 def load_keybindings(root: Path | None = None) -> tuple[BindingsByContext, list[str]]:
@@ -127,15 +48,21 @@ def _validate_overrides(data: dict[str, Any]) -> tuple[BindingOverrides, list[st
     overrides: BindingOverrides = {}
     errors: list[str] = []
     known_keys: dict[str, str] = {}
+    default_bindings = _default_keybindings()
+    known_contexts = tuple(default_bindings)
+    known_actions_by_context = {
+        context: {binding.action for binding in bindings}
+        for context, bindings in default_bindings.items()
+    }
     for context_name, context_value in data.items():
-        if context_name not in KNOWN_CONTEXTS:
+        if context_name not in known_contexts:
             errors.append(f"Unknown bindings context: {context_name}")
             continue
         if not isinstance(context_value, dict):
             errors.append(f"Bindings context must be a table: {context_name}")
             continue
         for action_name, action_value in context_value.items():
-            if action_name not in KNOWN_ACTIONS_BY_CONTEXT[context_name]:
+            if action_name not in known_actions_by_context[context_name]:
                 errors.append(f"Unknown {context_name} binding action: {action_name}")
                 continue
             keys = _parse_keys(action_value)
@@ -172,7 +99,7 @@ def _parse_keys(value: Any) -> KeyList | None:
 
 def _merge_keybindings(overrides: BindingOverrides) -> BindingsByContext:
     merged: BindingsByContext = {}
-    for context, defaults in DEFAULT_KEYBINDINGS.items():
+    for context, defaults in _default_keybindings().items():
         merged[context] = []
         for binding in defaults:
             default_keys = [

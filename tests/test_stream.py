@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, cast
 
 from faltoobot.faltoochat.stream import get_event_text
 
@@ -12,7 +13,7 @@ def test_get_event_text_ignores_non_tool_output_item_done() -> None:
             "content": [{"type": "output_text", "text": "hello"}],
         },
     )
-    is_new, classes, text = get_event_text(event)  # type: ignore[arg-type]
+    is_new, classes, text = get_event_text(cast(Any, event))
 
     assert (is_new, classes, text) == (True, "tool", "")
 
@@ -26,7 +27,7 @@ def test_get_event_text_summarizes_streamed_shell_calls() -> None:
             "arguments": '{"command":"rg -n foobar faltoobot tests","timeout_ms":10000}',
         },
     )
-    is_new, classes, text = get_event_text(event)  # type: ignore[arg-type]
+    is_new, classes, text = get_event_text(cast(Any, event))
 
     assert (is_new, classes, text) == (
         True,
@@ -40,6 +41,6 @@ def test_get_event_text_starts_streamed_reasoning_summary() -> None:
         type="response.reasoning_summary_part.added",
         part=SimpleNamespace(text="**Planning** reply"),
     )
-    is_new, classes, text = get_event_text(event)  # type: ignore[arg-type]
+    is_new, classes, text = get_event_text(cast(Any, event))
 
     assert (is_new, classes, text) == (True, "thinking", "**Planning** reply")

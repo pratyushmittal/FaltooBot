@@ -146,7 +146,9 @@ class BindingsErrorModal(TextModal):
     def __init__(self, errors: list[str]) -> None:
         super().__init__("\n".join(errors), subheading=_keybindings_subheading())
 
-    DEFAULT_CSS = TextModal.DEFAULT_CSS + """
+    DEFAULT_CSS = (
+        TextModal.DEFAULT_CSS
+        + """
     #bindings-error-dialog {
         width: 80;
         max-width: 80;
@@ -189,6 +191,7 @@ class BindingsErrorModal(TextModal):
         content-align: right middle;
     }
     """
+    )
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -210,7 +213,9 @@ class KeybindingsModal(TextModal):
     help_id = "keybindings-help"
     subheading_id = "keybindings-subheading"
 
-    DEFAULT_CSS = TextModal.DEFAULT_CSS + """
+    DEFAULT_CSS = (
+        TextModal.DEFAULT_CSS
+        + """
     #keybindings-dialog {
         width: 80;
         max-width: 80;
@@ -253,6 +258,7 @@ class KeybindingsModal(TextModal):
         content-align: right middle;
     }
     """
+    )
 
     @classmethod
     def from_screen(cls, app: "FaltooChatApp", screen) -> "KeybindingsModal":
@@ -271,7 +277,9 @@ def _render_keybindings(app: "FaltooChatApp", screen) -> Text:
         if binding.description
     }
     grouped: defaultdict[str, list[str]] = defaultdict(list)
-    for _key, (_node, binding, _enabled, _tooltip) in sorted(screen.active_bindings.items()):
+    for _key, (_node, binding, _enabled, _tooltip) in sorted(
+        screen.active_bindings.items()
+    ):
         if binding.action not in descriptions:
             continue
         for key in binding.key.split(","):

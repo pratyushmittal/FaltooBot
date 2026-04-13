@@ -9,6 +9,7 @@ from tree_sitter import Language
 import tree_sitter_lua
 import tree_sitter_typescript
 from textual import events
+from textual.binding import Binding
 from textual.color import Color
 from textual.strip import Strip
 from textual.widgets import TabbedContent, TabPane, TextArea
@@ -48,6 +49,55 @@ class DisplayRowContext(TypedDict):
 
 
 class ReviewDiffView(TextArea):
+    DEFAULT_BINDINGS = [
+        Binding("j,ctrl+n", "review_cursor_down", priority=True, show=False),
+        Binding("k,ctrl+p", "review_cursor_up", priority=True, show=False),
+        Binding("h", "cursor_left", priority=True, show=False),
+        Binding("l", "cursor_right", priority=True, show=False),
+        Binding("g", "review_scroll_home", priority=True, show=False),
+        Binding("G", "review_scroll_end", priority=True, show=False),
+        Binding("w", "review_next_word", priority=True, show=False),
+        Binding("b", "review_previous_word", priority=True, show=False),
+        Binding("ctrl+f", "review_page_down", "Page Down", priority=True, show=True),
+        Binding("ctrl+b", "review_page_up", "Page Up", priority=True, show=True),
+        Binding("tab", "review_next_file_tab", priority=True, show=True),
+        Binding("shift+tab", "review_previous_file_tab", priority=True, show=False),
+        Binding(
+            "r", "review_refresh_current_file", "Refresh File", priority=True, show=True
+        ),
+        Binding(
+            "]", "review_next_modification", "Next Change", priority=True, show=True
+        ),
+        Binding(
+            "[",
+            "review_previous_modification",
+            "Previous Change",
+            priority=True,
+            show=True,
+        ),
+        Binding("V", "review_select_line", "Select Line", priority=True, show=True),
+        Binding("W", "review_toggle_wrap", "Toggle Wrap", priority=True, show=True),
+        Binding(
+            "H",
+            "review_toggle_line_highlights",
+            "Line Highlights",
+            priority=True,
+            show=True,
+        ),
+        Binding("n", "review_jump_next", "Next Match", priority=True, show=True),
+        Binding(
+            "N", "review_jump_previous", "Previous Match", priority=True, show=True
+        ),
+        Binding("*", "review_search_word_under_cursor", priority=True, show=False),
+        Binding("slash", "review_search", "Search File", priority=True, show=True),
+        Binding("escape", "review_escape", "Exit Search", priority=True, show=True),
+        Binding("m", "review_cycle_mode", "Review Mode", priority=True, show=True),
+        Binding("a,c", "review_add", priority=True, show=True),
+        Binding("s", "review_stage_lines", priority=True, show=True),
+        Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
+        Binding("shift+enter", "review_submit_reviews", priority=True, show=True),
+    ]
+
     def __init__(
         self,
         diff: Diff,

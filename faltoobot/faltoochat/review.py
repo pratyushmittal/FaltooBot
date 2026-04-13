@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias, cast
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.widgets import Static, TabbedContent, TabPane, Tabs
 
@@ -102,6 +103,13 @@ class ReviewEmpty(Static):
 
 
 class ReviewView(TabPane):
+    DEFAULT_BINDINGS = [
+        Binding(
+            "@", "review_search_project", "Search Project", priority=True, show=True
+        ),
+        Binding("R", "review_refresh_files", "Refresh Files", priority=True, show=True),
+    ]
+
     DEFAULT_CSS = """
     ReviewView {
         width: 1fr;

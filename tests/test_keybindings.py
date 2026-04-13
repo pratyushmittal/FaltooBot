@@ -13,10 +13,7 @@ from faltoobot.config import app_root
 from faltoobot.faltoochat.app import FaltooChatApp
 from faltoobot.faltoochat.widgets.keybinding_modals import TextModal
 from faltoobot.faltoochat.widgets.review_diff import ReviewDiffView
-from faltoobot.keybindings import (
-    default_keybindings,
-    load_keybindings,
-)
+from faltoobot.keybindings import _default_keybindings, load_keybindings
 
 
 class DemoModal(TextModal):
@@ -425,14 +422,14 @@ def test_default_review_bindings_snapshot() -> None:
         "ReviewView": _snapshot(
             [
                 binding
-                for binding in default_keybindings("review")
+                for binding in _default_keybindings()["review"]
                 if binding.action in {"review_search_project", "review_refresh_files"}
             ]
         ),
         "ReviewDiffView": _snapshot(
             [
                 binding
-                for binding in default_keybindings("review")
+                for binding in _default_keybindings()["review"]
                 if binding.action
                 not in {"review_search_project", "review_refresh_files"}
             ]

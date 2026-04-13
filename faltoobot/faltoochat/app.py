@@ -92,6 +92,26 @@ async def _write_stream_chunk(
 
 
 class FaltooChatApp(App[None]):
+    DEFAULT_BINDINGS = [
+        Binding("ctrl+1", "show_chat_tab", "Chat Tab", priority=True, show=False),
+        Binding("ctrl+2", "show_review_tab", "Review Tab", priority=True, show=False),
+        Binding(
+            "ctrl+r",
+            "toggle_review_tab",
+            "Toggle Review Tab",
+            priority=True,
+            show=False,
+        ),
+        Binding(
+            "ctrl+p",
+            "command_palette",
+            "Command Palette",
+            show=False,
+            priority=True,
+            tooltip="Open the command palette",
+        ),
+    ]
+
     CSS = """
     App {
         color: $text;

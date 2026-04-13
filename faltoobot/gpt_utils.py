@@ -285,7 +285,7 @@ async def get_streaming_reply(  # noqa: C901
                     if event.response.output:
                         response_output = list(event.response.output)
                     else:
-                        event.response.codex_output = response_output  # type: ignore[unresolved-attribute]
+                        cast(Any, event.response).codex_output = response_output
                     current_input.extend(
                         _to_message_item(item) for item in response_output
                     )
