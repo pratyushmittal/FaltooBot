@@ -245,12 +245,24 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode() -> None:
     assert viewer.text == "a = 1\nb = 2\nb = 20\nc = 3"
 
 
-def test_review_range_uses_selected_text_to_include_last_selected_line() -> None:
+def test_review_range_includes_line_when_text_selection_ends_at_line_start() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(10)],
         file_path=Path("alpha.py"),
         review_view=cast(Any, review_view_stub()),
     )
+    viewer.selection = type(viewer.selection)((2, 0), (8, 0))
+
+    assert _review_range(viewer) == (2, 8)
+
+
+def test_review_range_excludes_next_line_for_visual_line_selection() -> None:
+    viewer = ReviewDiffView(
+        [{"is_staged": False, "type": "", "text": str(index)} for index in range(10)],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    viewer.line_selection_anchor = 2
     viewer.selection = type(viewer.selection)((2, 0), (8, 0))
 
     assert _review_range(viewer) == (2, 7)
