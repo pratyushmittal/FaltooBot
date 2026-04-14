@@ -222,10 +222,11 @@ class ReviewDiffView(TextArea):
         line_type = self.diff[diff_line]["type"]
         line_number = None
         if not section_offset and line_type != "-":
-            visible_lines = sum(
-                1 for line in self.diff[: diff_line + 1] if line["type"] != "-"
+            line_number = (
+                self.line_number_start
+                + _file_line_for_diff_line(self.diff, diff_line)
+                - 1
             )
-            line_number = self.line_number_start + visible_lines - 1
         return {
             "document_line": document_line,
             "diff_line": diff_line,
@@ -792,6 +793,7 @@ def _commented_lines(view: ReviewDiffView) -> set[int]:
 
 
 def _diff_line_for_file_line(diff: Diff, line_number: int) -> int:
+    """Return the diff row that displays the given 1-based file line."""
     visible_line = max(1, line_number)
     current_line = 0
     for index, line in enumerate(diff):
@@ -804,6 +806,12 @@ def _diff_line_for_file_line(diff: Diff, line_number: int) -> int:
 
 
 def _file_line_for_diff_line(diff: Diff, diff_line: int) -> int:
+    """Return the 1-based file line that best matches a diff row.
+
+    Added and context rows map to their own file line. Deleted rows map to the
+    next surviving file line so cursor-based actions still land on a valid file
+    position.
+    """
     line_number = sum(1 for line in diff[: diff_line + 1] if line["type"] != "-")
     if diff and diff[min(diff_line, len(diff) - 1)]["type"] == "-":
         total_lines = max(1, sum(1 for line in diff if line["type"] != "-"))
