@@ -27,6 +27,7 @@ from faltoobot.faltoochat.widgets import (
 from faltoobot.faltoochat.widgets.search_project import (
     SearchProject as SearchProjectModal,
 )
+from faltoobot.faltoochat.widgets.search_file import SearchFile as SearchFileModal
 from faltoobot.faltoochat.widgets.search_project import (
     _project_search_results,
     _ripgrep_results,
@@ -1857,6 +1858,57 @@ async def test_review_modal_supports_multiline_comments(
         await pilot.pause(0)
 
         assert app.query_one(ReviewView).reviews[-1]["comment"] == "Line1\nLine2"
+
+
+@pytest.mark.anyio
+async def test_review_comment_at_opens_file_picker_and_inserts_mention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        viewer.move_cursor((1, 0), record_width=False)
+
+        await pilot.press("a")
+        await pilot.pause(0)
+        modal = app.screen
+        assert isinstance(modal, ReviewCommentModal)
+        comment_input = modal.query_one("#review-comment-input", TextArea)
+        await pilot.click(comment_input)
+
+        await pilot.press("@")
+        await pilot.pause(0)
+        picker = app.screen
+        assert isinstance(picker, SearchFileModal)
+        search_input = picker.query_one("#telescope-input", Input)
+        await pilot.click(search_input)
+        await pilot.press("b", "e", "t", "a")
+        await wait_for_condition(
+            lambda: len(picker.query_one("#telescope-options", OptionList).options) == 1
+        )
+        await pilot.press("enter")
+        await wait_for_condition(
+            lambda: (
+                isinstance(app.screen, ReviewCommentModal)
+                and app.screen.query_one("#review-comment-input", TextArea).text
+                == "`beta.py` "
+            )
+        )
+
+        assert (
+            app.screen.query_one("#review-comment-input", TextArea).text == "`beta.py` "
+        )
 
 
 @pytest.mark.anyio

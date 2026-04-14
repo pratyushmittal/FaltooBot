@@ -11,7 +11,8 @@ from faltoobot.faltoochat.app import Composer, FaltooChatApp
 from faltoobot.session_utils import get_local_user_message_item
 from faltoobot.faltoochat.review import ReviewView
 from faltoobot.faltoochat.widgets import QueueWidget
-from textual.widgets import Markdown, OptionList, TabbedContent
+from faltoobot.faltoochat.widgets.search_file import SearchFile
+from textual.widgets import Input, Markdown, OptionList, TabbedContent
 
 
 async def wait_for_condition(check: Any) -> None:
@@ -109,6 +110,38 @@ async def test_minchat_shows_slash_command_suggestions(
             "/status — show bot status",
             "/tree — open the current session messages file",
         ]
+
+
+@pytest.mark.anyio
+async def test_minchat_at_opens_file_picker_and_inserts_mention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    (workspace / "alpha.py").write_text("value = 1\n", encoding="utf-8")
+    (workspace / "beta.py").write_text("value = 2\n", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+
+        await pilot.press("@")
+        await pilot.pause(0)
+        modal = app.screen
+        assert isinstance(modal, SearchFile)
+        search_input = modal.query_one("#telescope-input", Input)
+        await pilot.click(search_input)
+        await pilot.press("b", "e", "t", "a")
+        await wait_for_condition(
+            lambda: len(modal.query_one("#telescope-options", OptionList).options) == 1
+        )
+        await pilot.press("enter")
+        await wait_for_condition(
+            lambda: app.query_one("#composer", Composer).text == "`beta.py` "
+        )
+
+        assert app.query_one("#composer", Composer).text == "`beta.py` "
 
 
 @pytest.mark.anyio

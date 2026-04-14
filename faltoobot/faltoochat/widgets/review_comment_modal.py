@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -6,11 +7,17 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static, TextArea
 
+from .search_file import SearchFile
+
+if TYPE_CHECKING:
+    from ..app import FaltooChatApp
+
 
 class ReviewCommentEditor(TextArea):
     BINDINGS = [
         Binding("enter", "submit_comment", priority=True, show=False),
         Binding("shift+enter", "insert_newline", priority=True, show=False),
+        Binding("@", "mention_file", priority=True, show=False),
     ]
 
     def action_submit_comment(self) -> None:
@@ -21,6 +28,24 @@ class ReviewCommentEditor(TextArea):
 
     def action_insert_newline(self) -> None:
         self.insert("\n")
+
+    def action_mention_file(self) -> None:
+        workspace = cast("FaltooChatApp", self.app).workspace
+
+        def on_result(result: Path | None) -> None:
+            if result is None:
+                return
+            self.insert(f"`{result}` ")
+            self.focus()
+
+        self.app.push_screen(
+            SearchFile(
+                workspace=workspace,
+                title="Mention file",
+                placeholder="Type a filename or path",
+            ),
+            on_result,
+        )
 
 
 class ReviewCommentModal(ModalScreen[str | None]):

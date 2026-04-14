@@ -47,7 +47,13 @@ from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
 from .review import ReviewView, _syntax_highlight_theme
 from .stream import get_event_text
-from .widgets import BindingsErrorModal, KeybindingsModal, QueueWidget, ReviewDiffView
+from .widgets import (
+    BindingsErrorModal,
+    KeybindingsModal,
+    QueueWidget,
+    ReviewDiffView,
+    SearchFile,
+)
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
@@ -553,6 +559,7 @@ class Composer(TextArea):
     BINDINGS = [
         Binding("enter", "composer_enter", "Submit", priority=True),
         Binding("shift+enter", "newline", "New line", priority=True),
+        Binding("@", "mention_file", "Mention File", priority=True, show=False),
     ]
     BINDING_GROUP_TITLE = "Chat"
 
@@ -709,6 +716,22 @@ class Composer(TextArea):
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+    def action_mention_file(self) -> None:
+        def on_result(result: Path | None) -> None:
+            if result is None:
+                return
+            self.insert(f"`{result}` ")
+            self.focus()
+
+        self.app.push_screen(
+            SearchFile(
+                workspace=self.app.workspace,
+                title="Mention file",
+                placeholder="Type a filename or path",
+            ),
+            on_result,
+        )
 
 
 async def _run_one_shot(session: sessions.Session, prompt: str) -> str:

@@ -221,6 +221,14 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
             "key_display": None,
         },
         {
+            "key": "ctrl+d",
+            "action": "review_edit_file",
+            "description": "Edit",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
             "key": "H",
             "action": "review_toggle_line_highlights",
             "description": "Line Highlights",

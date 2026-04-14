@@ -40,6 +40,7 @@ def test_open_browser_terminates_on_keyboard_interrupt(
             calls.append(("kill", None))
 
     monkeypatch.setattr(browser.subprocess, "Popen", lambda args: FakeProcess())
+    monkeypatch.setattr(browser, "_cdp_is_running", lambda: False)
 
     browser.open_browser(root=tmp_path, binary="/tmp/chrome", url=None)
 
