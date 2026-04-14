@@ -9,6 +9,7 @@ from tree_sitter import Language
 import tree_sitter_lua
 import tree_sitter_typescript
 from textual import events
+from textual.app import SuspendNotSupported
 from textual.binding import Binding
 from textual.color import Color
 from textual.strip import Strip
@@ -27,6 +28,7 @@ from ..editor_utils import (
 )
 from ..git import apply_selected_diff_lines, get_selected_change_state, stage_file
 from ..review_api import get_review
+from ..terminal import open_in_vi
 
 from .review_comment_modal import ReviewCommentModal
 from .search_in_file import SearchInFile
@@ -77,6 +79,7 @@ class ReviewDiffView(TextArea):
         ),
         Binding("V", "review_select_line", "Select Line", priority=True, show=True),
         Binding("W", "review_toggle_wrap", "Toggle Wrap", priority=True, show=True),
+        Binding("ctrl+d", "review_edit_file", "Edit", priority=True, show=True),
         Binding(
             "H",
             "review_toggle_line_highlights",
@@ -436,6 +439,31 @@ class ReviewDiffView(TextArea):
     async def action_review_refresh_current_file(self) -> None:
         await self.reload_in_place()
 
+    async def action_review_edit_file(self) -> None:
+        await self.reload_in_place()
+        workspace = cast("FaltooChatApp", self.app).workspace
+        line_number = _file_line_for_diff_line(
+            self.diff,
+            self._visible_diff_line(self.cursor_location[0]),
+        )
+        try:
+            with self.app.suspend():
+                error = open_in_vi(
+                    workspace / self.file_path,
+                    line_number=line_number,
+                )
+        except SuspendNotSupported:
+            error = open_in_vi(
+                workspace / self.file_path,
+                line_number=line_number,
+            )
+        if error is not None:
+            self.app.notify(error, severity="warning")
+            return
+        await self.review_view.refresh_files()
+        await self.reload_in_place()
+        self.jump_to_file_line(line_number)
+
     async def action_review_search_word_under_cursor(self) -> None:
         await self.reload_in_place()
         term = word_under_cursor(
@@ -773,3 +801,11 @@ def _diff_line_for_file_line(diff: Diff, line_number: int) -> int:
         if current_line >= visible_line:
             return index
     return max(0, len(diff) - 1)
+
+
+def _file_line_for_diff_line(diff: Diff, diff_line: int) -> int:
+    line_number = sum(1 for line in diff[: diff_line + 1] if line["type"] != "-")
+    if diff and diff[min(diff_line, len(diff) - 1)]["type"] == "-":
+        total_lines = max(1, sum(1 for line in diff if line["type"] != "-"))
+        return min(total_lines, line_number + 1)
+    return max(1, line_number)

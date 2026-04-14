@@ -1,6 +1,8 @@
 import os
 import re
 import select
+import shlex
+import shutil
 import subprocess
 import sys
 import termios
@@ -98,3 +100,22 @@ def open_in_default_editor(path: Path) -> None:
         ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
     )
     subprocess.Popen(command)  # noqa: S603
+
+
+def open_in_vi(
+    path: Path,
+    *,
+    line_number: int | None = None,
+) -> str | None:
+    command = ["vi"]
+    if line_number is not None:
+        command.append(f"+{line_number}")
+    command.append(str(path))
+    if shell := os.environ.get("SHELL"):
+        shell_command = " ".join(shlex.quote(part) for part in command)
+        subprocess.run([shell, "-ic", shell_command], check=False)  # noqa: S603
+        return None
+    if shutil.which("vi") is None:
+        return "Install `vi` to edit files from review."
+    subprocess.run(command, check=False)  # noqa: S603
+    return None

@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 import json
 import subprocess
 from pathlib import Path
@@ -317,6 +318,62 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
         assert viewer.cursor_location == (5, 0)
 
         assert viewer.soft_wrap is True
+
+
+@pytest.mark.anyio
+async def test_review_ctrl_d_opens_vi_and_refreshes_diff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+    seen: list[tuple[Path, int | None]] = []
+
+    def fake_open_in_vi(
+        path: Path,
+        *,
+        line_number: int | None = None,
+    ) -> None:
+        seen.append((path, line_number))
+        path.write_text(
+            "\n".join(
+                [
+                    "a = 1",
+                    "b = 200",
+                    "c = 3",
+                    "d = 4",
+                    "e = 50",
+                    "f = 6",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.widgets.review_diff.open_in_vi",
+        fake_open_in_vi,
+    )
+    monkeypatch.setattr(app, "suspend", lambda: nullcontext())
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        viewer.move_cursor((1, 0), record_width=False)
+
+        await pilot.press("ctrl+d")
+        await wait_for_condition(lambda: "b = 200" in viewer.text)
+        await pilot.pause(0)
+
+        assert seen == [(workspace / "alpha.py", 2)]
+        assert "b = 200" in viewer.text
 
 
 @pytest.mark.anyio
