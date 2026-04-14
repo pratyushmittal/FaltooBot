@@ -2,6 +2,19 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 2.5.0 — 2026-04-15
+
+### Added
+- Faltoochat composer and review inputs now support `@` file mentions for faster file targeting.
+
+### Changed
+- Review now uses a simpler `Ctrl+D` edit flow that works better with vi-style editing.
+- Faltoochat submit handling is more consistent across composer, review, and queued auto-submit paths.
+
+### Fixed
+- Review jumps now allow targeting line zero correctly.
+- Empty selected lines now stay included in review selections.
+
 ## 2.4.1 — 2026-04-11
 
 ### Changed
