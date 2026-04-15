@@ -368,19 +368,6 @@ def _write_bindings(home: Path, text: str) -> None:
     (root / "bindings.toml").write_text(text, encoding="utf-8")
 
 
-def _load_bindings(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    text: str | None = None,
-):
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    if text is not None:
-        _write_bindings(home, text)
-    return load_keybindings()
-
-
 def _git(workspace: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -487,7 +474,9 @@ def test_load_keybindings_preserves_default_review_bindings_without_bindings_fil
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bindings_by_context, errors = _load_bindings(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    bindings_by_context, errors = load_keybindings()
 
     assert _context_snapshot(bindings_by_context["app"]) == _expected_context(
         EXPECTED_DEFAULT_APP_BINDINGS
@@ -499,34 +488,31 @@ def test_load_keybindings_preserves_default_review_bindings_without_bindings_fil
     assert errors == []
 
 
-@pytest.mark.parametrize(
-    ("text", "expected_key"),
-    [
-        pytest.param(
-            "[app]\ncommand_palette = []\n",
-            "ctrl+p",
-            id="keeps-default-when-empty-list",
-        ),
-        pytest.param(
-            '[app]\ncommand_palette = ["ctrl+k", "ctrl+shift+p"]\n',
-            "ctrl+k",
-            id="uses-first-command-palette-key",
-        ),
-    ],
-)
-def test_load_keybindings_command_palette_override(
-    text: str,
-    expected_key: str,
+def test_load_keybindings_keeps_default_command_palette_when_empty_list(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bindings_by_context, errors = _load_bindings(
-        tmp_path,
-        monkeypatch,
-        text=text,
-    )
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bindings(home, "[app]\ncommand_palette = []\n")
 
-    assert _actions(bindings_by_context["app"])["command_palette"] == expected_key
+    bindings_by_context, errors = load_keybindings()
+
+    assert _actions(bindings_by_context["app"])["command_palette"] == "ctrl+p"
+    assert errors == []
+
+
+def test_load_keybindings_uses_first_command_palette_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bindings(home, '[app]\ncommand_palette = ["ctrl+k", "ctrl+shift+p"]\n')
+
+    bindings_by_context, errors = load_keybindings()
+
+    assert _actions(bindings_by_context["app"])["command_palette"] == "ctrl+k"
     assert errors == []
 
 
@@ -534,11 +520,14 @@ def test_load_keybindings_overrides_review_actions_and_supports_explicit_unbind(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bindings_by_context, errors = _load_bindings(
-        tmp_path,
-        monkeypatch,
-        text='[app]\ncommand_palette = ["ctrl+k"]\n\n[review]\nreview_next_modification = ["z"]\nreview_toggle_wrap = []\n',
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bindings(
+        home,
+        '[app]\ncommand_palette = ["ctrl+k"]\n\n[review]\nreview_next_modification = ["z"]\nreview_toggle_wrap = []\n',
     )
+
+    bindings_by_context, errors = load_keybindings()
     app_actions = _actions(bindings_by_context["app"])
     actions = _actions(bindings_by_context["review"])
 
@@ -697,11 +686,14 @@ def test_load_keybindings_ignores_duplicate_keys_after_first_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bindings_by_context, errors = _load_bindings(
-        tmp_path,
-        monkeypatch,
-        text='[review]\nreview_next_modification = ["z"]\nreview_previous_modification = ["z"]\n',
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bindings(
+        home,
+        '[review]\nreview_next_modification = ["z"]\nreview_previous_modification = ["z"]\n',
     )
+
+    bindings_by_context, errors = load_keybindings()
     actions = _actions(bindings_by_context["review"])
 
     assert actions["review_next_modification"] == "z"
@@ -715,11 +707,14 @@ def test_load_keybindings_reports_unknown_context_and_unknown_action(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bindings_by_context, errors = _load_bindings(
-        tmp_path,
-        monkeypatch,
-        text='[review]\nreview_nope = ["q"]\n\n[banana]\nreview_next_modification = ["z"]\n',
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bindings(
+        home,
+        '[review]\nreview_nope = ["q"]\n\n[banana]\nreview_next_modification = ["z"]\n',
     )
+
+    bindings_by_context, errors = load_keybindings()
 
     assert errors == [
         "Unknown review binding action: review_nope",

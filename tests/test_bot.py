@@ -34,7 +34,7 @@ from faltoobot.config import (
 from faltoobot.sessions import get_messages, get_session
 from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
-from faltoobot.whatsapp.runtime import keep_chat_typing
+from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
 
 
 def make_config(
@@ -112,8 +112,8 @@ def fake_group_event(
     if mentioned_jids or reply:
         context_info = ContextInfo(mentionedJID=list(mentioned_jids or []))
         if reply:
-            quoted_participant, quoted_text = reply
-            context_info.participant = quoted_participant
+            participant, quoted_text = reply
+            context_info.participant = participant
             context_info.remoteJID = "120363000000000000@g.us"
             context_info.quotedMessage.CopyFrom(Message(conversation=quoted_text))
         message.extendedTextMessage.CopyFrom(
@@ -365,113 +365,76 @@ def png_bytes() -> bytes:
     return buffer.getvalue()
 
 
-def _source(
-    *,
-    chat: tuple[str, str] = ("15555555555555", "lid"),
-    sender: tuple[str, str] = ("15555555555555", "lid"),
-    sender_alt: tuple[str, str] = ("15555550123", "s.whatsapp.net"),
-    is_group: bool = False,
-) -> Neonize_pb2.MessageSource:
-    return Neonize_pb2.MessageSource(
-        Chat=jid(*chat),
-        Sender=jid(*sender),
-        SenderAlt=jid(*sender_alt),
-        IsGroup=is_group,
+def test_source_chat_ids_include_alt_phone_identity() -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
     )
 
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        pytest.param(
-            _source(),
-            {
-                "15555555555555@lid",
-                "15555550123@s.whatsapp.net",
-            },
-            id="includes-alt-phone-identity",
-        ),
-        pytest.param(
-            _source(
-                chat=("55555555555555", "lid"),
-                sender=("55555555555555:4", "lid"),
-                sender_alt=("15555550123:4", "s.whatsapp.net"),
-            ),
-            {
-                "55555555555555@lid",
-                "15555550123@s.whatsapp.net",
-            },
-            id="strips-device-suffixes",
-        ),
-    ],
-)
-def test_source_chat_ids(source: Neonize_pb2.MessageSource, expected: set[str]) -> None:
-    assert runtime.source_chat_ids(source) == expected
+    assert runtime.source_chat_ids(source) == {
+        "15555555555555@lid",
+        "15555550123@s.whatsapp.net",
+    }
 
 
-@pytest.mark.parametrize(
-    "allowed_chats",
-    [
-        pytest.param(
-            {"15555550123@s.whatsapp.net"},
-            id="matches-sender-alt-phone-identity",
-        ),
-        pytest.param(
-            {"15555550123@s.whatsapp.net"},
-            id="matches-phone-without-country-code",
-        ),
-    ],
-)
-def test_allowlist_matches_alt_phone_identity(
-    tmp_path: Path,
-    allowed_chats: set[str],
-) -> None:
-    config = make_config(tmp_path, allowed_chats=allowed_chats)
+def test_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
+    )
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
-    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(_source())) is True
+    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
 
 
-@pytest.mark.parametrize(
-    ("allowed_chats", "allow_group_chats", "expected"),
-    [
-        pytest.param(
-            {"19999999999@s.whatsapp.net"},
-            {"15555550123@s.whatsapp.net"},
-            True,
-            id="matches-sender-alt-phone-identity",
-        ),
-        pytest.param(
-            set(),
-            set(),
-            False,
-            id="blocks-when-group-allowlist-is-empty",
-        ),
-    ],
-)
-def test_group_allowlist(
-    tmp_path: Path,
-    allowed_chats: set[str],
-    allow_group_chats: set[str],
-    expected: bool,
-) -> None:
+def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("15555555555555", "lid"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
+    )
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
+
+    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
+
+
+def test_group_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("120363000000000000", "g.us"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
+        IsGroup=True,
+    )
     config = make_config(
         tmp_path,
-        allowed_chats=allowed_chats,
+        allowed_chats={"19999999999@s.whatsapp.net"},
         allow_groups=True,
-        allow_group_chats=allow_group_chats,
+        allow_group_chats={"15555550123@s.whatsapp.net"},
     )
 
     assert (
-        runtime.is_allowed_group_chat(
-            config,
-            runtime.source_chat_ids(
-                _source(
-                    chat=("120363000000000000", "g.us"),
-                    is_group=True,
-                )
-            ),
-        )
-        is expected
+        runtime.is_allowed_group_chat(config, runtime.source_chat_ids(source)) is True
+    )
+
+
+def test_empty_group_allowlist_blocks_group_messages(tmp_path: Path) -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("120363000000000000", "g.us"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
+        IsGroup=True,
+    )
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_groups=True,
+        allow_group_chats=set(),
+    )
+
+    assert (
+        runtime.is_allowed_group_chat(config, runtime.source_chat_ids(source)) is False
     )
 
 
@@ -610,6 +573,19 @@ def test_keep_chat_typing_sends_composing_then_paused() -> None:
         ("CHAT_PRESENCE_COMPOSING", "CHAT_PRESENCE_MEDIA_TEXT"),
         ("CHAT_PRESENCE_PAUSED", "CHAT_PRESENCE_MEDIA_TEXT"),
     ]
+
+
+def test_source_chat_ids_strip_device_suffixes() -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("55555555555555", "lid"),
+        Sender=jid("55555555555555:4", "lid"),
+        SenderAlt=jid("15555550123:4", "s.whatsapp.net"),
+    )
+
+    assert source_chat_ids(source) == {
+        "55555555555555@lid",
+        "15555550123@s.whatsapp.net",
+    }
 
 
 @pytest.mark.anyio

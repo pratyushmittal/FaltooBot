@@ -175,6 +175,9 @@ async def open_review(app: FaltooChatApp, pilot) -> TabbedContent:
     await wait_for_condition(
         lambda: bool(app.query("#review-tabs")) and len(app.query("#review-tabs")) == 1
     )
+    await wait_for_condition(
+        lambda: bool(app.query_one("#review-tabs", TabbedContent).query(TabPane))
+    )
     await pilot.pause(0)
     return app.query_one("#review-tabs", TabbedContent)
 
@@ -846,7 +849,17 @@ async def test_review_reopen_closes_deleted_untracked_active_file(
         app.action_show_chat_tab()
         await pilot.pause(0.3)
         app.action_show_review_tab()
-        await pilot.pause(0.3)
+        await wait_for_condition(
+            lambda: (
+                {
+                    str(pane._title)
+                    for pane in review_file_panes(
+                        app.query_one("#review-tabs", TabbedContent)
+                    )
+                }
+                == {"alpha.py", "beta.py"}
+            )
+        )
 
         review_tabs = app.query_one("#review-tabs", TabbedContent)
         assert {str(pane._title) for pane in review_file_panes(review_tabs)} == {
@@ -1693,37 +1706,34 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
         }
 
 
-@pytest.mark.parametrize(
-    ("paths", "expected"),
-    [
-        pytest.param(
-            [
-                Path("src/app.py"),
-                Path("tests/test_app.py"),
-                Path("README.md"),
-            ],
-            {
-                Path("src/app.py"): "app.py",
-                Path("tests/test_app.py"): "test_app.py",
-                Path("README.md"): "README.md",
-            },
-            id="uses-filenames-when-unique",
-        ),
-        pytest.param(
-            [
-                Path("src/app.py"),
-                Path("tests/app.py"),
-            ],
-            {
-                Path("src/app.py"): "src/app.py",
-                Path("tests/app.py"): "tests/app.py",
-            },
-            id="keeps-paths-for-duplicate-names",
-        ),
-    ],
-)
-def test_review_tab_titles(paths: list[Path], expected: dict[Path, str]) -> None:
-    assert _review_tab_titles(paths) == expected
+def test_review_tab_titles_use_filenames_when_unique() -> None:
+    titles = _review_tab_titles(
+        [
+            Path("src/app.py"),
+            Path("tests/test_app.py"),
+            Path("README.md"),
+        ]
+    )
+
+    assert titles == {
+        Path("src/app.py"): "app.py",
+        Path("tests/test_app.py"): "test_app.py",
+        Path("README.md"): "README.md",
+    }
+
+
+def test_review_tab_titles_keep_paths_for_duplicate_names() -> None:
+    titles = _review_tab_titles(
+        [
+            Path("src/app.py"),
+            Path("tests/app.py"),
+        ]
+    )
+
+    assert titles == {
+        Path("src/app.py"): "src/app.py",
+        Path("tests/app.py"): "tests/app.py",
+    }
 
 
 @pytest.mark.anyio

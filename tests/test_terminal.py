@@ -8,19 +8,12 @@ from faltoobot.faltoochat.terminal import open_in_editor
 @pytest.mark.parametrize(
     ("available", "path", "line_number", "expected_command"),
     [
-        pytest.param(
-            {"nvim": "/usr/bin/nvim"},
-            Path("alpha.py"),
-            2,
-            "/usr/bin/nvim +2 alpha.py",
-            id="prefers-nvim",
-        ),
-        pytest.param(
+        ({"nvim": "/usr/bin/nvim"}, Path("alpha.py"), 2, "/usr/bin/nvim +2 alpha.py"),
+        (
             {"emacs": "/usr/bin/emacs", "vi": "/usr/bin/vi"},
             Path("alpha beta.py"),
             3,
             "/usr/bin/emacs +3 'alpha beta.py'",
-            id="falls-back-to-emacs-before-vi",
         ),
     ],
 )

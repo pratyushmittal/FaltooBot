@@ -9,7 +9,7 @@ from faltoobot.faltoochat.stream import get_event_text
 @pytest.mark.parametrize(
     ("event", "expected"),
     [
-        pytest.param(
+        (
             SimpleNamespace(
                 type="response.output_item.done",
                 item={
@@ -19,9 +19,8 @@ from faltoobot.faltoochat.stream import get_event_text
                 },
             ),
             (True, "tool", ""),
-            id="ignores-non-tool-output-item-done",
         ),
-        pytest.param(
+        (
             SimpleNamespace(
                 type="response.output_item.done",
                 item={
@@ -31,15 +30,13 @@ from faltoobot.faltoochat.stream import get_event_text
                 },
             ),
             (True, "tool", "searching for foobar in faltoobot tests"),
-            id="summarizes-streamed-shell-calls",
         ),
-        pytest.param(
+        (
             SimpleNamespace(
                 type="response.reasoning_summary_part.added",
                 part=SimpleNamespace(text="**Planning** reply"),
             ),
             (True, "thinking", "**Planning** reply"),
-            id="starts-streamed-reasoning-summary",
         ),
     ],
 )
