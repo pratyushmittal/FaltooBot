@@ -1,6 +1,7 @@
 import os
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
@@ -106,7 +107,7 @@ def open_in_editor(
     *,
     line_number: int | None = None,
 ) -> bool:
-    binary = shutil.which("nvim") or shutil.which("vi")
+    binary = shutil.which("nvim") or shutil.which("emacs") or shutil.which("vi")
     if binary is None:
         open_in_default_editor(path)
         return False
@@ -114,5 +115,5 @@ def open_in_editor(
     if line_number is not None:
         command.append(f"+{line_number}")
     command.append(str(path))
-    subprocess.run(command, check=False)  # noqa: S603
+    os.system(shlex.join(command))
     return True
