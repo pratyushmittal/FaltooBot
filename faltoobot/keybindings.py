@@ -1,4 +1,5 @@
 from dataclasses import replace
+import json
 from pathlib import Path
 import tomllib
 from typing import Any, TypeAlias, cast
@@ -31,7 +32,7 @@ def _default_keybindings() -> BindingsByContext:
 
 
 def load_keybindings(root: Path | None = None) -> tuple[BindingsByContext, list[str]]:
-    path = (root or app_root()) / "bindings.toml"
+    path = _ensure_bindings_file(root)
     errors: list[str] = []
     try:
         data = load_toml(path)
@@ -44,10 +45,28 @@ def load_keybindings(root: Path | None = None) -> tuple[BindingsByContext, list[
     return bindings, errors
 
 
+def _ensure_bindings_file(root: Path | None = None) -> Path:
+    path = (root or app_root()) / "bindings.toml"
+    if path.exists():
+        return path
+    lines: list[str] = []
+    for context, bindings in _default_keybindings().items():
+        if not bindings:
+            continue
+        lines.append(f"[{context}]")
+        for binding in bindings:
+            keys = [key.strip() for key in binding.key.split(",") if key.strip()]
+            rendered_keys = ", ".join(json.dumps(key) for key in keys)
+            lines.append(f"{binding.action} = [{rendered_keys}]")
+        lines.append("")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def _validate_overrides(data: dict[str, Any]) -> tuple[BindingOverrides, list[str]]:
     overrides: BindingOverrides = {}
     errors: list[str] = []
-    known_keys: dict[str, str] = {}
     default_bindings = _default_keybindings()
     known_contexts = tuple(default_bindings)
     known_actions_by_context = {
@@ -61,6 +80,7 @@ def _validate_overrides(data: dict[str, Any]) -> tuple[BindingOverrides, list[st
         if not isinstance(context_value, dict):
             errors.append(f"Bindings context must be a table: {context_name}")
             continue
+        known_keys: dict[str, str] = {}
         for action_name, action_value in context_value.items():
             if action_name not in known_actions_by_context[context_name]:
                 errors.append(f"Unknown {context_name} binding action: {action_name}")

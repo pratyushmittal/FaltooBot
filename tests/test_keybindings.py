@@ -9,7 +9,7 @@ from textual.binding import Binding
 from textual.widgets import Static, TabbedContent, TabPane
 
 from faltoobot import sessions
-from faltoobot.config import app_root
+from faltoobot.config import app_root, load_toml
 from faltoobot.faltoochat.app import FaltooChatApp
 from faltoobot.faltoochat.widgets.keybinding_modals import TextModal
 from faltoobot.faltoochat.widgets.review_diff import ReviewDiffView
@@ -443,6 +443,31 @@ def test_default_review_bindings_snapshot() -> None:
             ]
         ),
     } == EXPECTED_DEFAULT_REVIEW_BINDINGS
+
+
+def test_load_keybindings_creates_bindings_template_when_file_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    path = home / ".faltoobot" / "bindings.toml"
+
+    assert not path.exists()
+
+    load_keybindings()
+
+    assert path.exists()
+    assert load_toml(path) == {
+        context: {
+            binding.action: [
+                key.strip() for key in binding.key.split(",") if key.strip()
+            ]
+            for binding in bindings
+        }
+        for context, bindings in _default_keybindings().items()
+        if bindings
+    }
 
 
 def test_load_keybindings_preserves_default_review_bindings_without_bindings_file(
