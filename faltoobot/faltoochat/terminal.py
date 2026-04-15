@@ -1,7 +1,6 @@
 import os
 import re
 import select
-import shlex
 import shutil
 import subprocess
 import sys
@@ -102,20 +101,18 @@ def open_in_default_editor(path: Path) -> None:
     subprocess.Popen(command)  # noqa: S603
 
 
-def open_in_vi(
+def open_in_editor(
     path: Path,
     *,
     line_number: int | None = None,
-) -> str | None:
-    command = ["vi"]
+) -> bool:
+    binary = shutil.which("nvim") or shutil.which("vi")
+    if binary is None:
+        open_in_default_editor(path)
+        return False
+    command = [binary]
     if line_number is not None:
         command.append(f"+{line_number}")
     command.append(str(path))
-    if shell := os.environ.get("SHELL"):
-        shell_command = " ".join(shlex.quote(part) for part in command)
-        subprocess.run([shell, "-ic", shell_command], check=False)  # noqa: S603
-        return None
-    if shutil.which("vi") is None:
-        return "Install `vi` to edit files from review."
     subprocess.run(command, check=False)  # noqa: S603
-    return None
+    return True

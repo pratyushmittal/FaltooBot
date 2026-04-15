@@ -28,7 +28,7 @@ from ..editor_utils import (
 )
 from ..git import apply_selected_diff_lines, get_selected_change_state, stage_file
 from ..review_api import get_review
-from ..terminal import open_in_vi
+from ..terminal import open_in_editor
 
 from .review_comment_modal import ReviewCommentModal
 from .search_in_file import SearchInFile
@@ -449,17 +449,16 @@ class ReviewDiffView(TextArea):
         )
         try:
             with self.app.suspend():
-                error = open_in_vi(
+                used_terminal_editor = open_in_editor(
                     workspace / self.file_path,
                     line_number=line_number,
                 )
         except SuspendNotSupported:
-            error = open_in_vi(
+            used_terminal_editor = open_in_editor(
                 workspace / self.file_path,
                 line_number=line_number,
             )
-        if error is not None:
-            self.app.notify(error, severity="warning")
+        if not used_terminal_editor:
             return
         await self.review_view.refresh_files()
         await self.reload_in_place()

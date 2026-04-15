@@ -322,7 +322,7 @@ async def test_review_diff_bindings_move_cursor_cycle_tabs_and_jump_unstaged_edi
 
 
 @pytest.mark.anyio
-async def test_review_ctrl_d_opens_vi_and_refreshes_diff(
+async def test_review_ctrl_d_opens_editor_and_refreshes_diff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,11 +330,11 @@ async def test_review_ctrl_d_opens_vi_and_refreshes_diff(
     create_modified_files(workspace)
     seen: list[tuple[Path, int | None]] = []
 
-    def fake_open_in_vi(
+    def fake_open_in_editor(
         path: Path,
         *,
         line_number: int | None = None,
-    ) -> None:
+    ) -> bool:
         seen.append((path, line_number))
         path.write_text(
             "\n".join(
@@ -350,10 +350,11 @@ async def test_review_ctrl_d_opens_vi_and_refreshes_diff(
             + "\n",
             encoding="utf-8",
         )
+        return True
 
     monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.review_diff.open_in_vi",
-        fake_open_in_vi,
+        "faltoobot.faltoochat.widgets.review_diff.open_in_editor",
+        fake_open_in_editor,
     )
     monkeypatch.setattr(app, "suspend", lambda: nullcontext())
 
