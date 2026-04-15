@@ -31,6 +31,7 @@ class Config:
     openai_fast: bool
     openai_transcription_model: str
     allow_groups: bool
+    allow_group_chats: set[str]
     allowed_chats: set[str]
     bot_name: str
     browser_binary: str
@@ -57,6 +58,7 @@ def default_config() -> dict[str, dict[str, Any]]:
         "browser": {"binary": None},
         "bot": {
             "allow_groups": False,
+            "allow_group_chats": [],
             "allowed_chats": [],
             "bot_name": "Faltoo",
         },
@@ -97,6 +99,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "allow_groups": as_bool(
                 bot.get("allow_groups"), defaults["bot"]["allow_groups"]
             ),
+            "allow_group_chats": sorted(as_chat_set(bot.get("allow_group_chats"))),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
             "bot_name": as_str(bot.get("bot_name"), defaults["bot"]["bot_name"]),
         },
@@ -134,6 +137,12 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     gemini = data["gemini"]
     ui = data["ui"]
     browser = data["browser"]
+    allow_group_chats = (
+        bot["allow_group_chats"] if isinstance(bot["allow_group_chats"], list) else []
+    )
+    allowed_group = ", ".join(
+        quote(chat) for chat in allow_group_chats if isinstance(chat, str)
+    )
     allowed_chats = (
         bot["allowed_chats"] if isinstance(bot["allowed_chats"], list) else []
     )
@@ -162,6 +171,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "",
             "[bot]",
             f"allow_groups = {str(bool(bot['allow_groups'])).lower()}",
+            f"allow_group_chats = [{allowed_group}]",
             f"allowed_chats = [{allowed}]",
             f"bot_name = {quote(str(bot['bot_name']))}",
             "",
@@ -248,6 +258,7 @@ def build_config() -> Config:
         openai_fast=bool(openai["fast"]),
         openai_transcription_model=str(openai["transcription_model"]),
         allow_groups=bool(bot["allow_groups"]),
+        allow_group_chats=set(str(chat) for chat in bot["allow_group_chats"]),
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
         bot_name=str(bot["bot_name"]),
         browser_binary=str(browser["binary"]),

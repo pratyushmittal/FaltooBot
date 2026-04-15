@@ -10,7 +10,6 @@ from neonize.utils.jid import Jid2String, build_jid
 
 from faltoobot import notify_queue
 from faltoobot.config import Config, build_config, normalize_chat
-
 from faltoobot.sessions import get_session
 
 from . import login, runtime

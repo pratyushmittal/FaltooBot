@@ -25,6 +25,7 @@ def make_config(tmp_path: Path) -> Config:
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
         allow_groups=False,
+        allow_group_chats=set(),
         allowed_chats=set(),
         bot_name="Faltoo",
         browser_binary="",

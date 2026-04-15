@@ -23,6 +23,18 @@ Use this when you want to make the bot work.
 
 Shows logs in follow mode.
 
+### `faltoobot allow-group-chats`
+
+List or update the WhatsApp group-chat allowlist without opening the full configure wizard.
+
+```bash
+faltoobot allow-group-chats list
+faltoobot allow-group-chats add 15551234567
+faltoobot allow-group-chats remove 15551234567
+```
+
+Add and remove accept one or more phone numbers / JIDs and normalize them before saving. If the WhatsApp service is already installed, Faltoobot restarts it so the new allowlist is applied.
+
 ### `faltoobot configure`
 
 Shows a simple setup menu:

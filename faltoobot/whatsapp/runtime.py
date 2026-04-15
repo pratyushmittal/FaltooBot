@@ -43,6 +43,7 @@ IMAGE_SUFFIXES = {
     "image/bmp": ".bmp",
 }
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
+BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
 HELP_TEXT = (
     "Faltoobot is online.\n\n"
     "• Send any message to ask the model\n"
@@ -71,13 +72,13 @@ def source_chat_ids(source: Any) -> set[str]:
     return {source_id for source_id in source_ids if source_id}
 
 
-def is_allowed_chat(config: Config, source_ids: set[str]) -> bool:
-    if not config.allowed_chats:
+def _matches_allowed_chats(allowed_chats: set[str], source_ids: set[str]) -> bool:
+    if not allowed_chats:
         return True
-    if not source_ids.isdisjoint(config.allowed_chats):
+    if not source_ids.isdisjoint(allowed_chats):
         return True
 
-    for allowed_chat in config.allowed_chats:
+    for allowed_chat in allowed_chats:
         if not allowed_chat.endswith("@s.whatsapp.net"):
             continue
         allowed_phone = allowed_chat.split("@", 1)[0]
@@ -96,6 +97,16 @@ def is_allowed_chat(config: Config, source_ids: set[str]) -> bool:
                 return True
 
     return False
+
+
+def is_allowed_chat(config: Config, source_ids: set[str]) -> bool:
+    return _matches_allowed_chats(config.allowed_chats, source_ids)
+
+
+def is_allowed_group_chat(config: Config, source_ids: set[str]) -> bool:
+    if not config.allow_group_chats:
+        return False
+    return _matches_allowed_chats(config.allow_group_chats, source_ids)
 
 
 async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -> None:
@@ -439,6 +450,49 @@ def _reply_to_text(message: Message) -> str:
     return _message_text(context_info.quotedMessage)
 
 
+def _mentioned_chat_ids(message: Message) -> set[str]:
+    context_info = _message_context_info(message)
+    if context_info is None:
+        return set()
+    mentioned = {normalize_chat(str(chat)) for chat in context_info.mentionedJID}
+    return {chat for chat in mentioned if chat}
+
+
+def _quoted_participant_ids(message: Message) -> set[str]:
+    context_info = _message_context_info(message)
+    if context_info is None:
+        return set()
+    quoted_ids = {
+        normalize_chat(str(context_info.participant)),
+        normalize_chat(str(context_info.remoteJID)),
+    }
+    return {chat for chat in quoted_ids if chat}
+
+
+async def _bot_identity_ids(client: NewAClient) -> set[str]:
+    cache_key = id(client)
+    cached = BOT_IDENTITY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    device = await client.get_me()
+    identity_ids = {
+        normalize_chat(Jid2String(jid))
+        for jid in (device.JID, device.LID)
+        if getattr(jid, "User", "") or getattr(jid, "Server", "")
+    }
+    normalized = {identity_id for identity_id in identity_ids if identity_id}
+    BOT_IDENTITY_CACHE[cache_key] = normalized
+    return normalized
+
+
+async def is_bot_addressed(client: NewAClient, message: Message) -> bool:
+    addressed_ids = _mentioned_chat_ids(message) | _quoted_participant_ids(message)
+    if not addressed_ids:
+        return False
+    bot_ids = await _bot_identity_ids(client)
+    return not addressed_ids.isdisjoint(bot_ids)
+
+
 def _quoted_reply_text(text: str, *, max_chars: int = 500) -> str:
     snippet = text.strip()
     if len(snippet) > max_chars:
@@ -699,11 +753,29 @@ async def get_turn_locked(
     chat_jid = Jid2String(source.Chat)
     sender_jid = Jid2String(source.Sender)
 
-    if source.IsFromMe or (source.IsGroup and not config.allow_groups):
+    if source.IsFromMe:
         return None
 
     source_ids = source_chat_ids(source)
-    if not is_allowed_chat(config, source_ids):
+    if source.IsGroup:
+        if not config.allow_groups:
+            return None
+        if not is_allowed_group_chat(config, source_ids):
+            logger.info(
+                "Ignoring group message from %s in %s because it is not group-allowlisted. Seen IDs: %s",
+                sender_jid,
+                chat_jid,
+                ", ".join(sorted(source_ids)) or "<none>",
+            )
+            return None
+        if not await is_bot_addressed(client, event.Message):
+            logger.info(
+                "Ignoring group message from %s in %s because the bot was neither mentioned nor quoted.",
+                sender_jid,
+                chat_jid,
+            )
+            return None
+    elif not is_allowed_chat(config, source_ids):
         logger.info(
             "Ignoring message from %s in %s because it is not allowlisted. Seen IDs: %s",
             sender_jid,

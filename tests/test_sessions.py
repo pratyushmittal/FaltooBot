@@ -344,6 +344,57 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
 
 
 @pytest.mark.anyio
+async def test_get_answer_uses_restricted_shell_tool_for_whatsapp_chats(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
+    tool_defs: list[Any] = []
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+        prompt_cache_key: str | None = None,
+    ):
+        tool_defs.extend([get_tools_definition(tool) for tool in tools])
+        yield FakeCompletedEvent(
+            [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 2,
+            },
+        )
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+
+    session = sessions.get_session(chat_key="15551234567@s.whatsapp.net")
+    answer = await sessions.get_answer(session=session, question="Hi")
+
+    assert answer == "ok"
+    tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
+    shell_tool = tool_defs_by_name["run_shell_call"]
+    assert (
+        "Do not read or modify Faltoobot config files from this tool."
+        in shell_tool["description"]
+    )
+
+
+@pytest.mark.anyio
 async def test_get_answer_caches_system_prompt_per_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

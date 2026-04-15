@@ -37,7 +37,13 @@ from faltoobot.whatsapp import audio, runtime
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
 
 
-def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
+def make_config(
+    tmp_path: Path,
+    *,
+    allowed_chats: set[str],
+    allow_groups: bool = False,
+    allow_group_chats: set[str] | None = None,
+) -> Config:
     home = tmp_path / "home"
     root = home / ".faltoobot"
     return Config(
@@ -55,7 +61,8 @@ def make_config(tmp_path: Path, *, allowed_chats: set[str]) -> Config:
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        allow_groups=False,
+        allow_groups=allow_groups,
+        allow_group_chats=set() if allow_group_chats is None else allow_group_chats,
         allowed_chats=allowed_chats,
         bot_name="Faltoo",
         browser_binary="",
@@ -78,6 +85,45 @@ def fake_event(
         message.audioMessage.CopyFrom(
             AudioMessage(mimetype="audio/ogg", seconds=audio_seconds, PTT=True)
         )
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=message,
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
+def fake_group_event(
+    *,
+    message_id: str = "group-1",
+    text: str = "hi",
+    sender_phone: str = "15555550123",
+    mentioned_jids: list[str] | None = None,
+    quoted_participant: str | None = None,
+    quoted_text: str = "Earlier bot reply",
+) -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("120363000000000000", "g.us"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid(sender_phone, "s.whatsapp.net"),
+        IsGroup=True,
+    )
+    message = Message()
+    if mentioned_jids or quoted_participant:
+        context_info = ContextInfo(mentionedJID=list(mentioned_jids or []))
+        if quoted_participant:
+            context_info.participant = quoted_participant
+            context_info.remoteJID = "120363000000000000@g.us"
+            context_info.quotedMessage.CopyFrom(Message(conversation=quoted_text))
+        message.extendedTextMessage.CopyFrom(
+            ExtendedTextMessage(
+                text=text,
+                contextInfo=context_info,
+            )
+        )
+    else:
+        message.conversation = text
     return cast(
         MessageEv,
         SimpleNamespace(
@@ -222,6 +268,14 @@ class FakePresenceClient:
         self.sent_images: list[dict[str, object | None]] = []
         self.sent_documents: list[dict[str, object | None]] = []
         self.downloads = 0
+        self.get_me_calls = 0
+
+    async def get_me(self) -> Neonize_pb2.Device:
+        self.get_me_calls += 1
+        return Neonize_pb2.Device(
+            JID=jid("15555550999", "s.whatsapp.net"),
+            LID=jid("15555550999", "lid"),
+        )
 
     async def send_chat_presence(
         self,
@@ -344,6 +398,161 @@ def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
     config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
     assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
+
+
+def test_group_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("120363000000000000", "g.us"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
+        IsGroup=True,
+    )
+    config = make_config(
+        tmp_path,
+        allowed_chats={"19999999999@s.whatsapp.net"},
+        allow_groups=True,
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+
+    assert (
+        runtime.is_allowed_group_chat(config, runtime.source_chat_ids(source)) is True
+    )
+
+
+def test_empty_group_allowlist_blocks_group_messages(tmp_path: Path) -> None:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid("120363000000000000", "g.us"),
+        Sender=jid("15555555555555", "lid"),
+        SenderAlt=jid("15555550123", "s.whatsapp.net"),
+        IsGroup=True,
+    )
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_groups=True,
+        allow_group_chats=set(),
+    )
+
+    assert (
+        runtime.is_allowed_group_chat(config, runtime.source_chat_ids(source)) is False
+    )
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_uses_group_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats={"19999999999@s.whatsapp.net"},
+        allow_groups=True,
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    allowed_turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(
+            sender_phone="15555550123",
+            mentioned_jids=["15555550999@s.whatsapp.net"],
+        ),
+        config=config,
+        session=session,
+    )
+    blocked_turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(message_id="group-2", sender_phone="16666660123"),
+        config=config,
+        session=session,
+    )
+
+    assert allowed_turn is not None
+    assert allowed_turn["prompt"] == "hi"
+    assert blocked_turn is None
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_blocks_group_messages_without_bot_mention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_groups=True,
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(sender_phone="15555550123", text="hello group"),
+        config=config,
+        session=session,
+    )
+
+    assert turn is None
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_groups=True,
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+    client = FakePresenceClient()
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, client),
+        fake_group_event(
+            sender_phone="15555550123",
+            text="hi @faltoo",
+            mentioned_jids=["15555550999@lid"],
+        ),
+        config=config,
+        session=session,
+    )
+
+    assert turn is not None
+    assert turn["prompt"] == "hi @faltoo"
+    assert client.get_me_calls == 1
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_groups=True,
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(
+            sender_phone="15555550123",
+            text="thanks",
+            quoted_participant="15555550999@s.whatsapp.net",
+            quoted_text="Please share the file",
+        ),
+        config=config,
+        session=session,
+    )
+
+    assert turn is not None
+    assert turn["prompt"] == "thanks"
+    assert turn["reply_to_text"] == "Please share the file"
 
 
 def test_keep_chat_typing_sends_composing_then_paused() -> None:
@@ -870,6 +1079,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
                     'Google Chrome"'
                 ),
                 "• bot_allow_groups=false",
+                "• bot_allow_group_chats=[]",
                 '• bot_allowed_chats=["15555550123@s.whatsapp.net"]',
                 '• bot_bot_name="Faltoo"',
             ]

@@ -32,6 +32,7 @@ def config_text() -> str:
             "",
             "[bot]",
             "allow_groups = false",
+            "allow_group_chats = []",
             "allowed_chats = []",
             "",
         ]
