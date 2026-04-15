@@ -87,7 +87,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "j,ctrl+n",
             "action": "review_cursor_down",
-            "description": "",
+            "description": "Cursor Down",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -95,7 +95,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "k,ctrl+p",
             "action": "review_cursor_up",
-            "description": "",
+            "description": "Cursor Up",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -103,7 +103,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "h",
             "action": "cursor_left",
-            "description": "",
+            "description": "Cursor Left",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -111,7 +111,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "l",
             "action": "cursor_right",
-            "description": "",
+            "description": "Cursor Right",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -119,7 +119,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "g",
             "action": "review_scroll_home",
-            "description": "",
+            "description": "Scroll to Top",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -127,7 +127,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "G",
             "action": "review_scroll_end",
-            "description": "",
+            "description": "Scroll to Bottom",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -135,7 +135,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "w",
             "action": "review_next_word",
-            "description": "",
+            "description": "Next Word",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -143,7 +143,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "b",
             "action": "review_previous_word",
-            "description": "",
+            "description": "Previous Word",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -167,7 +167,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "tab",
             "action": "review_next_file_tab",
-            "description": "",
+            "description": "Next File",
             "show": True,
             "priority": True,
             "key_display": None,
@@ -175,7 +175,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "shift+tab",
             "action": "review_previous_file_tab",
-            "description": "",
+            "description": "Previous File",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -255,7 +255,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "*",
             "action": "review_search_word_under_cursor",
-            "description": "",
+            "description": "Search Word",
             "show": False,
             "priority": True,
             "key_display": None,
@@ -287,7 +287,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "a,c",
             "action": "review_add",
-            "description": "",
+            "description": "Add Review",
             "show": True,
             "priority": True,
             "key_display": None,
@@ -295,7 +295,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "s",
             "action": "review_stage_lines",
-            "description": "",
+            "description": "Stage Lines",
             "show": True,
             "priority": True,
             "key_display": None,
@@ -311,7 +311,7 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "shift+enter",
             "action": "review_submit_reviews",
-            "description": "",
+            "description": "Submit Reviews",
             "show": True,
             "priority": True,
             "key_display": None,
