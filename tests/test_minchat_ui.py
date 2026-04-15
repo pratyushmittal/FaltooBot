@@ -92,6 +92,22 @@ def build_app(
     )
 
 
+def _write_prompt(tmp_path: Path, name: str, template: str) -> None:
+    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / f"{name}.md").write_text(template, encoding="utf-8")
+
+
+def _capture_submissions(app: FaltooChatApp) -> list[str]:
+    seen: list[str] = []
+
+    async def fake_handle_message(message_item: Any) -> None:
+        seen.append(decompose_local_message_item(message_item)[0])
+
+    app.handle_message = cast(Any, fake_handle_message)
+    return seen
+
+
 @pytest.mark.anyio
 async def test_minchat_shows_slash_command_suggestions(
     tmp_path: Path,
@@ -120,19 +136,9 @@ async def test_minchat_enter_submits_custom_slash_command_after_completion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
-    prompts_dir.mkdir(parents=True)
-    (prompts_dir / "fix-tests.md").write_text(
-        "Investigate and fix {target}.",
-        encoding="utf-8",
-    )
+    _write_prompt(tmp_path, "fix-tests", "Investigate and fix {target}.")
     _, app = build_app(tmp_path, monkeypatch)
-    seen: list[str] = []
-
-    async def fake_handle_message(message_item: Any) -> None:
-        seen.append(decompose_local_message_item(message_item)[0])
-
-    app.handle_message = cast(Any, fake_handle_message)
+    seen = _capture_submissions(app)
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
@@ -159,19 +165,9 @@ async def test_minchat_custom_slash_command_submission_paths(
     monkeypatch: pytest.MonkeyPatch,
     submission_mode: str,
 ) -> None:
-    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
-    prompts_dir.mkdir(parents=True)
-    (prompts_dir / "fix-tests.md").write_text(
-        "Investigate and fix {target}.",
-        encoding="utf-8",
-    )
+    _write_prompt(tmp_path, "fix-tests", "Investigate and fix {target}.")
     _, app = build_app(tmp_path, monkeypatch)
-    seen: list[str] = []
-
-    async def fake_handle_message(message_item: Any) -> None:
-        seen.append(decompose_local_message_item(message_item)[0])
-
-    app.handle_message = cast(Any, fake_handle_message)
+    seen = _capture_submissions(app)
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
@@ -199,19 +195,9 @@ async def test_minchat_custom_slash_command_with_extra_text_submits_raw_input(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
-    prompts_dir.mkdir(parents=True)
-    (prompts_dir / "summarize.md").write_text(
-        "Summarize {file} for {topic}.",
-        encoding="utf-8",
-    )
+    _write_prompt(tmp_path, "summarize", "Summarize {file} for {topic}.")
     _, app = build_app(tmp_path, monkeypatch)
-    seen: list[str] = []
-
-    async def fake_handle_message(message_item: Any) -> None:
-        seen.append(decompose_local_message_item(message_item)[0])
-
-    app.handle_message = cast(Any, fake_handle_message)
+    seen = _capture_submissions(app)
 
     async with app.run_test() as pilot:
         await pilot.pause(0)

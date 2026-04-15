@@ -1,46 +1,47 @@
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
 from faltoobot.faltoochat.stream import get_event_text
 
 
-def test_get_event_text_ignores_non_tool_output_item_done() -> None:
-    event = SimpleNamespace(
-        type="response.output_item.done",
-        item={
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "hello"}],
-        },
-    )
-    is_new, classes, text = get_event_text(cast(Any, event))
-
-    assert (is_new, classes, text) == (True, "tool", "")
-
-
-def test_get_event_text_summarizes_streamed_shell_calls() -> None:
-    event = SimpleNamespace(
-        type="response.output_item.done",
-        item={
-            "type": "function_call",
-            "name": "run_shell_call",
-            "arguments": '{"command":"rg -n foobar faltoobot tests","timeout_ms":10000}',
-        },
-    )
-    is_new, classes, text = get_event_text(cast(Any, event))
-
-    assert (is_new, classes, text) == (
-        True,
-        "tool",
-        "searching for foobar in faltoobot tests",
-    )
-
-
-def test_get_event_text_starts_streamed_reasoning_summary() -> None:
-    event = SimpleNamespace(
-        type="response.reasoning_summary_part.added",
-        part=SimpleNamespace(text="**Planning** reply"),
-    )
-    is_new, classes, text = get_event_text(cast(Any, event))
-
-    assert (is_new, classes, text) == (True, "thinking", "**Planning** reply")
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        pytest.param(
+            SimpleNamespace(
+                type="response.output_item.done",
+                item={
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                },
+            ),
+            (True, "tool", ""),
+            id="ignores-non-tool-output-item-done",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                type="response.output_item.done",
+                item={
+                    "type": "function_call",
+                    "name": "run_shell_call",
+                    "arguments": '{"command":"rg -n foobar faltoobot tests","timeout_ms":10000}',
+                },
+            ),
+            (True, "tool", "searching for foobar in faltoobot tests"),
+            id="summarizes-streamed-shell-calls",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                type="response.reasoning_summary_part.added",
+                part=SimpleNamespace(text="**Planning** reply"),
+            ),
+            (True, "thinking", "**Planning** reply"),
+            id="starts-streamed-reasoning-summary",
+        ),
+    ],
+)
+def test_get_event_text(event: object, expected: tuple[bool, str, str]) -> None:
+    assert get_event_text(cast(Any, event)) == expected

@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from faltoobot.cli import app as cli
 from faltoobot.config import Config
 
@@ -610,49 +612,50 @@ def test_crontab_path_value_appends_uv_bin() -> None:
     assert value == "/usr/bin:/bin:/tmp/uv-bin"
 
 
-def test_ensure_crontab_path_inserts_path_for_empty_crontab(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("crontab", "env_path", "expected_changed", "expected_written"),
+    [
+        pytest.param(
+            "",
+            "/usr/bin:/bin",
+            True,
+            ["PATH=/usr/bin:/bin:/tmp/uv-bin\n"],
+            id="inserts-path-for-empty-crontab",
+        ),
+        pytest.param(
+            "PATH=/usr/bin:/bin\n* * * * * faltoochat\n",
+            None,
+            True,
+            ["PATH=/usr/bin:/bin:/tmp/uv-bin\n* * * * * faltoochat\n"],
+            id="updates-existing-path",
+        ),
+        pytest.param(
+            "PATH=/usr/bin:/bin:/tmp/uv-bin\n",
+            None,
+            False,
+            [],
+            id="skips-when-already-present",
+        ),
+    ],
+)
+def test_ensure_crontab_path(
+    crontab: str,
+    env_path: str | None,
+    expected_changed: bool,
+    expected_written: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: Path("/tmp/uv-bin"))
-    monkeypatch.setattr(cli, "_load_crontab", lambda: "")
-    monkeypatch.setattr(cli.os, "environ", {"PATH": "/usr/bin:/bin"})
+    monkeypatch.setattr(cli, "_load_crontab", lambda: crontab)
+    if env_path is not None:
+        monkeypatch.setattr(cli.os, "environ", {"PATH": env_path})
     written: list[str] = []
     monkeypatch.setattr(cli, "_write_crontab", lambda text: written.append(text))
 
     changed = cli._ensure_crontab_path()
 
-    assert changed is True
-    assert written == ["PATH=/usr/bin:/bin:/tmp/uv-bin\n"]
-
-
-def test_ensure_crontab_path_updates_existing_path(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: Path("/tmp/uv-bin"))
-    monkeypatch.setattr(
-        cli,
-        "_load_crontab",
-        lambda: "PATH=/usr/bin:/bin\n* * * * * faltoochat\n",
-    )
-    written: list[str] = []
-    monkeypatch.setattr(cli, "_write_crontab", lambda text: written.append(text))
-
-    changed = cli._ensure_crontab_path()
-
-    assert changed is True
-    assert written == ["PATH=/usr/bin:/bin:/tmp/uv-bin\n* * * * * faltoochat\n"]
-
-
-def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "_uv_tool_bin_dir", lambda: Path("/tmp/uv-bin"))
-    monkeypatch.setattr(
-        cli, "_load_crontab", lambda: "PATH=/usr/bin:/bin:/tmp/uv-bin\n"
-    )
-    monkeypatch.setattr(
-        cli,
-        "_write_crontab",
-        lambda text: (_ for _ in ()).throw(AssertionError("should not write")),
-    )
-
-    changed = cli._ensure_crontab_path()
-
-    assert changed is False
+    assert changed is expected_changed
+    assert written == expected_written
 
 
 def test_configure_whatsapp_defaults_group_allowlist_to_allowed_chats(

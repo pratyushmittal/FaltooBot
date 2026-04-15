@@ -15,39 +15,91 @@ from faltoobot.tools import (
 )
 
 
-def test_get_run_shell_call_tool_builds_valid_tool_definition(tmp_path: Path) -> None:
-    tool = get_run_shell_call_tool(tmp_path)
-    definition = get_tools_definition(tool)
+def _assert_single_input_image(
+    result: tools.ToolOutput,
+    *,
+    expected_detail: str,
+    expected_url: str | None = None,
+    expected_file_id: str | None = None,
+) -> None:
+    assert isinstance(result, list)
+    assert len(result) == 1
+    item = result[0]
+    assert isinstance(item, ResponseInputImage)
+    assert item.type == "input_image"
+    assert item.detail == expected_detail
+    if expected_url is not None:
+        assert item.image_url == expected_url
+    if expected_file_id is not None:
+        assert item.file_id == expected_file_id
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected_name", "description_start", "expected_parameters"),
+    [
+        pytest.param(
+            get_run_shell_call_tool,
+            "run_shell_call",
+            "Returns the output of a shell command. Use it to inspect files and run CLI tasks.",
+            {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Bash command to run.",
+                    },
+                    "command_summary": {
+                        "type": "string",
+                        "description": "A short one-line summary of what the command is doing. Keep it brief.",
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Kill the command after this timeout in milliseconds.",
+                    },
+                },
+                "required": ["command", "command_summary", "timeout_ms"],
+                "additionalProperties": False,
+            },
+            id="run-shell-call-tool",
+        ),
+        pytest.param(
+            get_load_image_tool,
+            "load_image",
+            "Load image files such as jpg or png. Useful for seeing screenshots and creatives.",
+            {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "relative or absolute path of the image",
+                    },
+                },
+                "required": ["image_path"],
+                "additionalProperties": False,
+            },
+            id="load-image-tool",
+        ),
+    ],
+)
+def test_tool_definition_builders(
+    builder,
+    expected_name: str,
+    description_start: str,
+    expected_parameters: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    definition = get_tools_definition(builder(tmp_path))
 
     description = cast(str, definition["description"])
     parameters = cast(dict[str, Any], definition["parameters"])
 
     assert definition["type"] == "function"
-    assert definition["name"] == "run_shell_call"
+    assert definition["name"] == expected_name
     assert definition["strict"] is True
-    assert description.startswith(
-        "Returns the output of a shell command. Use it to inspect files and run CLI tasks."
-    )
-    assert "Commands are run from" in description
-    assert parameters == {
-        "type": "object",
-        "properties": {
-            "command": {
-                "type": "string",
-                "description": "Bash command to run.",
-            },
-            "command_summary": {
-                "type": "string",
-                "description": "A short one-line summary of what the command is doing. Keep it brief.",
-            },
-            "timeout_ms": {
-                "type": "integer",
-                "description": "Kill the command after this timeout in milliseconds.",
-            },
-        },
-        "required": ["command", "command_summary", "timeout_ms"],
-        "additionalProperties": False,
-    }
+    assert description.startswith(description_start)
+    if expected_name == "run_shell_call":
+        assert "Commands are run from" in description
+    assert parameters == expected_parameters
 
 
 def test_run_shell_call_in_workspace_runs_in_workspace(tmp_path: Path) -> None:
@@ -113,32 +165,6 @@ def test_run_shell_call_in_workspace_blocks_faltoobot_config_access(
     assert "cannot read or modify Faltoobot config files" in result["stderr"]
 
 
-def test_get_load_image_tool_builds_valid_tool_definition(tmp_path: Path) -> None:
-    tool = get_load_image_tool(tmp_path)
-    definition = get_tools_definition(tool)
-
-    description = cast(str, definition["description"])
-    parameters = cast(dict[str, Any], definition["parameters"])
-
-    assert definition["type"] == "function"
-    assert definition["name"] == "load_image"
-    assert definition["strict"] is True
-    assert description.startswith(
-        "Load image files such as jpg or png. Useful for seeing screenshots and creatives."
-    )
-    assert parameters == {
-        "type": "object",
-        "properties": {
-            "image_path": {
-                "type": "string",
-                "description": "relative or absolute path of the image",
-            },
-        },
-        "required": ["image_path"],
-        "additionalProperties": False,
-    }
-
-
 @pytest.mark.anyio
 async def test_load_image_in_workspace_returns_inline_images_for_oauth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -163,13 +189,11 @@ async def test_load_image_in_workspace_returns_inline_images_for_oauth(
         "browser-home.png",
     )
 
-    assert len(result) == 1
-    assert isinstance(result, list)
-    item = result[0]
-    assert isinstance(item, ResponseInputImage)
-    assert item.type == "input_image"
-    assert item.image_url == f"file://{image.resolve()}"
-    assert item.detail == "auto"
+    _assert_single_input_image(
+        result,
+        expected_detail="auto",
+        expected_url=f"file://{image.resolve()}",
+    )
 
 
 @pytest.mark.anyio
@@ -206,11 +230,9 @@ async def test_load_image_in_workspace_returns_uploaded_images_for_api_key(
         "browser-home.png",
     )
 
-    assert len(result) == 1
-    assert isinstance(result, list)
-    item = result[0]
-    assert isinstance(item, ResponseInputImage)
-    assert item.type == "input_image"
-    assert item.file_id == "file:browser-home.png"
-    assert item.detail == "auto"
+    _assert_single_input_image(
+        result,
+        expected_detail="auto",
+        expected_file_id="file:browser-home.png",
+    )
     assert closed == ["closed"]

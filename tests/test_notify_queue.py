@@ -1,10 +1,32 @@
 from pathlib import Path
 
+import pytest
+
 from faltoobot import notify_queue
 
 
-def test_notify_queue_enqueues_claims_and_acks(tmp_path: Path, monkeypatch) -> None:
+def _use_temp_app_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+
+
+def _notification_payload(
+    *, message: str, source: str | None = None
+) -> notify_queue.Notification:
+    payload: notify_queue.Notification = {
+        "id": "notify-1",
+        "chat_key": "code@demo",
+        "message": message,
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    if source is not None:
+        payload["source"] = source
+    return payload
+
+
+def test_notify_queue_enqueues_claims_and_acks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_temp_app_root(monkeypatch, tmp_path)
 
     notification_id = notify_queue.enqueue_notification(
         "code@demo", "hello", source="cron:daily-ops"
@@ -26,9 +48,9 @@ def test_notify_queue_enqueues_claims_and_acks(tmp_path: Path, monkeypatch) -> N
 
 
 def test_notify_queue_requeues_claimed_notifications(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+    _use_temp_app_root(monkeypatch, tmp_path)
     notify_queue.enqueue_notification("code@demo", "hello")
 
     claimed = notify_queue.claim_notifications(
@@ -45,35 +67,45 @@ def test_notify_queue_requeues_claimed_notifications(
     notify_queue.ack_notification(claimed_again[0][0])
 
 
-def test_format_notification_message_uses_expected_layout() -> None:
-    message = notify_queue.format_notification_message(
-        {
-            "id": "notify-1",
-            "chat_key": "code@demo",
-            "message": "Check backups.",
-            "created_at": "2026-01-01T00:00:00+00:00",
-            "source": "cron:daily-ops",
-        }
-    )
+@pytest.mark.parametrize(
+    ("payload", "expected_parts", "unexpected_parts"),
+    [
+        pytest.param(
+            _notification_payload(
+                message="Check backups.",
+                source="cron:daily-ops",
+            ),
+            [
+                "# Notification",
+                "Reply with [noreply]",
+                "source: cron:daily-ops",
+                "## message",
+                "Check backups.",
+            ],
+            [],
+            id="with-source",
+        ),
+        pytest.param(
+            _notification_payload(message="hello"),
+            [
+                "# Notification",
+                "Reply with [noreply]",
+                "## message",
+                "hello",
+            ],
+            ["source:"],
+            id="without-source",
+        ),
+    ],
+)
+def test_format_notification_message_layout(
+    payload: notify_queue.Notification,
+    expected_parts: list[str],
+    unexpected_parts: list[str],
+) -> None:
+    message = notify_queue.format_notification_message(payload)
 
-    assert "# Notification" in message
-    assert "Reply with [noreply]" in message
-    assert "source: cron:daily-ops" in message
-    assert "## message" in message
-    assert "Check backups." in message
-
-
-def test_format_notification_message_without_source_still_wraps_message() -> None:
-    message = notify_queue.format_notification_message(
-        {
-            "id": "notify-1",
-            "chat_key": "code@demo",
-            "message": "hello",
-            "created_at": "2026-01-01T00:00:00+00:00",
-        }
-    )
-
-    assert "# Notification" in message
-    assert "Reply with [noreply]" in message
-    assert "## message" in message
-    assert "hello" in message
+    for part in expected_parts:
+        assert part in message
+    for part in unexpected_parts:
+        assert part not in message
