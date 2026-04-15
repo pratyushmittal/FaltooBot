@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from textual import events
@@ -8,7 +8,10 @@ from textual import events
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
 from faltoobot.faltoochat.app import Composer, FaltooChatApp
-from faltoobot.session_utils import get_local_user_message_item
+from faltoobot.session_utils import (
+    decompose_local_message_item,
+    get_local_user_message_item,
+)
 from faltoobot.faltoochat.review import ReviewView
 from faltoobot.faltoochat.widgets import QueueWidget
 from faltoobot.faltoochat.widgets.search_file import SearchFile
@@ -110,6 +113,116 @@ async def test_minchat_shows_slash_command_suggestions(
             "/status — show bot status",
             "/tree — open the current session messages file",
         ]
+
+
+@pytest.mark.anyio
+async def test_minchat_enter_submits_custom_slash_command_after_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "fix-tests.md").write_text(
+        "Investigate and fix {target}.",
+        encoding="utf-8",
+    )
+    _, app = build_app(tmp_path, monkeypatch)
+    seen: list[str] = []
+
+    async def fake_handle_message(message_item: Any) -> None:
+        seen.append(decompose_local_message_item(message_item)[0])
+
+    app.handle_message = cast(Any, fake_handle_message)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.insert("/fi")
+        await pilot.pause(0)
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+        assert composer.text == "/fix-tests"
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        assert seen == ["Investigate and fix {target}."]
+        assert composer.text == ""
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("submission_mode", ["click", "direct"])
+async def test_minchat_custom_slash_command_submission_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    submission_mode: str,
+) -> None:
+    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "fix-tests.md").write_text(
+        "Investigate and fix {target}.",
+        encoding="utf-8",
+    )
+    _, app = build_app(tmp_path, monkeypatch)
+    seen: list[str] = []
+
+    async def fake_handle_message(message_item: Any) -> None:
+        seen.append(decompose_local_message_item(message_item)[0])
+
+    app.handle_message = cast(Any, fake_handle_message)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+
+        if submission_mode == "click":
+            composer.insert("/fi")
+            await pilot.pause(0)
+            option_list = app.query_one("#slash-commands", OptionList)
+            await app.on_option_list_option_selected(
+                OptionList.OptionSelected(option_list, option_list.options[0], 0)
+            )
+        else:
+            composer.load_text("/fix-tests")
+            await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        assert seen == ["Investigate and fix {target}."]
+        assert composer.text == ""
+
+
+@pytest.mark.anyio
+async def test_minchat_custom_slash_command_with_extra_text_submits_raw_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts_dir = tmp_path / "home" / ".faltoobot" / "prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "summarize.md").write_text(
+        "Summarize {file} for {topic}.",
+        encoding="utf-8",
+    )
+    _, app = build_app(tmp_path, monkeypatch)
+    seen: list[str] = []
+
+    async def fake_handle_message(message_item: Any) -> None:
+        seen.append(decompose_local_message_item(message_item)[0])
+
+    app.handle_message = cast(Any, fake_handle_message)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/summarize file=README.md")
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        assert seen == ["/summarize file=README.md"]
 
 
 @pytest.mark.anyio

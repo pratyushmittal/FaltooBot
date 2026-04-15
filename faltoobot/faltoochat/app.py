@@ -38,6 +38,7 @@ from faltoobot.session_utils import (
     get_local_user_message_item,
 )
 
+from .custom_prompts import CustomPrompt, CustomPromptStore
 from .messages_rendering import (
     SHELL_COMMAND_SEPARATOR,
     get_item_text,
@@ -280,6 +281,7 @@ class FaltooChatApp(App[None]):
         self._persist_theme_changes = True
         self.session = session
         self.workspace = Path(sessions.get_messages(session)["workspace"])
+        self.custom_prompt_store = CustomPromptStore(frozenset(SLASH_COMMANDS))
         self.is_answering = False
         self._is_polling_notifications = False
 
@@ -370,15 +372,20 @@ class FaltooChatApp(App[None]):
                 yield ReviewView()
             yield Footer()
 
-    def on_option_list_option_selected(
+    async def on_option_list_option_selected(
         self,
         event: OptionList.OptionSelected,
     ) -> None:
         if event.option_list.id != "slash-commands":
             return
-        self.query_one("#composer", Composer).apply_selected_slash_command(
-            event.option_index
-        )
+        composer = self.query_one("#composer", Composer)
+        command = composer.slash_matches[event.option_index]
+        custom_prompt_commands = self.custom_prompt_store.commands()
+        if prompt := custom_prompt_commands.get(command):
+            composer.load_text("")
+            await composer.submit_custom_prompt(prompt, [])
+            return
+        composer.apply_selected_slash_command(event.option_index)
 
     async def on_mount(self) -> None:
         self.query_one("#slash-commands", OptionList).display = False
@@ -637,27 +644,29 @@ class Composer(TextArea):
             option_list.clear_options()
             option_list.display = False
             return
+        command_descriptions = dict(SLASH_COMMANDS)
+        custom_prompt_commands = self.app.custom_prompt_store.commands()
+        for command, prompt in custom_prompt_commands.items():
+            command_descriptions[command] = prompt.preview
         self.slash_matches = [
-            command for command in SLASH_COMMANDS if command.startswith(query)
+            command for command in command_descriptions if command.startswith(query)
         ]
         option_list.clear_options()
         option_list.display = bool(self.slash_matches)
         if not self.slash_matches:
             return
         option_list.add_options(
-            Option(f"{command} — {SLASH_COMMANDS[command]}")
+            Option(f"{command} — {command_descriptions[command]}")
             for command in self.slash_matches
         )
         option_list.highlighted = 0
 
     def apply_selected_slash_command(self, index: int | None = None) -> bool:
-        if not self.slash_matches:
-            return False
         option_list = self.app.query_one("#slash-commands", OptionList)
-        match_index = option_list.highlighted if index is None else index
-        if match_index is None or not (0 <= match_index < len(self.slash_matches)):
+        command_index = option_list.highlighted if index is None else index
+        if command_index is None or not (0 <= command_index < len(self.slash_matches)):
             return False
-        command = self.slash_matches[match_index]
+        command = self.slash_matches[command_index]
         lines = self.text.split("\n") or [""]
         row, _column = self.cursor_location
         line = lines[row]
@@ -668,6 +677,14 @@ class Composer(TextArea):
         self.move_cursor((row, len(lines[row])))
         self.update_slash_commands()
         return True
+
+    async def submit_custom_prompt(
+        self,
+        prompt: CustomPrompt,
+        attachments: list[sessions.Attachment],
+    ) -> None:
+        message_item = get_local_user_message_item(prompt.template, attachments)
+        await self.app.handle_message(message_item)
 
     def on_text_area_changed(
         self,
@@ -698,6 +715,7 @@ class Composer(TextArea):
             query
             and prefix == query
             and self.slash_matches
+            and query not in self.app.custom_prompt_store.commands()
             and not (self.text.strip() == query and query in SLASH_COMMANDS)
             and self.apply_selected_slash_command()
         ):
@@ -709,6 +727,10 @@ class Composer(TextArea):
 
         self.load_text("")
         if await self.handle_command(question):
+            return
+        custom_prompt_commands = self.app.custom_prompt_store.commands()
+        if prompt := custom_prompt_commands.get(question):
+            await self.submit_custom_prompt(prompt, attachments)
             return
 
         message_item = get_local_user_message_item(question, attachments)
