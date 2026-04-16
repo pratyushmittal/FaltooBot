@@ -459,6 +459,31 @@ def _prompt_allowed_chats(
     )
 
 
+def _prompt_manage_allowed_chats(current: list[str], *, label: str) -> list[str]:
+    choice = _prompt_menu(
+        label,
+        [
+            "Keep current list",
+            "Replace full list",
+            "Add entries",
+            "Remove entries",
+            "Clear all",
+        ],
+        default=1,
+    )
+    if choice == 1:
+        return current
+    if choice == 2:
+        return _prompt_allowed_chats(current, label=label)
+    if choice == 3:
+        additions = _prompt_allowed_chats([], label=f"{label} to add")
+        return sorted({*current, *additions})
+    if choice == 4:
+        removals = set(_prompt_allowed_chats([], label=f"{label} to remove"))
+        return [chat for chat in current if chat not in removals]
+    return []
+
+
 def _write_config(data: dict[str, dict[str, Any]], config_file: Path) -> None:
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(render_config(data), encoding="utf-8")
@@ -605,7 +630,7 @@ def _configure_whatsapp(config: Config) -> None:
     allow_group_chats = list(bot.get("allow_group_chats") or [])
     if not allow_group_chats:
         allow_group_chats = list(data["bot"]["allowed_chats"])
-    data["bot"]["allow_group_chats"] = _prompt_allowed_chats(
+    data["bot"]["allow_group_chats"] = _prompt_manage_allowed_chats(
         allow_group_chats,
         label="Allowed group chats",
     )
@@ -757,45 +782,6 @@ def run_notify_command(args: argparse.Namespace) -> str:
     return notification_id
 
 
-def run_allow_group_chats_command(
-    args: argparse.Namespace,
-    config: Config | None = None,
-) -> list[str]:
-    config = config or build_config()
-    data = merge_config(load_toml(config.config_file))
-    chats = set(str(chat) for chat in data["bot"]["allow_group_chats"])
-
-    if args.allow_group_chats_command == "list":
-        for chat in sorted(chats):
-            console.print(chat)
-        return sorted(chats)
-
-    requested = {normalize_chat(chat) for chat in args.chats}
-    normalized = {chat for chat in requested if chat}
-    if not normalized:
-        raise SystemExit("Provide at least one WhatsApp phone number or JID.")
-
-    if args.allow_group_chats_command == "add":
-        chats.update(normalized)
-        action = "Added"
-    elif args.allow_group_chats_command == "remove":
-        chats.difference_update(normalized)
-        action = "Removed"
-    else:  # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
-        raise SystemExit(
-            f"unknown allow-group-chats command: {args.allow_group_chats_command}"
-        )
-
-    updated = sorted(chats)
-    data["bot"]["allow_group_chats"] = updated
-    _write_config(data, config.config_file)
-    console.print(
-        f"[green]{action}[/] {', '.join(sorted(normalized))} in [cyan]{config.config_file}[/]"
-    )
-    _restart_service(build_config())
-    return updated
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="faltoobot")
     parser.add_argument(
@@ -814,31 +800,6 @@ def parse_args() -> argparse.Namespace:
     )
 
     sub.add_parser("logs", help="show logs in follow mode")
-    allow_group_chats = sub.add_parser(
-        "allow-group-chats",
-        help="list or update the WhatsApp group chat allowlist",
-    )
-    allow_group_chats_sub = allow_group_chats.add_subparsers(
-        dest="allow_group_chats_command",
-        required=True,
-    )
-    allow_group_chats_sub.add_parser("list", help="show allowed WhatsApp group chats")
-    allow_group_chats_add = allow_group_chats_sub.add_parser(
-        "add", help="add WhatsApp chats to the allowed group chat list"
-    )
-    allow_group_chats_add.add_argument(
-        "chats",
-        nargs="+",
-        help="WhatsApp phone numbers or chat JIDs to allow inside groups",
-    )
-    allow_group_chats_remove = allow_group_chats_sub.add_parser(
-        "remove", help="remove WhatsApp chats from the allowed group chat list"
-    )
-    allow_group_chats_remove.add_argument(
-        "chats",
-        nargs="+",
-        help="WhatsApp phone numbers or chat JIDs to remove from the group allowlist",
-    )
     browser = sub.add_parser("browser", help="launch a persistent browser with CDP")
     browser.add_argument("url", nargs="?", help="optional URL to open")
     notify = sub.add_parser("notify", help="enqueue a notification for a chat")
@@ -868,8 +829,6 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_whatsapp_command(config)
     elif args.command == "logs":
         show_logs(config)
-    elif args.command == "allow-group-chats":
-        run_allow_group_chats_command(args, config)
     elif args.command == "browser":
         run_browser_command(args, config)
     elif args.command == "notify":
