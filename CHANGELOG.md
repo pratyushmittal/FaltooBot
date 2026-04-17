@@ -2,6 +2,12 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.0.2 — 2026-04-18
+
+### Fixed
+- Rebuilt the release from the corrected post-rebase source tree so the published package includes the slash-command Enter completion fix that was missing from the previously uploaded 3.0.1 artifact.
+- Keeps the ChatGPT Codex OAuth header update that restores Faltoobot logins against the current ChatGPT-backed Codex API.
+
 ## 3.0.1 — 2026-04-18
 
 ### Fixed
