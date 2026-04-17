@@ -616,10 +616,11 @@ class ReviewDiffView(TextArea):
         self.line_selection_cursor = None
         # comment: staging the whole file usually removes it from the unstaged review list, so
         # refresh and close tabs that no longer belong in review.
-        await self.review_view.refresh_files(close_unmodified=True)
-        # comment: after the current file disappears, stay near the same place in the tab order.
+        # comment: whole-file staging removes the current tab, so move the review view's
+        # active pane to the neighbor first and let refresh_files preserve it.
         if next_path is not None:
             self.review_view.set_active_tab(next_path)
+        await self.review_view.refresh_files(close_unmodified=True)
 
     async def action_review_submit_reviews(self) -> None:
         await self.review_view.submit_reviews()

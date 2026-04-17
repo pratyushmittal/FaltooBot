@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faltoobot"
-version = "2.5.0"
+version = "3.0.0"
 description = "WhatsApp-first LLM bot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
   "neonize>=0.3.16.post0",
-  "openai>=2.31.0",
+  "openai>=2.32.0",
   "playwright>=1.58.0",
   "pillow>=12.2.0",
   "rich>=14.3.4",
@@ -18,7 +18,7 @@ dependencies = [
   'pyobjc-framework-Cocoa>=11.1; sys_platform == "darwin"',
   "tree-sitter-lua>=0.5.0",
   "tree-sitter-typescript>=0.23.2",
-  "google-genai>=1.72.0",
+  "google-genai>=1.73.1",
 ]
 
 [project.scripts]
@@ -37,8 +37,8 @@ dev = [
     "pytest>=9.0.3",
     "pytest-xdist>=3.8.0",
     "pre-commit>=4.5.1",
-    "ruff>=0.15.10",
-    "ty>=0.0.29",
+    "ruff>=0.15.11",
+    "ty>=0.0.31",
     "pytest-cov>=7.1.0",
     "ipython>=9.12.0",
 ]

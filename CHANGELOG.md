@@ -2,6 +2,21 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.0.0 — 2026-04-17
+
+### Changed
+- `faltoochat` slash commands are now simpler and more predictable: exact slash commands complete the current turn instead of sometimes inserting editable text back into the composer.
+- WhatsApp group replies are now explicitly controlled by `allow_group_chats`. Leave it empty to disable group replies, or list the allowed participant phone numbers / JIDs to enable them.
+- Staging a whole file in Review now moves to the next file tab instead of jumping back to the first tab.
+
+### Removed
+- Removed the old `allow_groups` config flag. `allow_group_chats` is now the single control for group-chat replies.
+- Removed the `faltoobot allow-group-chats` CLI shortcut.
+
+### Fixed
+- WhatsApp group replies now require the bot to be explicitly addressed in the group.
+- Saved slash commands and built-in slash commands now share the same composer flow.
+
 ## 2.5.0 — 2026-04-15
 
 ### Added
