@@ -94,7 +94,7 @@ def fake_event(
     )
 
 
-def fake_group_event(
+def fake_group_event(  # noqa: PLR0913
     *,
     message_id: str = "group-1",
     text: str = "hi",
@@ -386,7 +386,12 @@ def test_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
     )
     config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
-    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
+    assert (
+        runtime._matches_allowed_chats(
+            config.allowed_chats, runtime.source_chat_ids(source)
+        )
+        is True
+    )
 
 
 def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
@@ -397,7 +402,12 @@ def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
     )
     config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
 
-    assert runtime.is_allowed_chat(config, runtime.source_chat_ids(source)) is True
+    assert (
+        runtime._matches_allowed_chats(
+            config.allowed_chats, runtime.source_chat_ids(source)
+        )
+        is True
+    )
 
 
 def test_group_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
@@ -415,7 +425,11 @@ def test_group_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> No
     )
 
     assert (
-        runtime.is_allowed_group_chat(config, runtime.source_chat_ids(source)) is True
+        bool(config.allow_group_chats)
+        and runtime._matches_allowed_chats(
+            config.allow_group_chats, runtime.source_chat_ids(source)
+        )
+        is True
     )
 
 
@@ -434,8 +448,11 @@ def test_empty_group_allowlist_blocks_group_messages(tmp_path: Path) -> None:
     )
 
     assert (
-        runtime.is_allowed_group_chat(config, runtime.source_chat_ids(source)) is False
-    )
+        bool(config.allow_group_chats)
+        and runtime._matches_allowed_chats(
+            config.allow_group_chats, runtime.source_chat_ids(source)
+        )
+    ) is False
 
 
 @pytest.mark.anyio
@@ -551,7 +568,7 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
 
     assert turn is not None
     assert turn["prompt"] == "thanks"
-    assert turn["reply_to_text"] == "Please share the file"
+    assert turn["quoted_message_text"] == "Please share the file"
 
 
 def test_keep_chat_typing_sends_composing_then_paused() -> None:
@@ -1050,7 +1067,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
             "chat": jid("15555550123", "s.whatsapp.net"),
             "message_ids": ["status-1"],
             "prompt": "/status",
-            "reply_to_text": "",
+            "quoted_message_text": "",
             "attachments": [],
             "audio": None,
         },
@@ -1231,7 +1248,7 @@ async def test_process_turn_locked_sends_notification_turn(
             "chat": jid("15555550123", "s.whatsapp.net"),
             "message_ids": ["notify_1"],
             "prompt": "queued user message",
-            "reply_to_text": "",
+            "quoted_message_text": "",
             "attachments": [],
             "audio": None,
         },
@@ -1317,7 +1334,7 @@ async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
             "chat": jid("15555550123", "s.whatsapp.net"),
             "message_ids": ["notify_2"],
             "prompt": "queued user message",
-            "reply_to_text": "",
+            "quoted_message_text": "",
             "attachments": [],
             "audio": None,
         },

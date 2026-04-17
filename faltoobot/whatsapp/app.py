@@ -56,7 +56,7 @@ async def _start_polling_notifications() -> None:
                         "prompt": notify_queue.format_notification_message(
                             notification
                         ),
-                        "reply_to_text": "",
+                        "quoted_message_text": "",
                         "attachments": [],
                         "audio": None,
                     }
