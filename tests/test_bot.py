@@ -41,7 +41,6 @@ def make_config(
     tmp_path: Path,
     *,
     allowed_chats: set[str],
-    allow_groups: bool = False,
     allow_group_chats: set[str] | None = None,
 ) -> Config:
     home = tmp_path / "home"
@@ -61,7 +60,6 @@ def make_config(
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        allow_groups=allow_groups,
         allow_group_chats=set() if allow_group_chats is None else allow_group_chats,
         allowed_chats=allowed_chats,
         bot_name="Faltoo",
@@ -420,7 +418,6 @@ def test_group_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> No
     config = make_config(
         tmp_path,
         allowed_chats={"19999999999@s.whatsapp.net"},
-        allow_groups=True,
         allow_group_chats={"15555550123@s.whatsapp.net"},
     )
 
@@ -443,7 +440,6 @@ def test_empty_group_allowlist_blocks_group_messages(tmp_path: Path) -> None:
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_groups=True,
         allow_group_chats=set(),
     )
 
@@ -463,7 +459,6 @@ async def test_get_turn_locked_uses_group_allowlist(
     config = make_config(
         tmp_path,
         allowed_chats={"19999999999@s.whatsapp.net"},
-        allow_groups=True,
         allow_group_chats={"15555550123@s.whatsapp.net"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
@@ -497,7 +492,6 @@ async def test_get_turn_locked_blocks_group_messages_without_bot_mention(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_groups=True,
         allow_group_chats={"15555550123@s.whatsapp.net"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
@@ -520,7 +514,6 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_groups=True,
         allow_group_chats={"15555550123@s.whatsapp.net"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
@@ -550,7 +543,6 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_groups=True,
         allow_group_chats={"15555550123@s.whatsapp.net"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
@@ -1094,7 +1086,6 @@ async def test_process_turn_locked_status_reports_version_and_config(
                     '• browser_binary="/Applications/Google Chrome.app/Contents/MacOS/'
                     'Google Chrome"'
                 ),
-                "• bot_allow_groups=false",
                 "• bot_allow_group_chats=[]",
                 '• bot_allowed_chats=["15555550123@s.whatsapp.net"]',
                 '• bot_bot_name="Faltoo"',

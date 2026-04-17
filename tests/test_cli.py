@@ -26,7 +26,6 @@ def make_config(tmp_path: Path) -> Config:
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        allow_groups=False,
         allow_group_chats=set(),
         allowed_chats=set(),
         bot_name="Faltoo",
@@ -545,15 +544,11 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
     assert changed is False
 
 
-def test_configure_whatsapp_defaults_group_allowlist_to_allowed_chats(
+def test_configure_whatsapp_leaves_group_allowlist_empty_by_default(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = make_config(tmp_path)
     prompts: list[tuple[str, list[str]]] = []
-    confirms = iter([True, False])
-
-    def fake_confirm(*args, **kwargs) -> bool:
-        return next(confirms)
 
     def fake_prompt(current: list[str], *, label: str = "Allowed chats") -> list[str]:
         prompts.append((label, list(current)))
@@ -561,104 +556,15 @@ def test_configure_whatsapp_defaults_group_allowlist_to_allowed_chats(
             return ["15551234567@s.whatsapp.net"]
         return list(current)
 
-    monkeypatch.setattr(cli.Confirm, "ask", fake_confirm)
     monkeypatch.setattr(cli, "_prompt_allowed_chats", fake_prompt)
-    monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(cli.Confirm, "ask", lambda *args, **kwargs: False)
 
     cli._configure_whatsapp(config)
 
     assert prompts == [
         ("Allowed chats", []),
-        ("Allowed group chats", ["15551234567@s.whatsapp.net"]),
+        ("Allowed group chats", []),
     ]
     data = cli.merge_config(cli.load_toml(config.config_file))
     assert data["bot"]["allowed_chats"] == ["15551234567@s.whatsapp.net"]
-    assert data["bot"]["allow_group_chats"] == ["15551234567@s.whatsapp.net"]
-
-
-def test_configure_whatsapp_adds_group_allowlist_entries(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    cli._write_config(
-        {
-            "bot": {
-                "allow_group_chats": ["15551234567@s.whatsapp.net"],
-                "allowed_chats": ["15551234567@s.whatsapp.net"],
-            }
-        },
-        config.config_file,
-    )
-    confirms = iter([True, False])
-    prompts: list[tuple[str, list[str]]] = []
-
-    def fake_confirm(*args, **kwargs) -> bool:
-        return next(confirms)
-
-    def fake_prompt(current: list[str], *, label: str = "Allowed chats") -> list[str]:
-        prompts.append((label, list(current)))
-        if label == "Allowed chats":
-            return list(current)
-        if label == "Allowed group chats to add":
-            return ["15551234568@s.whatsapp.net"]
-        return list(current)
-
-    monkeypatch.setattr(cli.Confirm, "ask", fake_confirm)
-    monkeypatch.setattr(cli, "_prompt_allowed_chats", fake_prompt)
-    monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 3)
-
-    cli._configure_whatsapp(config)
-
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert prompts == [
-        ("Allowed chats", ["15551234567@s.whatsapp.net"]),
-        ("Allowed group chats to add", []),
-    ]
-    assert data["bot"]["allow_group_chats"] == [
-        "15551234567@s.whatsapp.net",
-        "15551234568@s.whatsapp.net",
-    ]
-
-
-def test_configure_whatsapp_removes_group_allowlist_entries(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    cli._write_config(
-        {
-            "bot": {
-                "allow_group_chats": [
-                    "15551234567@s.whatsapp.net",
-                    "15551234568@s.whatsapp.net",
-                ],
-                "allowed_chats": ["15551234567@s.whatsapp.net"],
-            }
-        },
-        config.config_file,
-    )
-    confirms = iter([True, False])
-    prompts: list[tuple[str, list[str]]] = []
-
-    def fake_confirm(*args, **kwargs) -> bool:
-        return next(confirms)
-
-    def fake_prompt(current: list[str], *, label: str = "Allowed chats") -> list[str]:
-        prompts.append((label, list(current)))
-        if label == "Allowed chats":
-            return list(current)
-        if label == "Allowed group chats to remove":
-            return ["15551234567@s.whatsapp.net"]
-        return list(current)
-
-    monkeypatch.setattr(cli.Confirm, "ask", fake_confirm)
-    monkeypatch.setattr(cli, "_prompt_allowed_chats", fake_prompt)
-    monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 4)
-
-    cli._configure_whatsapp(config)
-
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert prompts == [
-        ("Allowed chats", ["15551234567@s.whatsapp.net"]),
-        ("Allowed group chats to remove", []),
-    ]
-    assert data["bot"]["allow_group_chats"] == ["15551234568@s.whatsapp.net"]
+    assert data["bot"]["allow_group_chats"] == []

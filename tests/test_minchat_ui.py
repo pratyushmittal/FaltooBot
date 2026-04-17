@@ -13,7 +13,7 @@ from faltoobot.session_utils import (
     get_local_user_message_item,
 )
 from faltoobot.faltoochat.review import ReviewView
-from faltoobot.faltoochat.widgets import QueueWidget
+from faltoobot.faltoochat.widgets import QueueWidget, SlashCommandsOptionList
 from faltoobot.faltoochat.widgets.search_file import SearchFile
 from textual.widgets import Input, Markdown, OptionList, TabbedContent
 
@@ -122,7 +122,7 @@ async def test_minchat_shows_slash_command_suggestions(
         composer.insert("/")
         await pilot.pause(0)
 
-        option_list = app.query_one("#slash-commands", OptionList)
+        option_list = app.query_one("#slash-commands", SlashCommandsOptionList)
         assert option_list.display
         assert [str(option.prompt) for option in option_list.options] == [
             "/reset — start a fresh session",
@@ -132,7 +132,7 @@ async def test_minchat_shows_slash_command_suggestions(
 
 
 @pytest.mark.anyio
-async def test_minchat_enter_submits_custom_slash_command_after_completion(
+async def test_minchat_partial_slash_command_submits_raw_input(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -149,12 +149,8 @@ async def test_minchat_enter_submits_custom_slash_command_after_completion(
 
         await composer.action_composer_enter()
         await pilot.pause(0)
-        assert composer.text == "/fix-tests"
 
-        await composer.action_composer_enter()
-        await pilot.pause(0)
-
-        assert seen == ["Investigate and fix {target}."]
+        assert seen == ["/fi"]
         assert composer.text == ""
 
 
@@ -177,8 +173,8 @@ async def test_minchat_custom_slash_command_submission_paths(
         if submission_mode == "click":
             composer.insert("/fi")
             await pilot.pause(0)
-            option_list = app.query_one("#slash-commands", OptionList)
-            await app.on_option_list_option_selected(
+            option_list = app.query_one("#slash-commands", SlashCommandsOptionList)
+            await option_list.on_option_list_option_selected(
                 OptionList.OptionSelected(option_list, option_list.options[0], 0)
             )
         else:
@@ -270,25 +266,6 @@ async def test_minchat_up_down_navigate_slash_command_suggestions(
 
 
 @pytest.mark.anyio
-async def test_minchat_enter_applies_highlighted_slash_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, app = build_app(tmp_path, monkeypatch)
-
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        composer = app.query_one("#composer", Composer)
-        composer.focus()
-        composer.insert("/re")
-        await pilot.pause(0)
-
-        await composer.action_composer_enter()
-        await pilot.pause(0)
-
-        assert composer.text == "/reset"
-
-
 @pytest.mark.anyio
 async def test_minchat_status_command_shows_config_status_and_last_usage(
     tmp_path: Path,

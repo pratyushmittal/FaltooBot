@@ -298,7 +298,7 @@ async def get_streaming_reply(  # noqa: C901
         # it always contains full response in event.response
         # including usage
         if event.type != "response.completed":
-            raise ValueError("last event was not response.completed")
+            raise ValueError(f"last event was {event.type}, not response.completed")
         event = cast(ResponseCompletedEvent, event)
 
         tool_calls: list[FunctionToolCallItem] = [

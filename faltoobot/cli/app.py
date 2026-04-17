@@ -459,31 +459,6 @@ def _prompt_allowed_chats(
     )
 
 
-def _prompt_manage_allowed_chats(current: list[str], *, label: str) -> list[str]:
-    choice = _prompt_menu(
-        label,
-        [
-            "Keep current list",
-            "Replace full list",
-            "Add entries",
-            "Remove entries",
-            "Clear all",
-        ],
-        default=1,
-    )
-    if choice == 1:
-        return current
-    if choice == 2:
-        return _prompt_allowed_chats(current, label=label)
-    if choice == 3:
-        additions = _prompt_allowed_chats([], label=f"{label} to add")
-        return sorted({*current, *additions})
-    if choice == 4:
-        removals = set(_prompt_allowed_chats([], label=f"{label} to remove"))
-        return [chat for chat in current if chat not in removals]
-    return []
-
-
 def _write_config(data: dict[str, dict[str, Any]], config_file: Path) -> None:
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(render_config(data), encoding="utf-8")
@@ -618,19 +593,11 @@ def _configure_whatsapp(config: Config) -> None:
     data = merge_config(load_toml(config.config_file))
     bot = data["bot"]
     console.print()
-    data["bot"]["allow_groups"] = Confirm.ask(
-        "[bold]Allow WhatsApp groups[/]",
-        console=console,
-        default=bool(bot.get("allow_groups")),
-        show_default=False,
-    )
     data["bot"]["allowed_chats"] = _prompt_allowed_chats(
         list(bot.get("allowed_chats") or []),
     )
     allow_group_chats = list(bot.get("allow_group_chats") or [])
-    if not allow_group_chats:
-        allow_group_chats = list(data["bot"]["allowed_chats"])
-    data["bot"]["allow_group_chats"] = _prompt_manage_allowed_chats(
+    data["bot"]["allow_group_chats"] = _prompt_allowed_chats(
         allow_group_chats,
         label="Allowed group chats",
     )

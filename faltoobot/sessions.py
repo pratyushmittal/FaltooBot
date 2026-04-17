@@ -319,13 +319,8 @@ async def get_answer_streaming(
             messages_json["message_ids"].append(message_id)
 
         tools: list[Tool] = [
-            get_run_shell_call_tool(
-                workspace,
-                allow_faltoobot_config_access=chat_key.startswith(
-                    ("code@", "sub-agent@")
-                ),
-            ),
-            get_load_image_tool(workspace),
+            get_run_shell_call_tool(Path(messages_json["workspace"])),
+            get_load_image_tool(Path(messages_json["workspace"])),
         ]
         available_skills, load_skill_tool = get_load_skill_tool(
             workspace,

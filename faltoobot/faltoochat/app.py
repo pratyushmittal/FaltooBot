@@ -12,25 +12,15 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import (
     Footer,
     Markdown,
-    OptionList,
     Static,
     TabbedContent,
     TabPane,
     TextArea,
 )
-from textual.widgets.option_list import Option
 
 from faltoobot import notify_queue, sessions
-from faltoobot.config import (
-    build_config,
-    config_status_text,
-    load_textual_theme,
-    save_textual_theme,
-)
-from faltoobot.faltoochat.terminal import (
-    open_in_default_editor,
-    textual_theme_from_terminal,
-)
+from faltoobot.config import load_textual_theme, save_textual_theme
+from faltoobot.faltoochat.terminal import textual_theme_from_terminal
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
@@ -38,7 +28,6 @@ from faltoobot.session_utils import (
     get_local_user_message_item,
 )
 
-from .custom_prompts import CustomPrompt, CustomPromptStore
 from .messages_rendering import (
     SHELL_COMMAND_SEPARATOR,
     get_item_text,
@@ -54,15 +43,11 @@ from .widgets import (
     QueueWidget,
     ReviewDiffView,
     SearchFile,
+    SlashCommandsOptionList,
 )
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
-SLASH_COMMANDS = {
-    "/reset": "start a fresh session",
-    "/status": "show bot status",
-    "/tree": "open the current session messages file",
-}
 
 
 def _render_blocks(text: str, classes: str) -> list[Markdown]:
@@ -281,7 +266,6 @@ class FaltooChatApp(App[None]):
         self._persist_theme_changes = True
         self.session = session
         self.workspace = Path(sessions.get_messages(session)["workspace"])
-        self.custom_prompt_store = CustomPromptStore(frozenset(SLASH_COMMANDS))
         self.is_answering = False
         self._is_polling_notifications = False
 
@@ -360,7 +344,9 @@ class FaltooChatApp(App[None]):
                         with Center():
                             with Vertical(id="footer"):
                                 yield QueueWidget()
-                                yield OptionList(id="slash-commands", markup=False)
+                                yield SlashCommandsOptionList(
+                                    id="slash-commands", markup=False
+                                )
                                 yield Composer(
                                     id="composer",
                                     text="",
@@ -372,23 +358,8 @@ class FaltooChatApp(App[None]):
                 yield ReviewView()
             yield Footer()
 
-    async def on_option_list_option_selected(
-        self,
-        event: OptionList.OptionSelected,
-    ) -> None:
-        if event.option_list.id != "slash-commands":
-            return
-        composer = self.query_one("#composer", Composer)
-        command = composer.slash_matches[event.option_index]
-        custom_prompt_commands = self.custom_prompt_store.commands()
-        if prompt := custom_prompt_commands.get(command):
-            composer.load_text("")
-            await composer.submit_custom_prompt(prompt, [])
-            return
-        composer.apply_selected_slash_command(event.option_index)
-
     async def on_mount(self) -> None:
-        self.query_one("#slash-commands", OptionList).display = False
+        self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
         await self.queue().refresh_queue()
         if self._binding_errors:
@@ -576,7 +547,6 @@ class Composer(TextArea):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.attachments: list[sessions.Attachment] = []
-        self.slash_matches: list[str] = []
 
     def attach_image(self, path: sessions.Attachment) -> None:
         self.attachments.append(path)
@@ -608,96 +578,25 @@ class Composer(TextArea):
             return
         super().action_paste()
 
-    async def handle_command(self, question: str) -> bool:
-        match question:
-            case "/tree":
-                open_in_default_editor(sessions.get_messages_path(self.app.session))
-                return True
-            case "/reset":
-                workspace = self.app.workspace
-                self.app.session = sessions.get_session(
-                    chat_key=self.app.session[0],
-                    session_id=str(uuid4()),
-                    workspace=workspace,
-                )
-                self.app.workspace = workspace
-                await self.app.load_messages()
-                await self.app.queue().refresh_queue()
-                return True
-            case "/status":
-                await self.app.show_local_answer(
-                    config_status_text(
-                        build_config(), sessions.get_last_usage(self.app.session)
-                    )
-                )
-                return True
-            case _:
-                return False
-
-    def update_slash_commands(self) -> None:
-        option_list = self.app.query_one("#slash-commands", OptionList)
-        row, column = self.cursor_location
-        prefix = str(self.get_line(row))[:column].lstrip()
-        query = prefix.split(maxsplit=1)[0] if prefix.startswith("/") else ""
-        if not query or prefix != query:
-            self.slash_matches = []
-            option_list.clear_options()
-            option_list.display = False
-            return
-        command_descriptions = dict(SLASH_COMMANDS)
-        custom_prompt_commands = self.app.custom_prompt_store.commands()
-        for command, prompt in custom_prompt_commands.items():
-            command_descriptions[command] = prompt.preview
-        self.slash_matches = [
-            command for command in command_descriptions if command.startswith(query)
-        ]
-        option_list.clear_options()
-        option_list.display = bool(self.slash_matches)
-        if not self.slash_matches:
-            return
-        option_list.add_options(
-            Option(f"{command} — {command_descriptions[command]}")
-            for command in self.slash_matches
-        )
-        option_list.highlighted = 0
-
-    def apply_selected_slash_command(self, index: int | None = None) -> bool:
-        option_list = self.app.query_one("#slash-commands", OptionList)
-        command_index = option_list.highlighted if index is None else index
-        if command_index is None or not (0 <= command_index < len(self.slash_matches)):
-            return False
-        command = self.slash_matches[command_index]
-        lines = self.text.split("\n") or [""]
-        row, _column = self.cursor_location
-        line = lines[row]
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        lines[row] = f"{indent}{command}" if stripped.startswith("/") else command
-        self.load_text("\n".join(lines))
-        self.move_cursor((row, len(lines[row])))
-        self.update_slash_commands()
-        return True
-
-    async def submit_custom_prompt(
-        self,
-        prompt: CustomPrompt,
-        attachments: list[sessions.Attachment],
-    ) -> None:
-        message_item = get_local_user_message_item(prompt.template, attachments)
-        await self.app.handle_message(message_item)
-
     def on_text_area_changed(
         self,
         _event: TextArea.Changed | TextArea.SelectionChanged,
     ) -> None:
-        self.update_slash_commands()
+        # show slash commands if applicable
+        option_list = self.app.query_one("#slash-commands", SlashCommandsOptionList)
+        text = self.text.strip()
+        if text.startswith("/"):
+            option_list.show_matches(text)
+            return
+        if option_list.options:
+            option_list.hide_commands()
 
     on_text_area_selection_changed = on_text_area_changed
 
     def on_key(self, event: events.Key) -> None:
-        if event.key not in {"up", "down"} or not self.slash_matches:
+        option_list = self.app.query_one("#slash-commands", SlashCommandsOptionList)
+        if event.key not in {"up", "down"} or not option_list.options:
             return
-        option_list = self.app.query_one("#slash-commands", OptionList)
         if not option_list.display:
             return
         event.stop()
@@ -708,31 +607,18 @@ class Composer(TextArea):
             option_list.action_cursor_down()
 
     async def action_composer_enter(self) -> None:
-        row, column = self.cursor_location
-        prefix = str(self.get_line(row))[:column].lstrip()
-        query = prefix.split(maxsplit=1)[0] if prefix.startswith("/") else ""
-        if (
-            query
-            and prefix == query
-            and self.slash_matches
-            and query not in self.app.custom_prompt_store.commands()
-            and not (self.text.strip() == query and query in SLASH_COMMANDS)
-            and self.apply_selected_slash_command()
-        ):
-            return
         question = self.text.strip()
         attachments = self.take_attachments()
         if not question and not attachments:
             return
 
-        self.load_text("")
-        if await self.handle_command(question):
-            return
-        custom_prompt_commands = self.app.custom_prompt_store.commands()
-        if prompt := custom_prompt_commands.get(question):
-            await self.submit_custom_prompt(prompt, attachments)
+        option_list = self.app.query_one("#slash-commands", SlashCommandsOptionList)
+        if question.startswith("/") and await option_list.handle_text(
+            question, attachments
+        ):
             return
 
+        self.load_text("")
         message_item = get_local_user_message_item(question, attachments)
         await self.app.handle_message(message_item)
 

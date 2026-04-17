@@ -589,7 +589,24 @@ class ReviewDiffView(TextArea):
         self.line_selection_cursor = None
         await self.reload_in_place()
 
+    def _next_review_file_path(self) -> Path | None:
+        tabs = self.screen.query_one("#review-tabs", TabbedContent)
+        file_paths = [
+            pane.query_one(ReviewDiffView).file_path
+            for pane in tabs.query(TabPane)
+            if pane.id is not None and pane.query(ReviewDiffView)
+        ]
+        if self.file_path not in file_paths:
+            return None
+        current_index = file_paths.index(self.file_path)
+        if current_index + 1 < len(file_paths):
+            return file_paths[current_index + 1]
+        if current_index > 0:
+            return file_paths[current_index - 1]
+        return None
+
     async def action_review_stage_file(self) -> None:
+        next_path = self._next_review_file_path()
         workspace = cast("FaltooChatApp", self.app).workspace
         if error := await asyncio.to_thread(stage_file, workspace, self.file_path):
             self.app.notify(error, severity="warning")
@@ -600,6 +617,9 @@ class ReviewDiffView(TextArea):
         # comment: staging the whole file usually removes it from the unstaged review list, so
         # refresh and close tabs that no longer belong in review.
         await self.review_view.refresh_files(close_unmodified=True)
+        # comment: after the current file disappears, stay near the same place in the tab order.
+        if next_path is not None:
+            self.review_view.set_active_tab(next_path)
 
     async def action_review_submit_reviews(self) -> None:
         await self.review_view.submit_reviews()

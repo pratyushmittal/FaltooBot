@@ -95,24 +95,6 @@ PY""",
     assert "gem-key" in result["stdout"]
 
 
-def test_run_shell_call_in_workspace_blocks_faltoobot_config_access(
-    tmp_path: Path,
-) -> None:
-    result = json.loads(
-        run_shell_call_in_workspace(
-            str(tmp_path),
-            "cat ~/.faltoobot/config.toml",
-            timeout_ms=5000,
-            allow_faltoobot_config_access=False,
-        )
-    )
-
-    assert result["stdout"] == ""
-    assert result["exit_code"] == 1
-    assert result["timed_out"] is False
-    assert "cannot read or modify Faltoobot config files" in result["stderr"]
-
-
 def test_get_load_image_tool_builds_valid_tool_definition(tmp_path: Path) -> None:
     tool = get_load_image_tool(tmp_path)
     definition = get_tools_definition(tool)
