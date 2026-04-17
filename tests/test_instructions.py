@@ -22,7 +22,6 @@ def test_get_system_instructions_skips_empty_agents_files(
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        allow_groups=False,
         allow_group_chats=set(),
         allowed_chats=set(),
         bot_name="Faltoo",

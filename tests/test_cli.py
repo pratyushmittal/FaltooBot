@@ -26,7 +26,6 @@ def make_config(tmp_path: Path) -> Config:
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
-        allow_groups=False,
         allow_group_chats=set(),
         allowed_chats=set(),
         bot_name="Faltoo",
@@ -481,129 +480,6 @@ def test_run_whatsapp_auth_surfaces_libmagic_help(monkeypatch, tmp_path: Path) -
         raise AssertionError("expected SystemExit")
 
 
-def test_non_whatsapp_commands_do_not_import_whatsapp(monkeypatch) -> None:
-    calls: list[str] = []
-
-    def fake_update(config=None):
-        calls.append("update")
-
-    monkeypatch.setattr(cli, "run_update_command", fake_update)
-
-    cli.handle_command(cli.argparse.Namespace(command="update"), None)
-
-    assert calls == ["update"]
-
-
-def test_run_allow_group_chats_command_adds_normalized_chats(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    restarts: list[Config] = []
-
-    monkeypatch.setattr(cli, "build_config", lambda: config)
-    monkeypatch.setattr(cli, "_restart_service", lambda config: restarts.append(config))
-
-    result = cli.run_allow_group_chats_command(
-        cli.argparse.Namespace(
-            allow_group_chats_command="add",
-            chats=["+1 (555) 123-4567", "15551234568@s.whatsapp.net"],
-        ),
-        config,
-    )
-
-    assert result == [
-        "15551234567@s.whatsapp.net",
-        "15551234568@s.whatsapp.net",
-    ]
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["bot"]["allow_group_chats"] == result
-    assert restarts == [config]
-
-
-def test_run_allow_group_chats_command_removes_chats(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    cli._write_config(
-        {
-            "bot": {
-                "allow_group_chats": [
-                    "15551234567@s.whatsapp.net",
-                    "15551234568@s.whatsapp.net",
-                ]
-            }
-        },
-        config.config_file,
-    )
-    restarts: list[Config] = []
-
-    monkeypatch.setattr(cli, "build_config", lambda: config)
-    monkeypatch.setattr(cli, "_restart_service", lambda config: restarts.append(config))
-
-    result = cli.run_allow_group_chats_command(
-        cli.argparse.Namespace(
-            allow_group_chats_command="remove",
-            chats=["15551234567"],
-        ),
-        config,
-    )
-
-    assert result == ["15551234568@s.whatsapp.net"]
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["bot"]["allow_group_chats"] == result
-    assert restarts == [config]
-
-
-def test_run_allow_group_chats_command_lists_without_restart(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    cli._write_config(
-        {"bot": {"allow_group_chats": ["15551234567@s.whatsapp.net"]}},
-        config.config_file,
-    )
-    seen: list[str] = []
-
-    monkeypatch.setattr(cli.console, "print", lambda value="": seen.append(str(value)))
-    monkeypatch.setattr(
-        cli,
-        "_restart_service",
-        lambda config: (_ for _ in ()).throw(AssertionError("should not restart")),
-    )
-
-    result = cli.run_allow_group_chats_command(
-        cli.argparse.Namespace(allow_group_chats_command="list"),
-        config,
-    )
-
-    assert result == ["15551234567@s.whatsapp.net"]
-    assert seen == ["15551234567@s.whatsapp.net"]
-
-
-def test_handle_command_routes_allow_group_chats(monkeypatch, tmp_path: Path) -> None:
-    config = make_config(tmp_path)
-    calls: list[tuple[str, list[str]]] = []
-
-    monkeypatch.setattr(
-        cli,
-        "run_allow_group_chats_command",
-        lambda args, config=None: calls.append(
-            (args.allow_group_chats_command, list(getattr(args, "chats", [])))
-        ),
-    )
-
-    cli.handle_command(
-        cli.argparse.Namespace(
-            command="allow-group-chats",
-            allow_group_chats_command="add",
-            chats=["15551234567"],
-        ),
-        config,
-    )
-
-    assert calls == [("add", ["15551234567"])]
-
-
 def test_crontab_path_value_appends_uv_bin() -> None:
     value = cli._crontab_path_value(Path("/tmp/uv-bin"), "/usr/bin:/bin")
 
@@ -655,15 +531,11 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
     assert changed is False
 
 
-def test_configure_whatsapp_defaults_group_allowlist_to_allowed_chats(
+def test_configure_whatsapp_leaves_group_allowlist_empty_by_default(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = make_config(tmp_path)
     prompts: list[tuple[str, list[str]]] = []
-    confirms = iter([True, False])
-
-    def fake_confirm(*args, **kwargs) -> bool:
-        return next(confirms)
 
     def fake_prompt(current: list[str], *, label: str = "Allowed chats") -> list[str]:
         prompts.append((label, list(current)))
@@ -671,15 +543,15 @@ def test_configure_whatsapp_defaults_group_allowlist_to_allowed_chats(
             return ["15551234567@s.whatsapp.net"]
         return list(current)
 
-    monkeypatch.setattr(cli.Confirm, "ask", fake_confirm)
     monkeypatch.setattr(cli, "_prompt_allowed_chats", fake_prompt)
+    monkeypatch.setattr(cli.Confirm, "ask", lambda *args, **kwargs: False)
 
     cli._configure_whatsapp(config)
 
     assert prompts == [
         ("Allowed chats", []),
-        ("Allowed group chats", ["15551234567@s.whatsapp.net"]),
+        ("Allowed group chats", []),
     ]
     data = cli.merge_config(cli.load_toml(config.config_file))
     assert data["bot"]["allowed_chats"] == ["15551234567@s.whatsapp.net"]
-    assert data["bot"]["allow_group_chats"] == ["15551234567@s.whatsapp.net"]
+    assert data["bot"]["allow_group_chats"] == []

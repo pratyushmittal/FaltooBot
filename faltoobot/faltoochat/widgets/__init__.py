@@ -5,6 +5,7 @@ from .review_diff import ReviewDiffView
 from .search_file import SearchFile
 from .search_project import SearchProject
 from .search_in_file import SearchInFile
+from .slash_commands import SlashCommandsOptionList
 from .telescope import Telescope
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "ReviewDiffView",
     "SearchFile",
     "SearchInFile",
+    "SlashCommandsOptionList",
     "SearchProject",
     "Telescope",
 ]

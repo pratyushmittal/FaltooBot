@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from faltoobot.faltoochat import custom_prompts
-from faltoobot.faltoochat.custom_prompts import CustomPromptStore
+from faltoobot.faltoochat import slash_commands
+from faltoobot.faltoochat.slash_commands import SlashCommandStore
 
 
 def make_prompt_root(tmp_path: Path) -> tuple[Path, Path]:
@@ -13,7 +13,7 @@ def make_prompt_root(tmp_path: Path) -> tuple[Path, Path]:
     return root, prompts_dir
 
 
-def test_custom_prompt_store_reads_flat_markdown_files(tmp_path: Path) -> None:
+def test_slash_command_store_reads_flat_markdown_files(tmp_path: Path) -> None:
     _root, prompts_dir = make_prompt_root(tmp_path)
     (prompts_dir / "fix-tests.md").write_text(
         "\n\nInvestigate and fix {target}.\nExplain the root cause briefly.\n",
@@ -28,7 +28,7 @@ def test_custom_prompt_store_reads_flat_markdown_files(tmp_path: Path) -> None:
     nested_dir.mkdir()
     (nested_dir / "ignored.md").write_text("nested prompt\n", encoding="utf-8")
 
-    prompts = CustomPromptStore(prompts_dir=prompts_dir).commands()
+    prompts = SlashCommandStore(prompts_dir=prompts_dir).commands()
 
     assert list(prompts) == ["/fix-tests", "/summarize"]
     assert [prompt.preview for prompt in prompts.values()] == [
@@ -40,30 +40,30 @@ def test_custom_prompt_store_reads_flat_markdown_files(tmp_path: Path) -> None:
     )
 
 
-def test_custom_prompt_store_returns_empty_when_prompts_dir_is_missing(
+def test_slash_command_store_returns_empty_when_prompts_dir_is_missing(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / ".faltoobot"
     root.mkdir(parents=True)
 
-    assert CustomPromptStore(prompts_dir=root / "prompts").commands() == {}
+    assert SlashCommandStore(prompts_dir=root / "prompts").commands() == {}
 
 
-def test_custom_prompt_store_truncates_long_preview(tmp_path: Path) -> None:
+def test_slash_command_store_truncates_long_preview(tmp_path: Path) -> None:
     _root, prompts_dir = make_prompt_root(tmp_path)
     (prompts_dir / "long.md").write_text(
         "Investigate and fix the failing tests in target carefully before touching code today.\nSecond line.\n",
         encoding="utf-8",
     )
 
-    prompts = CustomPromptStore(prompts_dir=prompts_dir).commands()
+    prompts = SlashCommandStore(prompts_dir=prompts_dir).commands()
 
     assert (
         prompts["/long"].preview == "Investigate and fix the failing tests in target..."
     )
 
 
-def test_custom_prompt_store_uses_cache_until_prompt_files_change(
+def test_slash_command_store_uses_cache_until_prompt_files_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -74,25 +74,25 @@ def test_custom_prompt_store_uses_cache_until_prompt_files_change(
     )
 
     load_calls = 0
-    original = custom_prompts._discover_prompt_commands
+    original = slash_commands._discover_slash_commands
 
     def wrapped(
         prompts_dir: Path,
         excluded_commands: frozenset[str],
-    ) -> dict[str, custom_prompts.CustomPrompt]:
+    ) -> dict[str, slash_commands.SlashCommand]:
         nonlocal load_calls
         load_calls += 1
         return original(prompts_dir, excluded_commands)
 
-    monkeypatch.setattr(custom_prompts, "_discover_prompt_commands", wrapped)
+    monkeypatch.setattr(slash_commands, "_discover_slash_commands", wrapped)
 
     first_load = 1
     second_load = 2
     third_load = 3
 
-    store = CustomPromptStore(prompts_dir=prompts_dir)
+    store = SlashCommandStore(prompts_dir=prompts_dir)
     assert store.commands() == {
-        "/fix-tests": custom_prompts.CustomPrompt(
+        "/fix-tests": slash_commands.SlashCommand(
             name="fix-tests",
             path=prompts_dir / "fix-tests.md",
             template="Investigate and fix {target}.\n",
@@ -102,7 +102,7 @@ def test_custom_prompt_store_uses_cache_until_prompt_files_change(
     assert load_calls == first_load
 
     assert store.commands() == {
-        "/fix-tests": custom_prompts.CustomPrompt(
+        "/fix-tests": slash_commands.SlashCommand(
             name="fix-tests",
             path=prompts_dir / "fix-tests.md",
             template="Investigate and fix {target}.\n",

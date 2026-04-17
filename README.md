@@ -75,16 +75,15 @@ thinking = "high"
 fast = false
 
 [bot]
-allow_groups = false
-allow_group_chats = ["15551234567@s.whatsapp.net"]
-allowed_chats = ["15551234567@s.whatsapp.net"]
+allow_group_chats = ["15551234567"]
+allowed_chats = ["15551234567"]
 system_prompt = "You are Faltoobot, a concise and helpful AI assistant replying inside WhatsApp. Keep replies practical and readable on mobile."
 ```
 
 If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oauth` is blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
-Set `allowed_chats` to your own WhatsApp JID or phone number to keep the bot private. Leave it empty only if you want Faltoobot to reply to anyone who can message that account.
-If you enable groups, set `allow_group_chats` to the participant phone numbers / JIDs that should be allowed to talk to the bot inside groups. If it is empty, the bot will not reply in groups. Even for allowed people, the bot now replies in groups only when the message explicitly mentions the bot.
+Set `allowed_chats` to the WhatsApp phone numbers or JIDs that should be allowed to talk to the bot in direct chats. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
+If you enable groups, set `allow_group_chats` to the participant phone numbers or JIDs that should be allowed to talk to the bot inside groups. If it is empty, the bot will not reply in groups. Even for allowed people, the bot now replies in groups only when the message explicitly mentions the bot.
 
 ### 2. Start WhatsApp service
 
@@ -136,16 +135,6 @@ faltoobot logs
 ```
 
 Shows log output in follow mode.
-
-### `faltoobot allow-group-chats`
-
-```bash
-faltoobot allow-group-chats list
-faltoobot allow-group-chats add 15551234567
-faltoobot allow-group-chats remove 15551234567
-```
-
-Lists or updates the WhatsApp group participant allowlist in `allow_group_chats` without reopening the full configure wizard. Add and remove accept one or more phone numbers / JIDs and normalize them before saving. If the service is already installed, Faltoobot restarts it so the new allowlist is used immediately.
 
 ### `faltoobot configure`
 

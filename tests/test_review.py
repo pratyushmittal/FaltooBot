@@ -1271,6 +1271,50 @@ async def test_review_stage_file_stages_current_file(
 
 
 @pytest.mark.anyio
+async def test_review_stage_file_moves_focus_to_next_tab(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+    (workspace / "gamma.py").write_text('value = "gamma updated"\n', encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        await wait_for_condition(
+            lambda: any(
+                pane._title == "gamma.py"
+                for pane in review_file_panes(
+                    app.query_one("#review-tabs", TabbedContent)
+                )
+            )
+        )
+
+        review_tabs = app.query_one("#review-tabs", TabbedContent)
+        panes = review_file_panes(review_tabs)
+        tab_count = 3
+        assert len(panes) >= tab_count
+        current_pane = panes[1]
+        next_title = str(panes[2]._title)
+        review_tabs.active = current_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = current_pane.query_one(ReviewDiffView)
+        assert viewer._next_review_file_path() == Path(next_title)
+        viewer.focus()
+        await viewer.action_review_stage_file()
+        await pilot.pause(0)
+
+        review_tabs = app.query_one("#review-tabs", TabbedContent)
+        next_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == next_title
+        )
+        assert review_tabs.active == (next_pane.id or "")
+        assert isinstance(app.screen.focused, ReviewDiffView)
+        assert app.screen.focused.file_path == Path(next_title)
+
+
+@pytest.mark.anyio
 async def test_review_adds_review_via_modal_and_submits_in_chat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -31,7 +31,6 @@ def config_text() -> str:
             "fast = true",
             "",
             "[bot]",
-            "allow_groups = false",
             "allow_group_chats = []",
             "allowed_chats = []",
             "",

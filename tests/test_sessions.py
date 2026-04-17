@@ -344,7 +344,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
 
 
 @pytest.mark.anyio
-async def test_get_answer_uses_restricted_shell_tool_for_whatsapp_chats(
+async def test_get_answer_exposes_shell_tool_for_whatsapp_chats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -388,9 +388,8 @@ async def test_get_answer_uses_restricted_shell_tool_for_whatsapp_chats(
     assert answer == "ok"
     tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
     shell_tool = tool_defs_by_name["run_shell_call"]
-    assert (
-        "Do not read or modify Faltoobot config files from this tool."
-        in shell_tool["description"]
+    assert shell_tool["description"].startswith(
+        "Returns the output of a shell command. Use it to inspect files and run CLI tasks."
     )
 
 

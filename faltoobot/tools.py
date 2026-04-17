@@ -18,14 +18,6 @@ from faltoobot.openai_auth import uses_chatgpt_oauth
 
 MAX_SHELL_OUTPUT = 12_000
 ToolOutput = str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
-_CONFIG_BLOCK_PATTERNS = (
-    ".faltoobot",
-    "config.toml",
-    "faltoobot configure",
-    "allow-group-chats",
-    "build_config(",
-    "app_root(",
-)
 
 
 def _clipped_text(value: str | bytes | None) -> str:
@@ -44,30 +36,11 @@ def _tool_env() -> dict[str, str]:
     return env
 
 
-def _blocked_faltoobot_config_command(command: str) -> bool:
-    lowered = command.lower()
-    return any(pattern in lowered for pattern in _CONFIG_BLOCK_PATTERNS)
-
-
 def run_shell_call_in_workspace(
     workspace: str,
     command: str,
     timeout_ms: int,
-    *,
-    allow_faltoobot_config_access: bool = True,
 ) -> str:
-    if not allow_faltoobot_config_access and _blocked_faltoobot_config_command(command):
-        return json.dumps(
-            {
-                "stdout": "",
-                "stderr": (
-                    "Blocked: WhatsApp shell access cannot read or modify Faltoobot config files. "
-                    "Ask the user to run `faltoobot configure` or `faltoobot allow-group-chats ...` in the CLI instead."
-                ),
-                "exit_code": 1,
-                "timed_out": False,
-            }
-        )
     try:
         process = subprocess.run(
             ["/bin/bash", "-lc", command],
@@ -101,34 +74,21 @@ def run_shell_call_in_workspace(
     return json.dumps(result)
 
 
-def get_run_shell_call_tool(
-    workspace: Path,
-    *,
-    allow_faltoobot_config_access: bool = True,
-) -> Callable[[str, str, int], str]:
+def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
     workspace = workspace.expanduser().resolve()
 
     def run_shell_call(command: str, command_summary: str, timeout_ms: int) -> str:
-        return run_shell_call_in_workspace(
-            str(workspace),
-            command,
-            timeout_ms,
-            allow_faltoobot_config_access=allow_faltoobot_config_access,
-        )
+        return run_shell_call_in_workspace(str(workspace), command, timeout_ms)
 
-    restriction_note = ""
-    if not allow_faltoobot_config_access:
-        restriction_note = (
-            "\n\nDo not read or modify Faltoobot config files from this tool."
-        )
-    run_shell_call.__doc__ = (
-        "Returns the output of a shell command. Use it to inspect files and run CLI tasks.\n\n"
-        f"Commands are run from `{workspace}` directory.{restriction_note}\n\n"
-        "Args:\n"
-        "    - command: Bash command to run.\n"
-        "    - command_summary: A short one-line summary of what the command is doing. Keep it brief.\n"
-        "    - timeout_ms: Kill the command after this timeout in milliseconds."
-    )
+    run_shell_call.__doc__ = f"""Returns the output of a shell command. Use it to inspect files and run CLI tasks.
+
+    Commands are run from `{workspace}` directory.
+
+    Args:
+        - command: Bash command to run.
+        - command_summary: A short one-line summary of what the command is doing. Keep it brief.
+        - timeout_ms: Kill the command after this timeout in milliseconds.
+    """
     return run_shell_call
 
 

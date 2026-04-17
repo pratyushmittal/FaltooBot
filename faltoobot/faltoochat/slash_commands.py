@@ -8,7 +8,7 @@ PREVIEW_TEXT_LIMIT = 48
 
 
 @dataclass(slots=True)
-class CustomPrompt:
+class SlashCommand:
     name: str
     path: Path
     template: str
@@ -16,8 +16,8 @@ class CustomPrompt:
 
 
 @dataclass(slots=True)
-class CustomPromptStore:
-    """Cache custom prompt commands and only re-read prompt files after metadata changes."""
+class SlashCommandStore:
+    """Cache slash commands and only re-read prompt files after metadata changes."""
 
     excluded_commands: frozenset[str] = field(default_factory=frozenset)
     prompts_dir: Path | None = None
@@ -26,13 +26,13 @@ class CustomPromptStore:
         init=False,
         repr=False,
     )
-    _commands: dict[str, CustomPrompt] = field(
+    _commands: dict[str, SlashCommand] = field(
         default_factory=dict,
         init=False,
         repr=False,
     )
 
-    def commands(self) -> dict[str, CustomPrompt]:
+    def commands(self) -> dict[str, SlashCommand]:
         self.refresh()
         return dict(self._commands)
 
@@ -42,21 +42,21 @@ class CustomPromptStore:
         if signature == self._signature:
             return
         self._signature = signature
-        self._commands = _discover_prompt_commands(prompts_dir, self.excluded_commands)
+        self._commands = _discover_slash_commands(prompts_dir, self.excluded_commands)
 
 
-def _discover_prompt_commands(
+def _discover_slash_commands(
     prompts_dir: Path,
     excluded_commands: Collection[str],
-) -> dict[str, CustomPrompt]:
+) -> dict[str, SlashCommand]:
     if not prompts_dir.exists() or not prompts_dir.is_dir():
         return {}
-    commands: dict[str, CustomPrompt] = {}
+    commands: dict[str, SlashCommand] = {}
     for path in sorted(prompts_dir.iterdir(), key=lambda item: item.name):
         if not path.is_file() or path.suffix != ".md":
             continue
         template = path.read_text(encoding="utf-8")
-        prompt = CustomPrompt(
+        prompt = SlashCommand(
             name=path.stem,
             path=path,
             template=template,
@@ -88,4 +88,4 @@ def _preview_for_template(template: str) -> str:
             if len(stripped) <= PREVIEW_TEXT_LIMIT:
                 return stripped
             return f"{stripped[:PREVIEW_TEXT_LIMIT].rstrip()}..."
-    return "custom prompt"
+    return "slash command"

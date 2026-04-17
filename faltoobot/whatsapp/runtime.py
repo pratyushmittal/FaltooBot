@@ -459,6 +459,7 @@ def _mentioned_chat_ids(message: Message) -> set[str]:
 
 
 def _quoted_participant_ids(message: Message) -> set[str]:
+    """Return normalized participant IDs referenced by the quoted message context."""
     context_info = _message_context_info(message)
     if context_info is None:
         return set()
@@ -470,6 +471,7 @@ def _quoted_participant_ids(message: Message) -> set[str]:
 
 
 async def _bot_identity_ids(client: NewAClient) -> set[str]:
+    """Return the normalized WhatsApp IDs that identify the connected bot account."""
     cache_key = id(client)
     cached = BOT_IDENTITY_CACHE.get(cache_key)
     if cached is not None:
@@ -486,6 +488,7 @@ async def _bot_identity_ids(client: NewAClient) -> set[str]:
 
 
 async def is_bot_addressed(client: NewAClient, message: Message) -> bool:
+    """Return whether the message explicitly mentions or quotes the bot account."""
     addressed_ids = _mentioned_chat_ids(message) | _quoted_participant_ids(message)
     if not addressed_ids:
         return False
@@ -758,8 +761,6 @@ async def get_turn_locked(
 
     source_ids = source_chat_ids(source)
     if source.IsGroup:
-        if not config.allow_groups:
-            return None
         if not is_allowed_group_chat(config, source_ids):
             logger.info(
                 "Ignoring group message from %s in %s because it is not group-allowlisted. Seen IDs: %s",
