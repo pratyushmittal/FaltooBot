@@ -32,10 +32,12 @@ class SlashCommandsOptionList(OptionList):
             descriptions[command] = prompt.preview
         return descriptions
 
-    def show_matches(self, text: str) -> None:
-        query = text.strip().split(maxsplit=1)[0]
+    def show_matches_for(self, text: str) -> None:
+        if not text.startswith("/"):
+            self.hide_commands()
+            return
         descriptions = self._command_descriptions()
-        commands = [command for command in descriptions if command.startswith(query)]
+        commands = [command for command in descriptions if command.startswith(text)]
         self.clear_options()
         self.display = bool(commands)
         if not commands:
@@ -55,6 +57,12 @@ class SlashCommandsOptionList(OptionList):
         prompt = str(self.options[index].prompt)
         command, _separator, _description = prompt.partition(" — ")
         return command or None
+
+    def selected_completion(self, text: str) -> str | None:
+        if not self.display or self.highlighted is None or not text.startswith("/"):
+            return None
+        command = self._command_for_index(self.highlighted)
+        return None if command in {None, text} else command
 
     async def _handle_builtin_command(self, command: str) -> bool:
         app = cast("FaltooChatApp", self.app)

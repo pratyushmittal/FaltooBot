@@ -583,13 +583,9 @@ class Composer(TextArea):
         _event: TextArea.Changed | TextArea.SelectionChanged,
     ) -> None:
         # show slash commands if applicable
-        option_list = self.app.query_one("#slash-commands", SlashCommandsOptionList)
-        text = self.text.strip()
-        if text.startswith("/"):
-            option_list.show_matches(text)
-            return
-        if option_list.options:
-            option_list.hide_commands()
+        self.app.query_one("#slash-commands", SlashCommandsOptionList).show_matches_for(
+            self.text
+        )
 
     on_text_area_selection_changed = on_text_area_changed
 
@@ -607,12 +603,17 @@ class Composer(TextArea):
             option_list.action_cursor_down()
 
     async def action_composer_enter(self) -> None:
+        option_list = self.app.query_one("#slash-commands", SlashCommandsOptionList)
+        if command := option_list.selected_completion(self.text):
+            self.clear()
+            self.insert(command, maintain_selection_offset=False)
+            return
+
         question = self.text.strip()
         attachments = self.take_attachments()
         if not question and not attachments:
             return
 
-        option_list = self.app.query_one("#slash-commands", SlashCommandsOptionList)
         if question.startswith("/") and await option_list.handle_text(
             question, attachments
         ):

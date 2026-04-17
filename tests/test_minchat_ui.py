@@ -132,7 +132,7 @@ async def test_minchat_shows_slash_command_suggestions(
 
 
 @pytest.mark.anyio
-async def test_minchat_partial_slash_command_submits_raw_input(
+async def test_minchat_enter_completes_partial_custom_slash_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -150,8 +150,9 @@ async def test_minchat_partial_slash_command_submits_raw_input(
         await composer.action_composer_enter()
         await pilot.pause(0)
 
-        assert seen == ["/fi"]
-        assert composer.text == ""
+        assert seen == []
+        assert composer.text == "/fix-tests"
+        assert composer.cursor_location == (0, len("/fix-tests"))
 
 
 @pytest.mark.anyio
@@ -266,6 +267,26 @@ async def test_minchat_up_down_navigate_slash_command_suggestions(
 
 
 @pytest.mark.anyio
+async def test_minchat_enter_applies_highlighted_slash_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.insert("/re")
+        await pilot.pause(0)
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        assert composer.text == "/reset"
+        assert composer.cursor_location == (0, len("/reset"))
+
+
 @pytest.mark.anyio
 async def test_minchat_status_command_shows_config_status_and_last_usage(
     tmp_path: Path,
