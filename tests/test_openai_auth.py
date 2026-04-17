@@ -80,7 +80,7 @@ def test_get_openai_client_options_prefers_oauth_over_api_key(
     assert asyncio.run(_oauth_token(api_key)) == "access-token"
     assert default_headers == {
         openai_auth.CHATGPT_ACCOUNT_HEADER: "account-123",
-        openai_auth.CHATGPT_BETA_HEADER: openai_auth.CHATGPT_BETA_VALUE,
+        openai_auth.CHATGPT_ORIGINATOR_HEADER: openai_auth.CHATGPT_ORIGINATOR_VALUE,
     }
 
 
@@ -103,7 +103,7 @@ def test_get_openai_client_options_uses_codex_oauth(tmp_path: Path) -> None:
     assert base_url == openai_auth.CHATGPT_OAUTH_BASE_URL
     assert default_headers == {
         openai_auth.CHATGPT_ACCOUNT_HEADER: "account-123",
-        openai_auth.CHATGPT_BETA_HEADER: openai_auth.CHATGPT_BETA_VALUE,
+        openai_auth.CHATGPT_ORIGINATOR_HEADER: openai_auth.CHATGPT_ORIGINATOR_VALUE,
     }
     assert asyncio.run(_oauth_token(api_key)) == "access-token"
 

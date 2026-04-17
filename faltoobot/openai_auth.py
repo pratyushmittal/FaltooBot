@@ -15,8 +15,8 @@ from faltoobot.config import Config, app_root
 AUTH_FILE_NAME = "auth.json"
 CHATGPT_OAUTH_BASE_URL = "https://chatgpt.com/backend-api/codex/"
 CHATGPT_ACCOUNT_HEADER = "chatgpt-account-id"
-CHATGPT_BETA_HEADER = "OpenAI-Beta"
-CHATGPT_BETA_VALUE = "responses=experimental"
+CHATGPT_ORIGINATOR_HEADER = "originator"
+CHATGPT_ORIGINATOR_VALUE = "codex_cli_rs"
 # comment: OpenAI's Codex OAuth flow uses this fixed client id. Keep it here so
 # refresh and login match the same first-party OAuth app, while still allowing an
 # env override if OpenAI rotates it in the future.
@@ -299,6 +299,8 @@ def get_openai_client_options(config: Config) -> OpenAIClientOptions:
         CHATGPT_OAUTH_BASE_URL,
         {
             CHATGPT_ACCOUNT_HEADER: account_id,
-            CHATGPT_BETA_HEADER: CHATGPT_BETA_VALUE,
+            # comment: upstream Codex identifies first-party ChatGPT OAuth traffic with the
+            # `originator` header rather than the older `OpenAI-Beta: responses=experimental`.
+            CHATGPT_ORIGINATOR_HEADER: CHATGPT_ORIGINATOR_VALUE,
         },
     )
