@@ -6,6 +6,7 @@ on:
 
 jobs:
   test:
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -27,4 +28,5 @@ jobs:
         run: uv sync
 
       - name: Run tests
+        # -ra prints the short summary for skipped and other non-passing test results.
         run: uv run pytest -n auto -vv -ra
