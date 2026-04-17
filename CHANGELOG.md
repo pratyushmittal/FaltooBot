@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.0.1 — 2026-04-18
+
+### Fixed
+- Updated the ChatGPT Codex OAuth request headers to match current upstream Codex behavior, which restores Faltoobot logins that had started failing against the ChatGPT-backed Codex API.
+
 ## 3.0.0 — 2026-04-17
 
 ### Changed
