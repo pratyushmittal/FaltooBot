@@ -18,7 +18,6 @@ from openai.types.responses import (
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
     MessageHistory,
-    MessageItem,
     StreamingReplyItem,
     Tool,
     get_streaming_reply,
@@ -50,14 +49,6 @@ Attachment = str | Path
 Session: TypeAlias = tuple[str, str]
 
 
-def _prompt_cache_key(messages_json: MessagesJson) -> str:
-    return messages_json["id"]
-
-
-def _sessions_dir() -> Path:
-    return app_root() / "sessions"
-
-
 def _validate_chat_key(chat_key: str) -> str:
     if not chat_key or chat_key in {".", ".."} or "/" in chat_key:
         raise ValueError(f"Invalid chat key: {chat_key!r}")
@@ -72,48 +63,30 @@ def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
     return f"{prefix}@{name}-{digest}"
 
 
-def _chat_root(chat_key: str) -> Path:
-    return _sessions_dir() / _validate_chat_key(chat_key)
-
-
-def _session_root(chat_key: str, session_id: str) -> Path:
-    return _chat_root(chat_key) / session_id
-
-
-def _last_used_path(chat_key: str) -> Path:
-    return _chat_root(chat_key) / LAST_USED_FILE
-
-
-def _messages_path(chat_key: str, session_id: str) -> Path:
-    return _session_root(chat_key, session_id) / MESSAGES_FILE
-
-
-def _workspace_path(chat_key: str, session_id: str, workspace: Path | None) -> Path:
-    return (
-        workspace.expanduser()
-        if workspace
-        else _session_root(chat_key, session_id) / WORKSPACE_DIR
-    )
-
-
-def _basic_messages_json(
-    session_id: str,
-    *,
+def _messages_json(
     chat_key: str,
-    workspace: Path,
-    current: dict[str, Any],
+    session_id: str,
+    payload: dict[str, Any],
+    workspace: Path | None = None,
 ) -> MessagesJson:
-    system_prompt = current.get("system_prompt")
-    prompt_text = system_prompt if isinstance(system_prompt, str) else ""
-    messages = [item for item in current.get("messages", [])]
-    message_ids = [item for item in current.get("message_ids", [])]
+    if workspace is None:
+        saved_workspace = payload.get("workspace")
+        workspace = (
+            Path(saved_workspace)
+            if isinstance(saved_workspace, str)
+            else get_messages_path((chat_key, session_id)).parent / WORKSPACE_DIR
+        )
+    else:
+        workspace = workspace.expanduser()
+
+    system_prompt = payload.get("system_prompt")
     return {
         "id": session_id,
         "chat_key": chat_key,
         "workspace": str(workspace),
-        "system_prompt": prompt_text,
-        "messages": messages,
-        "message_ids": message_ids,
+        "system_prompt": system_prompt if isinstance(system_prompt, str) else "",
+        "messages": [item for item in payload.get("messages", [])],
+        "message_ids": [item for item in payload.get("message_ids", [])],
     }
 
 
@@ -123,26 +96,26 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any] | MessagesJson) -> None:
+def _write_atomic(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
-    temp.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    temp.write_text(value, encoding="utf-8")
     temp.replace(path)
 
 
-def _read_last_used(chat_key: str) -> str | None:
-    path = _last_used_path(chat_key)
+def _write_json_atomic(path: Path, payload: dict[str, Any] | MessagesJson) -> None:
+    _write_atomic(
+        path,
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    )
+
+
+def get_last_used_session_id(chat_key: str) -> str | None:
+    path = app_root() / "sessions" / _validate_chat_key(chat_key) / LAST_USED_FILE
     if not path.exists():
         return None
     value = path.read_text(encoding="utf-8").strip()
     return value or None
-
-
-def get_last_used_session_id(chat_key: str) -> str | None:
-    return _read_last_used(_validate_chat_key(chat_key))
 
 
 def _session_parts(session: Session) -> tuple[str, str]:
@@ -152,23 +125,11 @@ def _session_parts(session: Session) -> tuple[str, str]:
 
 def get_messages_path(session: Session) -> Path:
     chat_key, session_id = _session_parts(session)
-    return _messages_path(chat_key, session_id)
-
-
-def _write_text_atomic(path: Path, value: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
-    temp.write_text(f"{value}\n", encoding="utf-8")
-    temp.replace(path)
-
-
-def _set_last_used(chat_key: str, session_id: str) -> None:
-    with _LAST_USED_LOCK:
-        _write_text_atomic(_last_used_path(chat_key), session_id)
+    return app_root() / "sessions" / chat_key / session_id / MESSAGES_FILE
 
 
 def _session_lock(chat_key: str, session_id: str) -> RLock:
-    key = str(_session_root(chat_key, session_id))
+    key = str(get_messages_path((chat_key, session_id)).parent)
     with _SESSION_LOCKS_GUARD:
         if key not in _SESSION_LOCKS:
             _SESSION_LOCKS[key] = RLock()
@@ -177,19 +138,13 @@ def _session_lock(chat_key: str, session_id: str) -> RLock:
 
 @contextmanager
 def _locked_session(session: Session):
-    chat_key, session_id = _session_parts(session)
-    lock = _session_lock(chat_key, session_id)
-    lock.acquire()
-    try:
+    with _session_lock(*_session_parts(session)):
         yield
-    finally:
-        lock.release()
 
 
 class _AsyncSessionLock:
     def __init__(self, session: Session) -> None:
-        chat_key, session_id = _session_parts(session)
-        self._lock = _session_lock(chat_key, session_id)
+        self._lock = _session_lock(*_session_parts(session))
 
     async def __aenter__(self) -> None:
         while not self._lock.acquire(blocking=False):
@@ -205,64 +160,40 @@ def get_session(
     workspace: Path | None = None,
 ) -> Session:
     chat_key = _validate_chat_key(chat_key)
-    session_id = session_id or _read_last_used(chat_key) or str(uuid4())
+    session_id = session_id or get_last_used_session_id(chat_key) or str(uuid4())
     session = (chat_key, session_id)
-    root = _session_root(chat_key, session_id)
-    path = _messages_path(chat_key, session_id)
-    target_workspace = _workspace_path(chat_key, session_id, workspace)
+    messages_path = get_messages_path(session)
 
     with _locked_session(session):
-        payload = _read_json(path)
-        saved_workspace = payload.get("workspace")
-        session_workspace = (
-            Path(saved_workspace)
-            if isinstance(saved_workspace, str) and workspace is None
-            else target_workspace
-        )
-        messages_json = _basic_messages_json(
+        messages_json = _messages_json(
+            chat_key,
             session_id,
-            chat_key=chat_key,
-            workspace=session_workspace,
-            current=payload,
+            _read_json(messages_path),
+            workspace,
         )
-        if workspace is not None:
-            messages_json["workspace"] = str(target_workspace)
-        root.mkdir(parents=True, exist_ok=True)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
         workspace_path = Path(messages_json["workspace"])
         workspace_path.mkdir(parents=True, exist_ok=True)
         # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
         (workspace_path / "AGENTS.md").touch(exist_ok=True)
-        _write_json_atomic(path, messages_json)
-        _set_last_used(chat_key, session_id)
+        _write_json_atomic(messages_path, messages_json)
+        with _LAST_USED_LOCK:
+            _write_atomic(
+                app_root() / "sessions" / chat_key / LAST_USED_FILE,
+                f"{session_id}\n",
+            )
     return session
-
-
-def _coerce_messages_json(
-    chat_key: str, session_id: str, payload: dict[str, Any]
-) -> MessagesJson:
-    workspace = payload.get("workspace")
-    session_workspace = (
-        Path(workspace)
-        if isinstance(workspace, str)
-        else _workspace_path(chat_key, session_id, None)
-    )
-    return _basic_messages_json(
-        session_id,
-        chat_key=chat_key,
-        workspace=session_workspace,
-        current=payload,
-    )
 
 
 def get_messages(session: Session) -> MessagesJson:
     chat_key, session_id = _session_parts(session)
+    messages_path = get_messages_path(session)
     with _locked_session(session):
-        path = _messages_path(chat_key, session_id)
-        payload = _read_json(path)
+        payload = _read_json(messages_path)
         if not payload:
             get_session(chat_key=chat_key, session_id=session_id)
-            payload = _read_json(path)
-        return _coerce_messages_json(chat_key, session_id, payload)
+            payload = _read_json(messages_path)
+        return _messages_json(chat_key, session_id, payload)
 
 
 def get_last_usage(session: Session) -> dict[str, Any] | None:
@@ -283,22 +214,7 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
         workspace=Path(messages_json["workspace"]),
     )
     with _locked_session(session):
-        _write_json_atomic(_messages_path(chat_key, session_id), messages_json)
-
-
-def _cached_system_prompt(
-    messages_json: MessagesJson,
-    config: Config,
-    *,
-    chat_key: str,
-    workspace: Path,
-) -> str:
-    system_prompt = messages_json["system_prompt"]
-    if system_prompt:
-        return system_prompt
-    system_prompt = get_system_instructions(config, chat_key, workspace)
-    messages_json["system_prompt"] = system_prompt
-    return system_prompt
+        _write_json_atomic(get_messages_path(session), messages_json)
 
 
 async def _upload_attachments(
@@ -379,6 +295,7 @@ async def get_answer_streaming(
         if message_id and message_id in messages_json["message_ids"]:
             return
 
+        chat_key = session[0]
         workspace = Path(messages_json["workspace"])
         text = question.strip()
         if attachments:
@@ -391,45 +308,44 @@ async def get_answer_streaming(
         if not content:
             raise ValueError("Question or attachments required")
 
-        user_message: MessageItem = {
-            "type": "message",
-            "role": "user",
-            "content": content,
-        }
-        messages_json["messages"].append(user_message)
+        messages_json["messages"].append(
+            {
+                "type": "message",
+                "role": "user",
+                "content": content,
+            }
+        )
         if message_id:
             messages_json["message_ids"].append(message_id)
 
         tools: list[Tool] = [
             get_run_shell_call_tool(
-                Path(messages_json["workspace"]),
-                allow_faltoobot_config_access=session[0].startswith(
+                workspace,
+                allow_faltoobot_config_access=chat_key.startswith(
                     ("code@", "sub-agent@")
                 ),
             ),
-            get_load_image_tool(Path(messages_json["workspace"])),
+            get_load_image_tool(workspace),
         ]
         available_skills, load_skill_tool = get_load_skill_tool(
-            Path(messages_json["workspace"]),
-            chat_key=session[0],
+            workspace,
+            chat_key=chat_key,
         )
         if available_skills:
             # comment: only expose the skill-loading tool when there is at least one local skill to load.
             tools.append(load_skill_tool)
 
-        instructions = _cached_system_prompt(
-            messages_json,
-            config,
-            chat_key=session[0],
-            workspace=workspace,
-        )
+        instructions = messages_json["system_prompt"]
+        if not instructions:
+            instructions = get_system_instructions(config, chat_key, workspace)
+            messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
         async for event in get_streaming_reply(
             instructions=instructions,
             input=messages_json["messages"],
             tools=tools,
-            prompt_cache_key=_prompt_cache_key(messages_json),
+            prompt_cache_key=messages_json["id"],
         ):
             if event.type in {"function_call_output", "response.completed"}:
                 set_messages(session, messages_json)
