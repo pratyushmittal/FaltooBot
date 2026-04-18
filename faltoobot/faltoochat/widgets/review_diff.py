@@ -531,11 +531,13 @@ class ReviewDiffView(TextArea):
         await self.reload_in_place()
         start, end = _review_range(self)
         code = _get_code_for_review_submission(self.diff, start, end)
+        line_number_start = _file_line_for_diff_line(self.diff, start)
+        line_number_end = _file_line_for_diff_line(self.diff, end)
         existing = get_review(
             self.review_view.reviews,
             filename=self.file_path,
-            line_number_start=start + 1,
-            line_number_end=end + 1,
+            line_number_start=line_number_start,
+            line_number_end=line_number_end,
         )
 
         async def on_comment(comment: str | None) -> None:
@@ -544,8 +546,8 @@ class ReviewDiffView(TextArea):
             self.review_view.add_review(
                 {
                     "filename": self.file_path,
-                    "line_number_start": start + 1,
-                    "line_number_end": end + 1,
+                    "line_number_start": line_number_start,
+                    "line_number_end": line_number_end,
                     "code": code,
                     "comment": comment,
                 }
@@ -555,8 +557,8 @@ class ReviewDiffView(TextArea):
         self.app.push_screen(
             ReviewCommentModal(
                 self.file_path,
-                start + 1,
-                end + 1,
+                line_number_start,
+                line_number_end,
                 code,
                 initial_comment="" if existing is None else existing["comment"],
             ),
@@ -829,10 +831,16 @@ def _comment_title(view: ReviewDiffView) -> str:
 
 def _commented_lines(view: ReviewDiffView) -> set[int]:
     lines: set[int] = set()
-    for review in view.review_view.reviews:
-        if review["filename"] != view.file_path:
-            continue
-        lines.update(range(review["line_number_start"] - 1, review["line_number_end"]))
+    for diff_line in range(len(view.diff)):
+        file_line = _file_line_for_diff_line(view.diff, diff_line)
+        for review in view.review_view.reviews:
+            if review["filename"] != view.file_path:
+                continue
+            # comment: reviews are stored in real file-line coordinates, so deleted diff rows
+            # share the next surviving file line and stay highlighted with their replacement.
+            if review["line_number_start"] <= file_line <= review["line_number_end"]:
+                lines.add(diff_line)
+                break
     return lines
 
 

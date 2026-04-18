@@ -636,6 +636,83 @@ async def test_get_streaming_reply_adds_codex_session_headers_for_oauth(
 
 
 @pytest.mark.anyio
+async def test_get_streaming_reply_replaces_unavailable_uploaded_files_for_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(
+        [
+            {
+                "events": [
+                    FakeCompletedEvent([]),
+                ],
+                "output": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+    monkeypatch.setattr(gpt_utils, "uses_chatgpt_oauth", lambda config: True)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_api_key="",
+            openai_oauth="auth.json",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
+
+    history: MessageHistory = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "look"},
+                {"type": "input_image", "file_id": "file_old", "detail": "auto"},
+            ],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                {"type": "input_image", "file_id": "file_tool", "detail": "auto"},
+                {"type": "input_file", "file_id": "file_doc"},
+            ],
+        },
+    ]
+
+    _items = [
+        item
+        async for item in get_streaming_reply(
+            instructions="system prompt",
+            input=history,
+            tools=[],
+        )
+    ]
+
+    assert client.responses.calls[0]["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "look"},
+                {"type": "input_text", "text": "[image-not-available-now]"},
+            ],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                {"type": "input_text", "text": "[image-not-available-now]"},
+                {"type": "input_text", "text": "[file-not-available-now]"},
+            ],
+        },
+    ]
+    assert client.closed is True
+
+
+@pytest.mark.anyio
 async def test_tool_result_keeps_structured_image_output() -> None:
     async def load_image(image_path: str) -> list[ResponseInputImage]:
         """Load image files such as jpg or png. Useful for seeing screenshots and creatives.

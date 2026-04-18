@@ -151,23 +151,45 @@ def _to_message_item(value: Any) -> MessageItem:
     return value
 
 
-def trim_input(items: MessageHistory) -> MessageHistory:
+def _replace_unavailable_upload(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_replace_unavailable_upload(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    item_type = value.get("type")
+    if item_type == "input_image" and isinstance(value.get("file_id"), str):
+        # comment: historical platform file ids cannot be replayed through ChatGPT Codex OAuth,
+        # so keep the turn structure but downgrade the missing image to a text placeholder.
+        return {"type": "input_text", "text": "[image-not-available-now]"}
+    if item_type == "input_file" and isinstance(value.get("file_id"), str):
+        # comment: Codex OAuth cannot fetch prior uploaded files from platform storage either.
+        return {"type": "input_text", "text": "[file-not-available-now]"}
+    return {key: _replace_unavailable_upload(item) for key, item in value.items()}
+
+
+def trim_input(
+    items: MessageHistory,
+    *,
+    replace_unavailable_uploads: bool = False,
+) -> MessageHistory:
     # Keep only the latest compacted history window.
     for index in range(len(items) - 1, -1, -1):
         if items[index].get("type") == "compaction":
             items = items[index:]
             break
 
-    # Strip SDK-only fields before replaying saved items back to the API.
-    items = [
-        {
+    trimmed_items: MessageHistory = []
+    for item in items:
+        trimmed = {
             key: value
             for key, value in item.items()
             if key not in {"parsed_arguments", "usage"}
         }
-        for item in items
-    ]
-    return items
+        if replace_unavailable_uploads:
+            trimmed = _replace_unavailable_upload(trimmed)
+        trimmed_items.append(trimmed)
+    return trimmed_items
 
 
 def _parse_tool_arguments(raw_arguments: str) -> tuple[dict[str, Any], str | None]:
@@ -256,7 +278,13 @@ async def get_streaming_reply(  # noqa: C901
         response_output: list[ResponseOutputItem] = []
         async with client.responses.stream(
             model=config.openai_model,
-            input=cast(Any, trim_input(current_input)),
+            input=cast(
+                Any,
+                trim_input(
+                    current_input,
+                    replace_unavailable_uploads=uses_chatgpt_oauth(config),
+                ),
+            ),
             tools=tool_defs + cloud_tools,  # type: ignore
             store=False,
             parallel_tool_calls=True,

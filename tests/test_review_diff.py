@@ -185,6 +185,45 @@ def test_review_diff_highlight_colors_match_status_priority(monkeypatch) -> None
     assert staged.bgcolor == base.blend(colors["secondary_light"], 0.18).rich_color
 
 
+def test_review_diff_comments_follow_file_line_numbers_across_deleted_rows(
+    monkeypatch,
+) -> None:
+    review_view = review_view_stub()
+    review_view.reviews = [
+        {
+            "filename": Path("alpha.py"),
+            "line_number_start": 2,
+            "line_number_end": 3,
+        }
+    ]
+    viewer = ReviewDiffView(
+        [
+            {"is_staged": False, "type": "", "text": "a = 1"},
+            {"is_staged": False, "type": "-", "text": "b = 2"},
+            {"is_staged": False, "type": "+", "text": "b = 20"},
+            {"is_staged": False, "type": "", "text": "c = 3"},
+            {"is_staged": False, "type": "-", "text": "e = 5"},
+            {"is_staged": False, "type": "+", "text": "e = 50"},
+        ],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view),
+    )
+    colors = _set_theme_colors(monkeypatch)
+    viewer.line_highlights = True
+    base = Color.parse("#232323")
+
+    deleted = _line_highlight_style(viewer, 1)
+    replacement = _line_highlight_style(viewer, 2)
+    context = _line_highlight_style(viewer, 3)
+    later_deleted = _line_highlight_style(viewer, 4)
+
+    expected = base.blend(colors["primary_light"], 0.25).rich_color
+    assert deleted.bgcolor == expected
+    assert replacement.bgcolor == expected
+    assert context.bgcolor == expected
+    assert later_deleted.bgcolor == base.blend(colors["error_light"], 0.25).rich_color
+
+
 def test_review_diff_gutter_width_reserves_space_for_diff_symbol() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(105)],
