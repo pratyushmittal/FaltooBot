@@ -41,8 +41,6 @@ def test_reviews_prompt_groups_reviews_by_filename_and_wraps_names_in_backticks(
         prompt
         == """# Comments in code review
 
-Please address these comments in code review.
-
 ## File name `alpha.py`
 
 ### Line `2-3`
@@ -83,6 +81,25 @@ beta line
 Comment:
 Only beta comment"""
     )
+
+
+def test_reviews_prompt_prefers_file_line_numbers_when_present() -> None:
+    prompt = reviews_prompt(
+        [
+            {
+                "filename": Path("alpha.py"),
+                "line_number_start": 20,
+                "line_number_end": 22,
+                "file_line_number_start": 13,
+                "file_line_number_end": 15,
+                "code": "line a",
+                "comment": "Use file lines",
+            }
+        ]
+    )
+
+    assert "### Line `13-15`" in prompt
+    assert "### Line `20-22`" not in prompt
 
 
 def test_upsert_review_deletes_existing_review_when_comment_is_blank() -> None:

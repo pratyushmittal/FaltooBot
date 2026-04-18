@@ -185,15 +185,15 @@ def test_review_diff_highlight_colors_match_status_priority(monkeypatch) -> None
     assert staged.bgcolor == base.blend(colors["secondary_light"], 0.18).rich_color
 
 
-def test_review_diff_comments_follow_file_line_numbers_across_deleted_rows(
-    monkeypatch,
-) -> None:
+def test_review_diff_highlights_keep_using_stored_diff_line_ranges(monkeypatch) -> None:
     review_view = review_view_stub()
     review_view.reviews = [
         {
             "filename": Path("alpha.py"),
             "line_number_start": 2,
-            "line_number_end": 3,
+            "line_number_end": 4,
+            "file_line_number_start": 2,
+            "file_line_number_end": 3,
         }
     ]
     viewer = ReviewDiffView(

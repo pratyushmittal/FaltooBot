@@ -1361,6 +1361,8 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
                 "filename": Path("alpha.py"),
                 "line_number_start": 2,
                 "line_number_end": 2,
+                "file_line_number_start": 2,
+                "file_line_number_end": 2,
                 "code": "-b = 2",
                 "comment": "Look closely",
             }
@@ -1721,6 +1723,8 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
             "filename": Path("alpha.py"),
             "line_number_start": 1,
             "line_number_end": 1,
+            "file_line_number_start": 1,
+            "file_line_number_end": 1,
             "code": "a = 1",
             "comment": "Unchanged",
         }
@@ -1739,7 +1743,9 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
         assert app.query_one(ReviewView).reviews[-1] == {
             "filename": Path("alpha.py"),
             "line_number_start": 2,
-            "line_number_end": 3,
+            "line_number_end": 4,
+            "file_line_number_start": 2,
+            "file_line_number_end": 3,
             "code": "-b = 2\n+b = 20\nc = 3",
             "comment": "Selected",
         }
@@ -1824,6 +1830,8 @@ async def test_review_add_prefills_existing_comment_and_overwrites_it(
                 "filename": Path("alpha.py"),
                 "line_number_start": 2,
                 "line_number_end": 2,
+                "file_line_number_start": 2,
+                "file_line_number_end": 2,
                 "code": "-b = 2",
                 "comment": "Second",
             }

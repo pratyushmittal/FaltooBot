@@ -1,13 +1,17 @@
 from pathlib import Path
-from typing import Literal, TypeAlias, TypedDict
+from typing import Literal, NotRequired, TypeAlias, TypedDict
 
 from faltoobot.gpt_utils import MessageItem
 
 
 class Review(TypedDict):
     filename: Path
+    # comment: keep the original diff-line range for gutter `*` markers.
     line_number_start: int
     line_number_end: int
+    # comment: keep the real file lines for user-facing comment numbers.
+    file_line_number_start: NotRequired[int]
+    file_line_number_end: NotRequired[int]
     code: str
     comment: str
 
@@ -25,19 +29,20 @@ def _reviews_by_filename(reviews: Reviews) -> dict[Path, Reviews]:
 
 def reviews_prompt(reviews: Reviews) -> str:
     grouped_reviews = _reviews_by_filename(reviews)
-    lines = [
-        "# Comments in code review",
-        "",
-        "Please address these comments in code review.",
-        "",
-    ]
+    lines = ["# Comments in code review", ""]
     filenames = list(grouped_reviews)
     for index, filename in enumerate(filenames):
         lines.extend([f"## File name `{filename}`", ""])
         for review in grouped_reviews[filename]:
+            line_number_start = review.get(
+                "file_line_number_start", review["line_number_start"]
+            )
+            line_number_end = review.get(
+                "file_line_number_end", review["line_number_end"]
+            )
             lines.extend(
                 [
-                    f"### Line `{review['line_number_start']}-{review['line_number_end']}`",
+                    f"### Line `{line_number_start}-{line_number_end}`",
                     "",
                     "Code:",
                     "",
