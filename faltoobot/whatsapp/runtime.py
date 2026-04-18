@@ -21,7 +21,7 @@ from faltoobot.config import Config, config_status_text, normalize_chat
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
-    append_user_turn,
+    append_user_turn as _append_user_turn,
     get_answer,
     get_last_usage,
     get_messages,
@@ -47,6 +47,9 @@ IMAGE_SUFFIXES = {
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
 SLASH_COMMANDS = {"/help", "/status", "/reset"}
+append_user_turn = _append_user_turn
+
+
 HELP_TEXT = (
     "Faltoobot is online.\n\n"
     "• Send any message to ask the model\n"
@@ -297,60 +300,20 @@ async def _handle_slash_command(
         await client.reply_message("Memory cleared for this chat.", event)
 
 
-async def store_turn_locked(  # noqa: C901, PLR0912, PLR0915
+async def process_turn_locked(
     client: NewAClient,
     session: tuple[str, str],
     *,
     config: Config,
     turn: "Turn",
-) -> bool:
-    """Persist one already-normalized turn while the per-chat lock is held."""
+) -> None:
+    """Process one already-stored turn while the per-chat lock is held."""
     event = turn["event"]
     chat = turn["chat"]
-    source = event.Info.MessageSource if event is not None else None
-    chat_jid = Jid2String(chat)
-    sender_jid = Jid2String(source.Sender) if source is not None else session[0]
-    message_ids = turn["message_ids"]
     prompt = turn["prompt"]
-    quoted_message_text = turn["quoted_message_text"]
     attachments = turn["attachments"]
-    audio = turn["audio"]
-
     messages_json = get_messages(session)
-    fresh_message_ids = [
-        item for item in message_ids if item not in messages_json["message_ids"]
-    ]
-    if not fresh_message_ids:
-        logger.info(
-            "Skipping duplicate message%s %s from %s",
-            "" if len(message_ids) == 1 else "s",
-            ", ".join(message_ids),
-            chat_jid,
-        )
-        return False
-
-    summary = prompt
-    if not summary:
-        if attachments:
-            summary = (
-                "<image>" if len(attachments) == 1 else f"<{len(attachments)} images>"
-            )
-        else:
-            summary = f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
-    logger.info(
-        "Received message from %s in %s: %s",
-        sender_jid,
-        chat_jid,
-        summary,
-    )
-    if (
-        event is not None
-        and not attachments
-        and audio is None
-        and prompt in SLASH_COMMANDS
-    ):
-        messages_json["message_ids"].extend(fresh_message_ids)
-        set_messages(session, messages_json)
+    if event is not None and not attachments and prompt in SLASH_COMMANDS:
         await _handle_slash_command(
             client,
             session=session,
@@ -358,59 +321,8 @@ async def store_turn_locked(  # noqa: C901, PLR0912, PLR0915
             turn=turn,
             messages_json=messages_json,
         )
-        return False
-
-    try:
-        if event is not None and not prompt and audio is not None:
-            prompt = await audio_prompt(
-                client,
-                event,
-                openai_api_key=config.openai_api_key,
-                transcription_prompt=TRANSCRIPTION_PROMPT,
-                model=config.openai_transcription_model,
-            )
-        stored = await append_user_turn(
-            session,
-            question=_prompt_with_reply_context(prompt, quoted_message_text),
-            attachments=attachments or None,
-            message_ids=fresh_message_ids,
-        )
-        if not stored:
-            logger.info(
-                "Skipping duplicate message%s %s from %s",
-                "" if len(message_ids) == 1 else "s",
-                ", ".join(message_ids),
-                chat_jid,
-            )
-        return stored
-    except AudioError as exc:
-        logger.info(
-            "Failed to transcribe audio %s: %s",
-            event.Info.ID if event is not None else "<notify>",
-            exc,
-        )
-        messages_json["message_ids"].extend(fresh_message_ids)
-        set_messages(session, messages_json)
-        await send_text(
-            client,
-            chat=chat,
-            text=str(exc),
-            event=event,
-            workspace=Path(messages_json["workspace"]),
-        )
-        return False
-
-
-async def process_turn_locked(
-    client: NewAClient,
-    session: tuple[str, str],
-    *,
-    turn: "Turn",
-) -> None:
-    """Reply to one already-stored turn while the per-chat lock is held."""
-    event = turn["event"]
-    chat = turn["chat"]
-    workspace = Path(get_messages(session)["workspace"])
+        return
+    workspace = Path(messages_json["workspace"])
 
     typing_stop = asyncio.Event()
     typing_task = asyncio.create_task(keep_chat_typing(client, chat, typing_stop))
@@ -580,8 +492,10 @@ def _turn_from_pending_album(pending_album: PendingAlbum) -> Turn:
         "event": pending_album["reply_event"],
         "chat": pending_album["reply_event"].Info.MessageSource.Chat,
         "message_ids": pending_album["message_ids"],
-        "prompt": pending_album["prompt"],
-        "quoted_message_text": pending_album["quoted_message_text"],
+        "prompt": _prompt_with_reply_context(
+            pending_album["prompt"], pending_album["quoted_message_text"]
+        ),
+        "quoted_message_text": "",
         "attachments": pending_album["attachments"],
         "audio": None,
     }
@@ -687,7 +601,7 @@ async def _should_process_event(
     return allowed
 
 
-async def get_turn_locked(
+async def get_turn_locked(  # noqa: C901, PLR0911
     client: NewAClient,
     event: MessageEv,
     *,
@@ -736,6 +650,16 @@ async def get_turn_locked(
         workspace=workspace,
     )
     if pending_album_turn is not None:
+        summary = pending_album_turn["prompt"]
+        if not summary:
+            count = len(pending_album_turn["attachments"])
+            summary = "<image>" if count == 1 else f"<{count} images>"
+        logger.info(
+            "Received message from %s in %s: %s",
+            sender_jid,
+            chat_jid,
+            summary,
+        )
         return pending_album_turn
     if current_album_id and current_album_id in pending_albums:
         return None
@@ -745,7 +669,7 @@ async def get_turn_locked(
             "message_ids": [message_id],
             "attachments": [],
             "prompt": "",
-            "quoted_message_text": _quoted_message_text(event.Message),
+            "quoted_message_text": quoted_message_text,
             "reply_event": event,
         }
         return None
@@ -761,12 +685,45 @@ async def get_turn_locked(
         if image_message
         else []
     )
+    summary = user_text
+    if not summary:
+        if attachments:
+            summary = (
+                "<image>" if len(attachments) == 1 else f"<{len(attachments)} images>"
+            )
+        else:
+            summary = f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
+    if not user_text and audio is not None:
+        try:
+            user_text = await audio_prompt(
+                client,
+                event,
+                openai_api_key=config.openai_api_key,
+                transcription_prompt=TRANSCRIPTION_PROMPT,
+                model=config.openai_transcription_model,
+            )
+        except AudioError as exc:
+            logger.info("Failed to transcribe audio %s: %s", event.Info.ID, exc)
+            await send_text(
+                client,
+                chat=event.Info.MessageSource.Chat,
+                text=str(exc),
+                event=event,
+                workspace=workspace,
+            )
+            return None
+    logger.info(
+        "Received message from %s in %s: %s",
+        sender_jid,
+        chat_jid,
+        summary,
+    )
     return {
         "event": event,
         "chat": event.Info.MessageSource.Chat,
         "message_ids": [message_id],
-        "prompt": user_text,
-        "quoted_message_text": quoted_message_text,
+        "prompt": _prompt_with_reply_context(user_text, quoted_message_text),
+        "quoted_message_text": "",
         "attachments": attachments,
-        "audio": audio,
+        "audio": None,
     }

@@ -300,7 +300,7 @@ async def get_answer_streaming(
     if not instructions:
         instructions = get_system_instructions(config, chat_key, workspace)
         messages_json["system_prompt"] = instructions
-    set_messages(session, messages_json)
+        set_messages(session, messages_json)
 
     async for event in get_streaming_reply(
         instructions=instructions,

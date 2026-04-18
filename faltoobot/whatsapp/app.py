@@ -15,6 +15,7 @@ from faltoobot.sessions import get_session
 from . import login, runtime
 
 logger = logging.getLogger("faltoobot")
+DEBOUNCE_SECONDS = 3.0
 
 __all__ = ["main"]
 
@@ -24,6 +25,7 @@ tasks: set[asyncio.Task[Any]] = set()
 # comment: serialize turns per WhatsApp chat so follow-up messages wait for the current
 # turn to finish instead of racing and corrupting shared session history.
 chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+debounce_timers: dict[str, asyncio.TimerHandle] = {}
 pending_albums: dict[str, runtime.PendingAlbum] = {}
 notifications_stop = asyncio.Event()
 
@@ -31,6 +33,8 @@ notifications_stop = asyncio.Event()
 async def on_exit() -> None:
     logger.info("Stopping Faltoobot")
     notifications_stop.set()
+    for handle in debounce_timers.values():
+        handle.cancel()
     for task in list(tasks):
         task.cancel()
     await client.stop()
@@ -60,16 +64,17 @@ async def _start_polling_notifications() -> None:
                         "attachments": [],
                         "audio": None,
                     }
-                    stored = await runtime.store_turn_locked(
-                        client,
+                    stored = await runtime.append_user_turn(
                         session,
-                        config=config,
-                        turn=turn,
+                        question=turn["prompt"],
+                        attachments=turn["attachments"] or None,
+                        message_ids=turn["message_ids"],
                     )
                     if stored:
                         await runtime.process_turn_locked(
                             client,
                             session,
+                            config=config,
                             turn=turn,
                         )
             except Exception:
@@ -93,13 +98,35 @@ async def _on_pair_status(_: NewAClient, event: PairStatusEv) -> None:
     logger.info("Pair status: %s", event.Status)
 
 
+async def _handle_debounce_timer(
+    current_client: NewAClient,
+    *,
+    chat_key: str,
+    turn: runtime.Turn,
+    handle: asyncio.TimerHandle,
+) -> None:
+    async with chat_locks[chat_key]:
+        # comment: a timer callback can fire just before a newer message replaces the
+        # chat's debounce handle. Only the currently registered handle may process.
+        if debounce_timers.get(chat_key) is not handle:
+            return
+        debounce_timers.pop(chat_key, None)
+        session = get_session(chat_key=chat_key)
+        await runtime.process_turn_locked(
+            current_client,
+            session,
+            config=config,
+            turn=turn,
+        )
+
+
 async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     chat_key = normalize_chat(chat_jid)
 
-    # comment: same-chat turns must run one after another so later messages do not read
-    # half-written history from an earlier in-flight turn.
+    # comment: same-chat turn normalization and history updates must stay serialized
+    # so album buffers and session writes never race within one chat.
     async with chat_locks[chat_key]:
         session = get_session(chat_key=chat_key)
         # comment: `turn` is the normalized user input for one model run, like the
@@ -113,18 +140,37 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
         if turn is None:
             return
-        stored = await runtime.store_turn_locked(
-            current_client,
+        stored = await runtime.append_user_turn(
             session,
-            config=config,
-            turn=turn,
+            question=turn["prompt"],
+            attachments=turn["attachments"] or None,
+            message_ids=turn["message_ids"],
         )
-        if stored:
-            await runtime.process_turn_locked(
+    if not stored:
+        return
+    current_timer = debounce_timers.pop(chat_key, None)
+    if current_timer is not None:
+        current_timer.cancel()
+    loop = asyncio.get_running_loop()
+    # comment: keep the scheduled handle so the async callback can prove it is still
+    # the latest debounce generation for this chat before processing history.
+    handle_ref: dict[str, asyncio.TimerHandle] = {}
+
+    def start_debounce_timer() -> None:
+        task = asyncio.create_task(
+            _handle_debounce_timer(
                 current_client,
-                session,
+                chat_key=chat_key,
                 turn=turn,
+                handle=handle_ref["handle"],
             )
+        )
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    handle = loop.call_later(DEBOUNCE_SECONDS, start_debounce_timer)
+    handle_ref["handle"] = handle
+    debounce_timers[chat_key] = handle
 
 
 @client.event(MessageEv)
@@ -137,12 +183,20 @@ async def _on_message(current_client: NewAClient, event: MessageEv) -> None:
 
 
 async def main(this_config: Config | None = None) -> None:
-    global client, config, tasks, chat_locks, pending_albums, notifications_stop
+    global \
+        client, \
+        config, \
+        tasks, \
+        chat_locks, \
+        debounce_timers, \
+        pending_albums, \
+        notifications_stop
 
     config = this_config or build_config()
     login.configure_logging(config.log_file)
     tasks = set()
     chat_locks = defaultdict(asyncio.Lock)
+    debounce_timers = {}
     pending_albums = {}
     notifications_stop = asyncio.Event()
     notify_task = asyncio.create_task(_start_polling_notifications())
