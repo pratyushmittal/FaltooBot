@@ -1,10 +1,7 @@
-import asyncio
 import hashlib
 import json
 from collections.abc import Sequence
-from contextlib import contextmanager
 from pathlib import Path
-from threading import Lock, RLock
 from typing import Any, AsyncIterator, TypeAlias, TypedDict, cast
 from uuid import uuid4
 
@@ -31,9 +28,6 @@ from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 MESSAGES_FILE = "messages.json"
 LAST_USED_FILE = "last_used"
 WORKSPACE_DIR = "workspace"
-_SESSION_LOCKS: dict[str, RLock] = {}
-_SESSION_LOCKS_GUARD = Lock()
-_LAST_USED_LOCK = Lock()
 
 
 class MessagesJson(TypedDict):
@@ -63,7 +57,7 @@ def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
     return f"{prefix}@{name}-{digest}"
 
 
-def _messages_json(
+def _normalized_messages_json(
     chat_key: str,
     session_id: str,
     payload: dict[str, Any],
@@ -90,24 +84,11 @@ def _messages_json(
     }
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_atomic(path: Path, value: str) -> None:
+def _write_text_atomic(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
     temp.write_text(value, encoding="utf-8")
     temp.replace(path)
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any] | MessagesJson) -> None:
-    _write_atomic(
-        path,
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-    )
 
 
 def get_last_used_session_id(chat_key: str) -> str | None:
@@ -128,32 +109,6 @@ def get_messages_path(session: Session) -> Path:
     return app_root() / "sessions" / chat_key / session_id / MESSAGES_FILE
 
 
-def _session_lock(chat_key: str, session_id: str) -> RLock:
-    key = str(get_messages_path((chat_key, session_id)).parent)
-    with _SESSION_LOCKS_GUARD:
-        if key not in _SESSION_LOCKS:
-            _SESSION_LOCKS[key] = RLock()
-        return _SESSION_LOCKS[key]
-
-
-@contextmanager
-def _locked_session(session: Session):
-    with _session_lock(*_session_parts(session)):
-        yield
-
-
-class _AsyncSessionLock:
-    def __init__(self, session: Session) -> None:
-        self._lock = _session_lock(*_session_parts(session))
-
-    async def __aenter__(self) -> None:
-        while not self._lock.acquire(blocking=False):
-            await asyncio.sleep(0.01)
-
-    async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
-        self._lock.release()
-
-
 def get_session(
     chat_key: str,
     session_id: str | None = None,
@@ -163,37 +118,52 @@ def get_session(
     session_id = session_id or get_last_used_session_id(chat_key) or str(uuid4())
     session = (chat_key, session_id)
     messages_path = get_messages_path(session)
-
-    with _locked_session(session):
-        messages_json = _messages_json(
-            chat_key,
-            session_id,
-            _read_json(messages_path),
-            workspace,
-        )
-        messages_path.parent.mkdir(parents=True, exist_ok=True)
-        workspace_path = Path(messages_json["workspace"])
-        workspace_path.mkdir(parents=True, exist_ok=True)
-        # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
-        (workspace_path / "AGENTS.md").touch(exist_ok=True)
-        _write_json_atomic(messages_path, messages_json)
-        with _LAST_USED_LOCK:
-            _write_atomic(
-                app_root() / "sessions" / chat_key / LAST_USED_FILE,
-                f"{session_id}\n",
-            )
+    # comment: load saved state, normalize it, then ensure the workspace and metadata files exist.
+    payload = (
+        json.loads(messages_path.read_text(encoding="utf-8"))
+        if messages_path.exists()
+        else {}
+    )
+    messages_json = _normalized_messages_json(
+        chat_key,
+        session_id,
+        payload,
+        workspace,
+    )
+    messages_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace_path = Path(messages_json["workspace"])
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
+    (workspace_path / "AGENTS.md").touch(exist_ok=True)
+    # comment: update the messages file on disk.
+    _write_text_atomic(
+        messages_path,
+        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
+    )
+    # comment: update the last-used session marker on disk.
+    _write_text_atomic(
+        app_root() / "sessions" / chat_key / LAST_USED_FILE,
+        f"{session_id}\n",
+    )
     return session
 
 
 def get_messages(session: Session) -> MessagesJson:
     chat_key, session_id = _session_parts(session)
     messages_path = get_messages_path(session)
-    with _locked_session(session):
-        payload = _read_json(messages_path)
-        if not payload:
-            get_session(chat_key=chat_key, session_id=session_id)
-            payload = _read_json(messages_path)
-        return _messages_json(chat_key, session_id, payload)
+    payload = (
+        json.loads(messages_path.read_text(encoding="utf-8"))
+        if messages_path.exists()
+        else {}
+    )
+    if not payload:
+        get_session(chat_key=chat_key, session_id=session_id)
+        payload = (
+            json.loads(messages_path.read_text(encoding="utf-8"))
+            if messages_path.exists()
+            else {}
+        )
+    return _normalized_messages_json(chat_key, session_id, payload)
 
 
 def get_last_usage(session: Session) -> dict[str, Any] | None:
@@ -213,8 +183,10 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
         session_id=session_id,
         workspace=Path(messages_json["workspace"]),
     )
-    with _locked_session(session):
-        _write_json_atomic(get_messages_path(session), messages_json)
+    _write_text_atomic(
+        get_messages_path(session),
+        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
+    )
 
 
 async def _upload_attachments(
@@ -262,6 +234,95 @@ def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
     return ""
 
 
+async def append_user_turn(
+    session: Session,
+    *,
+    question: str,
+    attachments: Sequence[Attachment] | None = None,
+    message_ids: Sequence[str] = (),
+) -> bool:
+    config = build_config()
+    # comment: load the current session payload and skip fully-duplicate message ids.
+    messages_json = get_messages(session)
+    fresh_message_ids = [
+        item for item in message_ids if item not in messages_json["message_ids"]
+    ]
+    if message_ids and not fresh_message_ids:
+        return False
+
+    # comment: convert the user turn into the exact content shape expected by the model.
+    workspace = Path(messages_json["workspace"])
+    text = question.strip()
+    if attachments:
+        content: str | list[dict[str, Any]] = []
+        if text:
+            content.append({"type": "input_text", "text": text})
+        content.extend(await _upload_attachments(attachments, workspace, config))
+        if not content:
+            raise ValueError("Question or attachments required")
+    else:
+        if not text:
+            raise ValueError("Question or attachments required")
+        content = text
+
+    # comment: append the normalized user turn and persist the updated session history.
+    messages_json["messages"].append(
+        {
+            "type": "message",
+            "role": "user",
+            "content": content,
+        }
+    )
+    messages_json["message_ids"].extend(fresh_message_ids)
+    set_messages(session, messages_json)
+    return True
+
+
+async def _get_answer_streaming_from_history(
+    session: Session,
+) -> AsyncIterator[StreamingReplyItem]:
+    config = build_config()
+    messages_json = get_messages(session)
+    workspace = Path(messages_json["workspace"])
+    chat_key = session[0]
+    tools: list[Tool] = [
+        get_run_shell_call_tool(workspace),
+        get_load_image_tool(workspace),
+    ]
+    available_skills, load_skill_tool = get_load_skill_tool(
+        workspace,
+        chat_key=chat_key,
+    )
+    if available_skills:
+        tools.append(load_skill_tool)
+
+    instructions = messages_json["system_prompt"]
+    if not instructions:
+        instructions = get_system_instructions(config, chat_key, workspace)
+        messages_json["system_prompt"] = instructions
+    set_messages(session, messages_json)
+
+    async for event in get_streaming_reply(
+        instructions=instructions,
+        input=messages_json["messages"],
+        tools=tools,
+        prompt_cache_key=messages_json["id"],
+    ):
+        if event.type in {"function_call_output", "response.completed"}:
+            set_messages(session, messages_json)
+        yield event
+
+
+async def get_answer_from_history(session: Session) -> str:
+    answer = ""
+    async for event in _get_answer_streaming_from_history(session):
+        if event.type == "response.completed":
+            answer = _assistant_text_from_completed_event(
+                cast(ResponseCompletedEvent, event)
+            )
+    return answer
+
+
 async def get_answer(
     session: Session,
     question: str,
@@ -288,60 +349,14 @@ async def get_answer_streaming(
     attachments: Sequence[Attachment] | None = None,
     message_id: str | None = None,
 ) -> AsyncIterator[StreamingReplyItem]:
-    config = build_config()
+    stored = await append_user_turn(
+        session,
+        question=question,
+        attachments=attachments,
+        message_ids=[message_id] if message_id else [],
+    )
+    if message_id and not stored:
+        return
 
-    async with _AsyncSessionLock(session):
-        messages_json = get_messages(session)
-        if message_id and message_id in messages_json["message_ids"]:
-            return
-
-        chat_key = session[0]
-        workspace = Path(messages_json["workspace"])
-        text = question.strip()
-        if attachments:
-            content: str | list[dict[str, Any]] = []
-            if text:
-                content.append({"type": "input_text", "text": text})
-            content.extend(await _upload_attachments(attachments, workspace, config))
-        else:
-            content = text
-        if not content:
-            raise ValueError("Question or attachments required")
-
-        messages_json["messages"].append(
-            {
-                "type": "message",
-                "role": "user",
-                "content": content,
-            }
-        )
-        if message_id:
-            messages_json["message_ids"].append(message_id)
-
-        tools: list[Tool] = [
-            get_run_shell_call_tool(Path(messages_json["workspace"])),
-            get_load_image_tool(Path(messages_json["workspace"])),
-        ]
-        available_skills, load_skill_tool = get_load_skill_tool(
-            workspace,
-            chat_key=chat_key,
-        )
-        if available_skills:
-            # comment: only expose the skill-loading tool when there is at least one local skill to load.
-            tools.append(load_skill_tool)
-
-        instructions = messages_json["system_prompt"]
-        if not instructions:
-            instructions = get_system_instructions(config, chat_key, workspace)
-            messages_json["system_prompt"] = instructions
-        set_messages(session, messages_json)
-
-        async for event in get_streaming_reply(
-            instructions=instructions,
-            input=messages_json["messages"],
-            tools=tools,
-            prompt_cache_key=messages_json["id"],
-        ):
-            if event.type in {"function_call_output", "response.completed"}:
-                set_messages(session, messages_json)
-            yield event
+    async for event in _get_answer_streaming_from_history(session):
+        yield event
