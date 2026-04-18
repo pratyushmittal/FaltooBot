@@ -1055,6 +1055,14 @@ async def test_review_refresh_files_binding_reloads_unstaged_and_untracked_tabs(
             "gamma.py",
         }
 
+        gamma_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "gamma.py"
+        )
+        gamma_viewer = gamma_pane.query_one(ReviewDiffView)
+        gamma_viewer.focus()
+        await pilot.pause(0)
+        assert app.screen.focused is gamma_viewer
+
         (workspace / "delta.py").write_text('value = "delta"\n', encoding="utf-8")
 
         await pilot.press("R")
