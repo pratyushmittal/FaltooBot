@@ -10,7 +10,7 @@ from neonize.utils.jid import Jid2String, build_jid
 
 from faltoobot import notify_queue
 from faltoobot.config import Config, build_config, normalize_chat
-from faltoobot.sessions import get_session
+from faltoobot.sessions import append_user_turn, get_session
 
 from . import login, runtime
 
@@ -64,7 +64,7 @@ async def _start_polling_notifications() -> None:
                         "attachments": [],
                         "audio": None,
                     }
-                    stored = await runtime.append_user_turn(
+                    stored = await append_user_turn(
                         session,
                         question=turn["prompt"],
                         attachments=turn["attachments"] or None,
@@ -103,14 +103,8 @@ async def _handle_debounce_timer(
     *,
     chat_key: str,
     turn: runtime.Turn,
-    handle: asyncio.TimerHandle,
 ) -> None:
     async with chat_locks[chat_key]:
-        # comment: a timer callback can fire just before a newer message replaces the
-        # chat's debounce handle. Only the currently registered handle may process.
-        if debounce_timers.get(chat_key) is not handle:
-            return
-        debounce_timers.pop(chat_key, None)
         session = get_session(chat_key=chat_key)
         await runtime.process_turn_locked(
             current_client,
@@ -140,7 +134,7 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
         if turn is None:
             return
-        stored = await runtime.append_user_turn(
+        stored = await append_user_turn(
             session,
             question=turn["prompt"],
             attachments=turn["attachments"] or None,
@@ -152,9 +146,6 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
     if current_timer is not None:
         current_timer.cancel()
     loop = asyncio.get_running_loop()
-    # comment: keep the scheduled handle so the async callback can prove it is still
-    # the latest debounce generation for this chat before processing history.
-    handle_ref: dict[str, asyncio.TimerHandle] = {}
 
     def start_debounce_timer() -> None:
         task = asyncio.create_task(
@@ -162,15 +153,12 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
                 current_client,
                 chat_key=chat_key,
                 turn=turn,
-                handle=handle_ref["handle"],
             )
         )
         tasks.add(task)
         task.add_done_callback(tasks.discard)
 
-    handle = loop.call_later(DEBOUNCE_SECONDS, start_debounce_timer)
-    handle_ref["handle"] = handle
-    debounce_timers[chat_key] = handle
+    debounce_timers[chat_key] = loop.call_later(DEBOUNCE_SECONDS, start_debounce_timer)
 
 
 @client.event(MessageEv)

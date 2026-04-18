@@ -31,6 +31,7 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
+from faltoobot import sessions
 from faltoobot.sessions import get_messages, get_session, set_messages
 from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
@@ -354,7 +355,7 @@ async def handle_message(
         )
         if turn is None:
             return
-        stored = await runtime.append_user_turn(
+        stored = await sessions.append_user_turn(
             session,
             question=turn["prompt"],
             attachments=turn["attachments"] or None,
@@ -842,7 +843,7 @@ async def test_process_message_handles_whatsapp_image_turns(
     async def fake_get_answer(session, **_: object) -> str:
         return answer
 
-    monkeypatch.setattr(runtime, "append_user_turn", recording_append_user_turn(calls))
+    monkeypatch.setattr(sessions, "append_user_turn", recording_append_user_turn(calls))
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     await handle_message(
@@ -905,7 +906,7 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     async def fake_get_answer(session, **_: object) -> str:
         return "done"
 
-    monkeypatch.setattr(runtime, "append_user_turn", recording_append_user_turn(calls))
+    monkeypatch.setattr(sessions, "append_user_turn", recording_append_user_turn(calls))
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     await handle_message(
@@ -985,7 +986,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
         "attachments": [],
         "audio": None,
     }
-    stored = await runtime.append_user_turn(
+    stored = await sessions.append_user_turn(
         session,
         question=turn["prompt"],
         attachments=turn["attachments"] or None,
@@ -1215,7 +1216,7 @@ async def test_handle_message_debounces_reply_until_timer_fires(
         calls.append("process")
 
     monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
-    monkeypatch.setattr(runtime, "append_user_turn", fake_store_turn_locked)
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
     monkeypatch.setattr(runtime, "process_turn_locked", fake_process_turn_locked)
 
     await whatsapp_app._handle_message(cast(NewAClient, FakePresenceClient()), event)
@@ -1271,7 +1272,7 @@ async def test_handle_message_schedules_debounce_outside_chat_lock(
         return True
 
     monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
-    monkeypatch.setattr(runtime, "append_user_turn", fake_store_turn_locked)
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
 
     await whatsapp_app._handle_message(cast(NewAClient, FakePresenceClient()), event)
 
@@ -1332,7 +1333,7 @@ async def test_handle_message_resets_existing_debounce_timer(
         processed.append(str(cast(runtime.Turn, kwargs["turn"])["prompt"]))
 
     monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
-    monkeypatch.setattr(runtime, "append_user_turn", fake_store_turn_locked)
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
     monkeypatch.setattr(runtime, "process_turn_locked", fake_process_turn_locked)
 
     await whatsapp_app._handle_message(
@@ -1394,7 +1395,7 @@ async def test_debounce_timer_processes_under_same_chat_lock(
         seen.append(whatsapp_app.chat_locks[chat_key].locked())
 
     monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
-    monkeypatch.setattr(runtime, "append_user_turn", fake_store_turn_locked)
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
     monkeypatch.setattr(runtime, "process_turn_locked", fake_process_turn_locked)
 
     await whatsapp_app._handle_message(cast(NewAClient, FakePresenceClient()), event)
@@ -1436,7 +1437,7 @@ async def test_process_turn_locked_handles_notification_turn_answers(
         "audio": None,
     }
 
-    stored = await runtime.append_user_turn(
+    stored = await sessions.append_user_turn(
         session,
         question=turn["prompt"],
         attachments=turn["attachments"] or None,
@@ -1490,9 +1491,7 @@ async def test_start_polling_notifications_claims_and_acks(
     async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
         whatsapp_app.notifications_stop.set()
 
-    monkeypatch.setattr(
-        whatsapp_app.runtime, "append_user_turn", fake_store_turn_locked
-    )
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
     monkeypatch.setattr(
         whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
     )

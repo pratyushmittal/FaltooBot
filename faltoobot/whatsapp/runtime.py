@@ -21,7 +21,6 @@ from faltoobot.config import Config, config_status_text, normalize_chat
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
-    append_user_turn as _append_user_turn,
     get_answer,
     get_last_usage,
     get_messages,
@@ -47,7 +46,6 @@ IMAGE_SUFFIXES = {
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
 SLASH_COMMANDS = {"/help", "/status", "/reset"}
-append_user_turn = _append_user_turn
 
 
 HELP_TEXT = (
