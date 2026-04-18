@@ -60,12 +60,18 @@ async def _start_polling_notifications() -> None:
                         "attachments": [],
                         "audio": None,
                     }
-                    await runtime.process_turn_locked(
+                    stored = await runtime.store_turn_locked(
                         client,
                         session,
                         config=config,
                         turn=turn,
                     )
+                    if stored:
+                        await runtime.process_turn_locked(
+                            client,
+                            session,
+                            turn=turn,
+                        )
             except Exception:
                 notify_queue.requeue_notification(path)
                 raise
@@ -107,12 +113,18 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
         if turn is None:
             return
-        await runtime.process_turn_locked(
+        stored = await runtime.store_turn_locked(
             current_client,
             session,
             config=config,
             turn=turn,
         )
+        if stored:
+            await runtime.process_turn_locked(
+                current_client,
+                session,
+                turn=turn,
+            )
 
 
 @client.event(MessageEv)

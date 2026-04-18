@@ -297,24 +297,14 @@ async def _handle_slash_command(
         await client.reply_message("Memory cleared for this chat.", event)
 
 
-async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
+async def store_turn_locked(  # noqa: C901, PLR0912, PLR0915
     client: NewAClient,
     session: tuple[str, str],
     *,
     config: Config,
     turn: "Turn",
-) -> None:
-    """Process one already-normalized chat turn while the per-chat lock is held.
-
-    By the time this function runs, `process_message()` has already decided which
-    WhatsApp events belong to this turn. This function then:
-    - deduplicates message ids and persists them to the session
-    - logs a small summary of what arrived
-    - handles slash commands like `/help` and `/reset`
-    - keeps the chat in typing state while the model is working
-    - transcribes audio when needed
-    - gets the assistant answer and sends it back to WhatsApp
-    """
+) -> bool:
+    """Persist one already-normalized turn while the per-chat lock is held."""
     event = turn["event"]
     chat = turn["chat"]
     source = event.Info.MessageSource if event is not None else None
@@ -327,7 +317,6 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
     audio = turn["audio"]
 
     messages_json = get_messages(session)
-    workspace = Path(messages_json["workspace"])
     fresh_message_ids = [
         item for item in message_ids if item not in messages_json["message_ids"]
     ]
@@ -338,9 +327,7 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
             ", ".join(message_ids),
             chat_jid,
         )
-        return
-    messages_json["message_ids"].extend(fresh_message_ids)
-    set_messages(session, messages_json)
+        return False
 
     summary = prompt
     if not summary:
@@ -362,16 +349,17 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
         and audio is None
         and prompt in SLASH_COMMANDS
     ):
-        return await _handle_slash_command(
+        messages_json["message_ids"].extend(fresh_message_ids)
+        set_messages(session, messages_json)
+        await _handle_slash_command(
             client,
             session=session,
             config=config,
             turn=turn,
             messages_json=messages_json,
         )
+        return False
 
-    typing_stop = asyncio.Event()
-    typing_task = asyncio.create_task(keep_chat_typing(client, chat, typing_stop))
     try:
         if event is not None and not prompt and audio is not None:
             prompt = await audio_prompt(
@@ -385,23 +373,53 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
             session,
             question=_prompt_with_reply_context(prompt, quoted_message_text),
             attachments=attachments or None,
+            message_ids=fresh_message_ids,
         )
         if not stored:
-            return
-        answer = await get_answer(session)
-        if answer and answer.strip() != "[noreply]":
-            await send_text(
-                client, chat=chat, text=answer, event=event, workspace=workspace
+            logger.info(
+                "Skipping duplicate message%s %s from %s",
+                "" if len(message_ids) == 1 else "s",
+                ", ".join(message_ids),
+                chat_jid,
             )
+        return stored
     except AudioError as exc:
         logger.info(
             "Failed to transcribe audio %s: %s",
             event.Info.ID if event is not None else "<notify>",
             exc,
         )
+        messages_json["message_ids"].extend(fresh_message_ids)
+        set_messages(session, messages_json)
         await send_text(
-            client, chat=chat, text=str(exc), event=event, workspace=workspace
+            client,
+            chat=chat,
+            text=str(exc),
+            event=event,
+            workspace=Path(messages_json["workspace"]),
         )
+        return False
+
+
+async def process_turn_locked(
+    client: NewAClient,
+    session: tuple[str, str],
+    *,
+    turn: "Turn",
+) -> None:
+    """Reply to one already-stored turn while the per-chat lock is held."""
+    event = turn["event"]
+    chat = turn["chat"]
+    workspace = Path(get_messages(session)["workspace"])
+
+    typing_stop = asyncio.Event()
+    typing_task = asyncio.create_task(keep_chat_typing(client, chat, typing_stop))
+    try:
+        answer = await get_answer(session)
+        if answer and answer.strip() != "[noreply]":
+            await send_text(
+                client, chat=chat, text=answer, event=event, workspace=workspace
+            )
     except asyncio.CancelledError:
         await send_text(
             client,

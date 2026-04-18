@@ -354,7 +354,11 @@ async def handle_message(
         )
         if turn is None:
             return
-        await runtime.process_turn_locked(client, session, config=config, turn=turn)
+        stored = await runtime.store_turn_locked(
+            client, session, config=config, turn=turn
+        )
+        if stored:
+            await runtime.process_turn_locked(client, session, turn=turn)
 
 
 def png_bytes() -> bytes:
@@ -1089,7 +1093,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
     session = get_session(chat_key="15555550123@s.whatsapp.net")
     event = fake_event(message_id="status-1", text="/status")
 
-    await runtime.process_turn_locked(
+    stored = await runtime.store_turn_locked(
         cast(NewAClient, client),
         session,
         config=config,
@@ -1104,6 +1108,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
         },
     )
 
+    assert stored is False
     assert client.replies == [
         "\n".join(
             [
@@ -1268,20 +1273,27 @@ async def test_process_turn_locked_sends_notification_turn(
         return "queued reply"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    turn: runtime.Turn = {
+        "event": None,
+        "chat": jid("15555550123", "s.whatsapp.net"),
+        "message_ids": ["notify_1"],
+        "prompt": "queued user message",
+        "quoted_message_text": "",
+        "attachments": [],
+        "audio": None,
+    }
 
-    await runtime.process_turn_locked(
+    stored = await runtime.store_turn_locked(
         cast(NewAClient, client),
         session,
         config=config,
-        turn={
-            "event": None,
-            "chat": jid("15555550123", "s.whatsapp.net"),
-            "message_ids": ["notify_1"],
-            "prompt": "queued user message",
-            "quoted_message_text": "",
-            "attachments": [],
-            "audio": None,
-        },
+        turn=turn,
+    )
+    assert stored is True
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        turn=turn,
     )
 
     assert seen["question"] == "queued user message"
@@ -1316,10 +1328,16 @@ async def test_start_polling_notifications_claims_and_acks(
         ],
     )
 
-    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+    async def fake_store_turn_locked(*args: object, **kwargs: Any) -> bool:
         calls.append(str(kwargs["turn"]["prompt"]))
+        return True
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
         whatsapp_app.notifications_stop.set()
 
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "store_turn_locked", fake_store_turn_locked
+    )
     monkeypatch.setattr(
         whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
     )
@@ -1346,6 +1364,7 @@ async def test_start_polling_notifications_claims_and_acks(
 async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     client = FakePresenceClient()
     config = make_config(tmp_path, allowed_chats=set())
     session = get_session(chat_key="15555550123@s.whatsapp.net")
@@ -1354,20 +1373,27 @@ async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
         return "[noreply]"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    turn: runtime.Turn = {
+        "event": None,
+        "chat": jid("15555550123", "s.whatsapp.net"),
+        "message_ids": ["notify_2"],
+        "prompt": "queued user message",
+        "quoted_message_text": "",
+        "attachments": [],
+        "audio": None,
+    }
 
-    await runtime.process_turn_locked(
+    stored = await runtime.store_turn_locked(
         cast(NewAClient, client),
         session,
         config=config,
-        turn={
-            "event": None,
-            "chat": jid("15555550123", "s.whatsapp.net"),
-            "message_ids": ["notify_2"],
-            "prompt": "queued user message",
-            "quoted_message_text": "",
-            "attachments": [],
-            "audio": None,
-        },
+        turn=turn,
+    )
+    assert stored is True
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        turn=turn,
     )
 
     assert client.sent_messages == []
