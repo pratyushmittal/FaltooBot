@@ -2,6 +2,17 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.0.4 — 2026-04-18
+
+### Added
+- Added `textual-speedups` to improve Textual rendering performance.
+
+### Changed
+- Refreshed locked dependencies.
+
+### Fixed
+- Review comments now show real file line numbers without slowing diff loading.
+
 ## 3.0.3 — 2026-04-18
 
 ### Fixed
