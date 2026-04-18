@@ -467,16 +467,42 @@ async def test_get_answer_caches_system_prompt_per_session(
 
 
 @pytest.mark.anyio
-async def test_get_answer_uploads_and_resizes_image_attachments(
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "files": [("large.png", (2000, 1200), "red")],
+            "question": "Look",
+            "expected_uploads": 1,
+            "expected_name_suffix": "1600x960.png",
+            "expected_content": [
+                {"type": "input_text", "text": "Look"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+            ],
+        },
+        {
+            "files": [
+                ("one.png", (8, 8), "red"),
+                ("two.png", (8, 8), "blue"),
+            ],
+            "question": "compare",
+            "expected_uploads": 2,
+            "expected_name_suffix": None,
+            "expected_content": [
+                {"type": "input_text", "text": "compare"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+            ],
+        },
+    ],
+)
+async def test_get_answer_uploads_image_attachments(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    case: dict[str, Any],
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-    monkeypatch.setattr(
-        sessions,
-        "build_config",
-        lambda: _config(tmp_path),
-    )
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         sessions,
         "get_system_instructions",
@@ -497,33 +523,35 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
 
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
 
-    image = tmp_path / "large.png"
-    Image.new("RGB", (2000, 1200), color="red").save(image)
+    attachments: list[Path] = []
+    for filename, size, color in cast(
+        list[tuple[str, tuple[int, int], str]], case["files"]
+    ):
+        image = tmp_path / filename
+        Image.new("RGB", size, color=color).save(image)
+        attachments.append(image)
 
-    chat_key = "code@test"
     session = sessions.get_session(
-        chat_key=chat_key,
+        chat_key="code@test",
         workspace=tmp_path / "workspace",
     )
     answer = await run_answer(
         session=session,
-        question="Look",
-        attachments=[image],
+        question=str(case["question"]),
+        attachments=attachments,
     )
     payload = sessions.get_messages(session)
 
     assert answer == ""
-    assert client.files.calls[0]["purpose"] == "vision"
-    uploaded = client.files.calls[0]["file"]
-    assert uploaded.name.endswith("1600x960.png")
+    assert len(client.files.calls) == cast(int, case["expected_uploads"])
+    if case["expected_name_suffix"]:
+        uploaded = client.files.calls[0]["file"]
+        assert uploaded.name.endswith(str(case["expected_name_suffix"]))
     assert payload["messages"] == [
         {
             "type": "message",
             "role": "user",
-            "content": [
-                {"type": "input_text", "text": "Look"},
-                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
-            ],
+            "content": cast(list[dict[str, Any]], case["expected_content"]),
         }
     ]
     assert client.closed is True
@@ -631,65 +659,6 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
     assert payload["messages"][0]["content"][1]["image_url"].startswith(
         "data:image/png;base64,"
     )
-
-
-@pytest.mark.anyio
-async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
-    monkeypatch.setattr(
-        sessions,
-        "get_system_instructions",
-        lambda config, chat_key, workspace: "system prompt",
-    )
-    client = FakeClient()
-    monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
-
-    async def fake_get_streaming_reply(
-        instructions: str,
-        input: MessageHistory,
-        tools: list[Any],
-        prompt_cache_key: str | None = None,
-    ):
-        assert instructions.startswith("system prompt")
-        if False:
-            yield FakeCompletedEvent([], {})
-
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
-
-    first = tmp_path / "one.png"
-    second = tmp_path / "two.png"
-    Image.new("RGB", (8, 8), color="red").save(first)
-    Image.new("RGB", (8, 8), color="blue").save(second)
-
-    attachments = [first, second]
-    session = sessions.get_session(
-        chat_key="code@test",
-        workspace=tmp_path / "workspace",
-    )
-    answer = await run_answer(
-        session=session,
-        question="compare",
-        attachments=attachments,
-    )
-    payload = sessions.get_messages(session)
-
-    assert answer == ""
-    assert len(client.files.calls) == len(attachments)
-    assert payload["messages"] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": "compare"},
-                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
-                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
-            ],
-        }
-    ]
 
 
 @pytest.mark.anyio

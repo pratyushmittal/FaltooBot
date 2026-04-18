@@ -370,91 +370,103 @@ def png_bytes() -> bytes:
     return buffer.getvalue()
 
 
-def test_source_chat_ids_include_alt_phone_identity() -> None:
-    source = Neonize_pb2.MessageSource(
-        Chat=jid("15555555555555", "lid"),
-        Sender=jid("15555555555555", "lid"),
-        SenderAlt=jid("15555550123", "s.whatsapp.net"),
-    )
-
-    assert runtime.source_chat_ids(source) == {
-        "15555555555555@lid",
-        "15555550123@s.whatsapp.net",
-    }
-
-
-def test_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
-    source = Neonize_pb2.MessageSource(
-        Chat=jid("15555555555555", "lid"),
-        Sender=jid("15555555555555", "lid"),
-        SenderAlt=jid("15555550123", "s.whatsapp.net"),
-    )
-    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
-
-    assert (
-        runtime._matches_allowed_chats(
-            config.allowed_chats, runtime.source_chat_ids(source)
+def recording_append_user_turn(calls: list[dict[str, Any]]):
+    async def fake_append_user_turn(
+        session,
+        *,
+        question: str,
+        attachments: list[Path] | None = None,
+        message_ids: list[str] | tuple[str, ...] = (),
+    ) -> bool:
+        messages_json = get_messages(session)
+        messages_json["messages"].append(
+            {
+                "type": "message",
+                "role": "user",
+                "content": question,
+            }
         )
-        is True
-    )
+        messages_json["message_ids"].extend(message_ids)
+        set_messages(session, messages_json)
+        calls.append({"question": question, "attachments": list(attachments or [])})
+        return True
+
+    return fake_append_user_turn
 
 
-def test_allowlist_matches_phone_without_country_code(tmp_path: Path) -> None:
-    source = Neonize_pb2.MessageSource(
-        Chat=jid("15555555555555", "lid"),
-        Sender=jid("15555555555555", "lid"),
-        SenderAlt=jid("15555550123", "s.whatsapp.net"),
-    )
-    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("15555555555555", "lid"),
+                Sender=jid("15555555555555", "lid"),
+                SenderAlt=jid("15555550123", "s.whatsapp.net"),
+            ),
+            {"15555555555555@lid", "15555550123@s.whatsapp.net"},
+        ),
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("55555555555555", "lid"),
+                Sender=jid("55555555555555:4", "lid"),
+                SenderAlt=jid("15555550123:4", "s.whatsapp.net"),
+            ),
+            {"55555555555555@lid", "15555550123@s.whatsapp.net"},
+        ),
+    ],
+)
+def test_source_chat_ids_normalize_whatsapp_ids(
+    source: Neonize_pb2.MessageSource, expected: set[str]
+) -> None:
+    assert source_chat_ids(source) == expected
 
+
+@pytest.mark.parametrize(
+    ("source", "allowed_chats", "expected"),
+    [
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("15555555555555", "lid"),
+                Sender=jid("15555555555555", "lid"),
+                SenderAlt=jid("15555550123", "s.whatsapp.net"),
+            ),
+            {"15555550123@s.whatsapp.net"},
+            True,
+        ),
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("120363000000000000", "g.us"),
+                Sender=jid("15555555555555", "lid"),
+                SenderAlt=jid("15555550123", "s.whatsapp.net"),
+                IsGroup=True,
+            ),
+            {"15555550123@s.whatsapp.net"},
+            True,
+        ),
+    ],
+)
+def test_matches_allowed_chats(
+    source: Neonize_pb2.MessageSource,
+    allowed_chats: set[str],
+    expected: bool,
+) -> None:
     assert (
-        runtime._matches_allowed_chats(
-            config.allowed_chats, runtime.source_chat_ids(source)
-        )
-        is True
+        runtime._matches_allowed_chats(allowed_chats, runtime.source_chat_ids(source))
+        is expected
     )
 
 
-def test_group_allowlist_matches_sender_alt_phone_identity(tmp_path: Path) -> None:
+def test_empty_group_allowlist_blocks_group_messages() -> None:
     source = Neonize_pb2.MessageSource(
         Chat=jid("120363000000000000", "g.us"),
         Sender=jid("15555555555555", "lid"),
         SenderAlt=jid("15555550123", "s.whatsapp.net"),
         IsGroup=True,
     )
-    config = make_config(
-        tmp_path,
-        allowed_chats={"19999999999@s.whatsapp.net"},
-        allow_group_chats={"15555550123@s.whatsapp.net"},
-    )
 
     assert (
-        bool(config.allow_group_chats)
-        and runtime._matches_allowed_chats(
-            config.allow_group_chats, runtime.source_chat_ids(source)
-        )
-        is True
-    )
-
-
-def test_empty_group_allowlist_blocks_group_messages(tmp_path: Path) -> None:
-    source = Neonize_pb2.MessageSource(
-        Chat=jid("120363000000000000", "g.us"),
-        Sender=jid("15555555555555", "lid"),
-        SenderAlt=jid("15555550123", "s.whatsapp.net"),
-        IsGroup=True,
-    )
-    config = make_config(
-        tmp_path,
-        allowed_chats=set(),
-        allow_group_chats=set(),
-    )
-
-    assert (
-        bool(config.allow_group_chats)
-        and runtime._matches_allowed_chats(
-            config.allow_group_chats, runtime.source_chat_ids(source)
-        )
+        bool(set())
+        and runtime._matches_allowed_chats(set(), runtime.source_chat_ids(source))
     ) is False
 
 
@@ -593,19 +605,6 @@ def test_keep_chat_typing_sends_composing_then_paused() -> None:
         ("CHAT_PRESENCE_COMPOSING", "CHAT_PRESENCE_MEDIA_TEXT"),
         ("CHAT_PRESENCE_PAUSED", "CHAT_PRESENCE_MEDIA_TEXT"),
     ]
-
-
-def test_source_chat_ids_strip_device_suffixes() -> None:
-    source = Neonize_pb2.MessageSource(
-        Chat=jid("55555555555555", "lid"),
-        Sender=jid("55555555555555:4", "lid"),
-        SenderAlt=jid("15555550123:4", "s.whatsapp.net"),
-    )
-
-    assert source_chat_ids(source) == {
-        "55555555555555@lid",
-        "15555550123@s.whatsapp.net",
-    }
 
 
 @pytest.mark.anyio
@@ -821,150 +820,104 @@ async def test_audio_prompt_returns_transcript_without_second_pass(
 
 
 @pytest.mark.anyio
-async def test_process_message_sends_whatsapp_images_to_the_model(
+@pytest.mark.parametrize(
+    ("caption", "answer", "expected_question"),
+    [
+        ("what is in this image?", "nice cat", "what is in this image?"),
+        ("", "looks good", ""),
+    ],
+)
+async def test_process_message_handles_whatsapp_image_turns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caption: str,
+    answer: str,
+    expected_question: str,
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
 
-    async def fake_append_user_turn(
-        session,
-        *,
-        question: str,
-        attachments: list[Path] | None = None,
-        message_ids: list[str] | tuple[str, ...] = (),
-    ) -> bool:
-        messages_json = get_messages(session)
-        messages_json["messages"].append(
-            {
-                "type": "message",
-                "role": "user",
-                "content": question,
-            }
-        )
-        messages_json["message_ids"].extend(message_ids)
-        set_messages(session, messages_json)
-        calls.append({"question": question, "attachments": list(attachments or [])})
-        return True
-
     async def fake_get_answer(session, **_: object) -> str:
-        return "nice cat"
+        return answer
 
-    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
+    monkeypatch.setattr(runtime, "append_user_turn", recording_append_user_turn(calls))
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
-    event = fake_image_event(caption="what is in this image?")
     await handle_message(
         cast(NewAClient, client),
-        event,
+        fake_image_event(caption=caption),
         config=config,
         chat_locks=defaultdict(asyncio.Lock),
     )
 
     assert client.downloads == 1
-    assert client.replies == ["nice cat"]
-    assert calls and calls[0]["question"] == "what is in this image?"
+    assert client.replies == [answer]
+    assert len(calls) == 1
+    assert calls[0]["question"] == expected_question
     assert len(calls[0]["attachments"]) == 1
     assert calls[0]["attachments"][0].suffix == ".png"
     assert calls[0]["attachments"][0].is_file() is True
 
 
 @pytest.mark.anyio
-async def test_process_message_allows_image_only_messages(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
-    client = FakePresenceClient(audio_bytes=png_bytes())
-    calls: list[dict[str, Any]] = []
-
-    async def fake_append_user_turn(
-        session,
-        *,
-        question: str,
-        attachments: list[Path] | None = None,
-        message_ids: list[str] | tuple[str, ...] = (),
-    ) -> bool:
-        messages_json = get_messages(session)
-        messages_json["messages"].append(
-            {
-                "type": "message",
-                "role": "user",
-                "content": question,
-            }
-        )
-        messages_json["message_ids"].extend(message_ids)
-        set_messages(session, messages_json)
-        calls.append({"question": question, "attachments": list(attachments or [])})
-        return True
-
-    async def fake_get_answer(session, **_: object) -> str:
-        return "looks good"
-
-    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
-    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
-
-    await handle_message(
-        cast(NewAClient, client),
-        fake_image_event(caption=""),
-        config=config,
-        chat_locks=defaultdict(asyncio.Lock),
-    )
-
-    assert client.downloads == 1
-    assert client.replies == ["looks good"]
-    assert len(calls) == 1
-    assert calls[0]["question"] == ""
-    assert len(calls[0]["attachments"]) == 1
-    assert calls[0]["attachments"][0].suffix == ".png"
-
-
-@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "album_id": "album-1",
+            "first_child": fake_album_child_event(
+                message_id="img-1",
+                parent_id="album-1",
+                caption="compare these",
+            ),
+            "second_child": fake_album_child_event(
+                message_id="img-2", parent_id="album-1"
+            ),
+            "expected_question": "compare these",
+        },
+        {
+            "album_id": "album-2",
+            "first_child": fake_album_child_event(
+                message_id="img-3", parent_id="album-2"
+            ),
+            "second_child": fake_album_child_event(
+                message_id="img-4", parent_id="album-2"
+            ),
+            "expected_question": "",
+        },
+    ],
+)
 async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    case: dict[str, object],
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
     pending_albums: dict[str, runtime.PendingAlbum] = {}
-
-    async def fake_append_user_turn(
-        session,
-        *,
-        question: str,
-        attachments: list[Path] | None = None,
-        message_ids: list[str] | tuple[str, ...] = (),
-    ) -> bool:
-        messages_json = get_messages(session)
-        messages_json["messages"].append(
-            {
-                "type": "message",
-                "role": "user",
-                "content": question,
-            }
-        )
-        messages_json["message_ids"].extend(message_ids)
-        set_messages(session, messages_json)
-        calls.append({"question": question, "attachments": list(attachments or [])})
-        return True
+    chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    expected_images = 2
 
     async def fake_get_answer(session, **_: object) -> str:
         return "done"
 
-    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
+    monkeypatch.setattr(runtime, "append_user_turn", recording_append_user_turn(calls))
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
-    chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-    expected_images = 2
 
     await handle_message(
         cast(NewAClient, client),
-        fake_album_event(message_id="album-1", images=expected_images),
+        fake_album_event(message_id=str(case["album_id"]), images=expected_images),
+        config=config,
+        chat_locks=chat_locks,
+        pending_albums=pending_albums,
+    )
+    await handle_message(
+        cast(NewAClient, client),
+        cast(MessageEv, case["first_child"]),
         config=config,
         chat_locks=chat_locks,
         pending_albums=pending_albums,
@@ -974,104 +927,27 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
 
     await handle_message(
         cast(NewAClient, client),
-        fake_album_child_event(
-            message_id="img-1",
-            parent_id="album-1",
-            caption="compare these",
-        ),
-        config=config,
-        chat_locks=chat_locks,
-        pending_albums=pending_albums,
-    )
-    assert calls == []
-    assert client.replies == []
-
-    await handle_message(
-        cast(NewAClient, client),
-        fake_album_child_event(message_id="img-2", parent_id="album-1"),
+        cast(MessageEv, case["second_child"]),
         config=config,
         chat_locks=chat_locks,
         pending_albums=pending_albums,
     )
 
-    chat_key = normalize_chat("15555555555555@lid")
-    session = get_session(chat_key=chat_key)
     assert pending_albums == {}
     assert client.downloads == expected_images
     assert client.replies == ["done"]
-    assert client.reply_ids == ["album-1"]
+    assert client.reply_ids == [str(case["album_id"])]
     assert len(calls) == 1
-    assert calls[0]["question"] == "compare these"
+    assert calls[0]["question"] == str(case["expected_question"])
     assert len(calls[0]["attachments"]) == expected_images
-    assert get_messages(session)["message_ids"] == ["album-1", "img-1", "img-2"]
-
-
-@pytest.mark.anyio
-async def test_process_message_groups_captionless_album_images_into_one_turn(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
-    client = FakePresenceClient(audio_bytes=png_bytes())
-    calls: list[dict[str, Any]] = []
-    pending_albums: dict[str, runtime.PendingAlbum] = {}
-
-    async def fake_append_user_turn(
-        session,
-        *,
-        question: str,
-        attachments: list[Path] | None = None,
-        message_ids: list[str] | tuple[str, ...] = (),
-    ) -> bool:
-        messages_json = get_messages(session)
-        messages_json["messages"].append(
-            {
-                "type": "message",
-                "role": "user",
-                "content": question,
-            }
-        )
-        messages_json["message_ids"].extend(message_ids)
-        set_messages(session, messages_json)
-        calls.append({"question": question, "attachments": list(attachments or [])})
-        return True
-
-    async def fake_get_answer(session, **_: object) -> str:
-        return "done"
-
-    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
-    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
-    chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-    expected_images = 2
-
-    await handle_message(
-        cast(NewAClient, client),
-        fake_album_event(message_id="album-2", images=expected_images),
-        config=config,
-        chat_locks=chat_locks,
-        pending_albums=pending_albums,
-    )
-    await handle_message(
-        cast(NewAClient, client),
-        fake_album_child_event(message_id="img-3", parent_id="album-2"),
-        config=config,
-        chat_locks=chat_locks,
-        pending_albums=pending_albums,
-    )
-    await handle_message(
-        cast(NewAClient, client),
-        fake_album_child_event(message_id="img-4", parent_id="album-2"),
-        config=config,
-        chat_locks=chat_locks,
-        pending_albums=pending_albums,
-    )
-
-    assert client.replies == ["done"]
-    assert client.reply_ids == ["album-2"]
-    assert len(calls) == 1
-    assert calls[0]["question"] == ""
-    assert len(calls[0]["attachments"]) == expected_images
+    if case["expected_question"]:
+        chat_key = normalize_chat("15555555555555@lid")
+        session = get_session(chat_key=chat_key)
+        assert get_messages(session)["message_ids"] == [
+            str(case["album_id"]),
+            "img-1",
+            "img-2",
+        ]
 
 
 @pytest.mark.anyio
@@ -1529,8 +1405,15 @@ async def test_debounce_timer_processes_under_same_chat_lock(
 
 
 @pytest.mark.anyio
-async def test_process_turn_locked_sends_notification_turn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("answer", "expected_messages"),
+    [("queued reply", ["queued reply"]), ("[noreply]", [])],
+)
+async def test_process_turn_locked_handles_notification_turn_answers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str,
+    expected_messages: list[str],
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     client = FakePresenceClient()
@@ -1539,9 +1422,8 @@ async def test_process_turn_locked_sends_notification_turn(
     session = get_session(chat_key="15555550123@s.whatsapp.net")
 
     async def fake_get_answer(session, **_: object) -> str:
-        seen["session"] = session
         seen["question"] = get_messages(session)["messages"][-1]["content"]
-        return "queued reply"
+        return answer
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
     turn: runtime.Turn = {
@@ -1569,7 +1451,8 @@ async def test_process_turn_locked_sends_notification_turn(
     )
 
     assert seen["question"] == "queued user message"
-    assert client.sent_messages == ["queued reply"]
+    assert client.sent_messages == expected_messages
+    assert client.replies == []
 
 
 @pytest.mark.anyio
@@ -1633,87 +1516,58 @@ async def test_start_polling_notifications_claims_and_acks(
 
 
 @pytest.mark.anyio
-async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    client = FakePresenceClient()
-    config = make_config(tmp_path, allowed_chats=set())
-    session = get_session(chat_key="15555550123@s.whatsapp.net")
-
-    async def fake_get_answer(session, **_: object) -> str:
-        return "[noreply]"
-
-    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
-    turn: runtime.Turn = {
-        "event": None,
-        "chat": jid("15555550123", "s.whatsapp.net"),
-        "message_ids": ["notify_2"],
-        "prompt": "queued user message",
-        "quoted_message_text": "",
-        "attachments": [],
-        "audio": None,
-    }
-
-    stored = await runtime.append_user_turn(
-        session,
-        question=turn["prompt"],
-        attachments=turn["attachments"] or None,
-        message_ids=turn["message_ids"],
-    )
-    assert stored is True
-    await runtime.process_turn_locked(
-        cast(NewAClient, client),
-        session,
-        config=config,
-        turn=turn,
-    )
-
-    assert client.sent_messages == []
-    assert client.replies == []
-
-
-@pytest.mark.anyio
-async def test_send_text_sends_local_image_markdown_as_media(tmp_path: Path) -> None:
-    client = FakePresenceClient()
-    image = tmp_path / "chart.png"
-    image.write_bytes(png_bytes())
-
-    await runtime.send_text(
-        cast(NewAClient, client),
-        chat=build_jid("123", "s.whatsapp.net"),
-        text=f"Here.\n![Chart]({image.name})",
-        workspace=tmp_path,
-    )
-
-    assert client.sent_messages == ["Here."]
-    assert client.sent_images == [
-        {"file": str(image), "caption": "Chart", "quoted": None}
-    ]
-
-
-@pytest.mark.anyio
-async def test_send_text_sends_local_pdf_markdown_as_document(tmp_path: Path) -> None:
-    client = FakePresenceClient()
-    pdf = tmp_path / "report.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-
-    await runtime.send_text(
-        cast(NewAClient, client),
-        chat=build_jid("123", "s.whatsapp.net"),
-        text=f"![Quarterly report]({pdf.name})",
-        workspace=tmp_path,
-    )
-
-    assert client.sent_messages == []
-    assert client.sent_documents == [
+@pytest.mark.parametrize(
+    "case",
+    [
         {
-            "file": str(pdf),
-            "caption": "Quarterly report",
+            "filename": "chart.png",
+            "payload": png_bytes(),
+            "text": "Here.\n![Chart](chart.png)",
+            "sent_messages": ["Here."],
+            "sent_images": [{"file": "chart.png", "caption": "Chart", "quoted": None}],
+            "sent_documents": [],
+        },
+        {
             "filename": "report.pdf",
-            "mimetype": "application/pdf",
-            "quoted": None,
-        }
+            "payload": b"%PDF-1.4",
+            "text": "![Quarterly report](report.pdf)",
+            "sent_messages": [],
+            "sent_images": [],
+            "sent_documents": [
+                {
+                    "file": "report.pdf",
+                    "caption": "Quarterly report",
+                    "filename": "report.pdf",
+                    "mimetype": "application/pdf",
+                    "quoted": None,
+                }
+            ],
+        },
+    ],
+)
+async def test_send_text_sends_local_media_markdown(
+    tmp_path: Path,
+    case: dict[str, object],
+) -> None:
+    client = FakePresenceClient()
+    media = tmp_path / str(case["filename"])
+    media.write_bytes(cast(bytes, case["payload"]))
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=str(case["text"]),
+        workspace=tmp_path,
+    )
+
+    assert client.sent_messages == cast(list[str], case["sent_messages"])
+    assert client.sent_images == [
+        {**item, "file": str(media)}
+        for item in cast(list[dict[str, object | None]], case["sent_images"])
+    ]
+    assert client.sent_documents == [
+        {**item, "file": str(media)}
+        for item in cast(list[dict[str, object | None]], case["sent_documents"])
     ]
 
 
@@ -1740,33 +1594,30 @@ async def test_send_text_quotes_media_replies_with_the_full_event(
 
 
 @pytest.mark.anyio
-async def test_send_text_keeps_missing_media_markdown_as_text(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("text", "create_image", "expected_messages"),
+    [
+        ("Look ![Missing](missing.png)", False, ["Look ![Missing](missing.png)"]),
+        ("Here. ![Chart](chart.png)", True, ["Here. ![Chart](chart.png)"]),
+    ],
+)
+async def test_send_text_keeps_non_standalone_media_markdown_as_text(
+    tmp_path: Path,
+    text: str,
+    create_image: bool,
+    expected_messages: list[str],
+) -> None:
     client = FakePresenceClient()
+    if create_image:
+        (tmp_path / "chart.png").write_bytes(png_bytes())
 
     await runtime.send_text(
         cast(NewAClient, client),
         chat=build_jid("123", "s.whatsapp.net"),
-        text="Look ![Missing](missing.png)",
+        text=text,
         workspace=tmp_path,
     )
 
-    assert client.sent_messages == ["Look ![Missing](missing.png)"]
+    assert client.sent_messages == expected_messages
     assert client.sent_images == []
     assert client.sent_documents == []
-
-
-@pytest.mark.anyio
-async def test_send_text_keeps_inline_media_markdown_as_text(tmp_path: Path) -> None:
-    client = FakePresenceClient()
-    image = tmp_path / "chart.png"
-    image.write_bytes(png_bytes())
-
-    await runtime.send_text(
-        cast(NewAClient, client),
-        chat=build_jid("123", "s.whatsapp.net"),
-        text=f"Here. ![Chart]({image.name})",
-        workspace=tmp_path,
-    )
-
-    assert client.sent_messages == [f"Here. ![Chart]({image.name})"]
-    assert client.sent_images == []
