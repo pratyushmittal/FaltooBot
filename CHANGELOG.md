@@ -2,23 +2,30 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.0.3 — 2026-04-18
+
+### Fixed
+- Codex OAuth chats now fall back cleanly when older history includes uploaded files that OAuth cannot fetch.
+- Review comments now use real file line numbers instead of diff-row positions.
+- WhatsApp turn storage and debounce handling are more reliable when messages arrive close together.
+
 ## 3.0.2 — 2026-04-18
 
 ### Fixed
-- Rebuilt the release from the corrected post-rebase source tree so the published package includes the slash-command Enter completion fix that was missing from the previously uploaded 3.0.1 artifact.
-- Keeps the ChatGPT Codex OAuth header update that restores Faltoobot logins against the current ChatGPT-backed Codex API.
+- Rebuilt the package from the corrected post-rebase source tree so the slash-command Enter fix is included.
+- Keeps the Codex OAuth header fix that restores ChatGPT-backed logins.
 
 ## 3.0.1 — 2026-04-18
 
 ### Fixed
-- Updated the ChatGPT Codex OAuth request headers to match current upstream Codex behavior, which restores Faltoobot logins that had started failing against the ChatGPT-backed Codex API.
+- Updated the Codex OAuth request headers to restore ChatGPT-backed logins.
 
 ## 3.0.0 — 2026-04-17
 
 ### Changed
-- `faltoochat` slash commands are now simpler and more predictable: exact slash commands complete the current turn instead of sometimes inserting editable text back into the composer.
-- WhatsApp group replies are now explicitly controlled by `allow_group_chats`. Leave it empty to disable group replies, or list the allowed participant phone numbers / JIDs to enable them.
-- Staging a whole file in Review now moves to the next file tab instead of jumping back to the first tab.
+- Exact `faltoochat` slash commands now complete the current turn instead of reopening editable text.
+- WhatsApp group replies are now controlled by `allow_group_chats`.
+- Staging a whole file in Review now moves to the next file tab.
 
 ### Removed
 - Removed the old `allow_groups` config flag. `allow_group_chats` is now the single control for group-chat replies.
