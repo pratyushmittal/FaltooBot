@@ -461,11 +461,14 @@ class FaltooChatApp(App[None]):
         raw_text = ""
         transcript.anchor()
 
-        async for event in sessions.get_answer_streaming(
-            session=self.session,
+        stored = await sessions.append_user_turn(
+            self.session,
             question=question,
             attachments=attachments,
-        ):
+        )
+        if not stored:
+            return
+        async for event in sessions.get_answer_streaming(self.session):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
@@ -644,7 +647,10 @@ class Composer(TextArea):
 
 
 async def _run_one_shot(session: sessions.Session, prompt: str) -> str:
-    return await sessions.get_answer(session=session, question=prompt)
+    stored = await sessions.append_user_turn(session, question=prompt)
+    if not stored:
+        return ""
+    return await sessions.get_answer(session)
 
 
 def _workspace_from_args(workspace: str | None) -> Path:

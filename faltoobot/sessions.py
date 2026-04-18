@@ -278,7 +278,7 @@ async def append_user_turn(
     return True
 
 
-async def _get_answer_streaming_from_history(
+async def get_answer_streaming(
     session: Session,
 ) -> AsyncIterator[StreamingReplyItem]:
     config = build_config()
@@ -313,50 +313,11 @@ async def _get_answer_streaming_from_history(
         yield event
 
 
-async def get_answer_from_history(session: Session) -> str:
+async def get_answer(session: Session) -> str:
     answer = ""
-    async for event in _get_answer_streaming_from_history(session):
+    async for event in get_answer_streaming(session):
         if event.type == "response.completed":
             answer = _assistant_text_from_completed_event(
                 cast(ResponseCompletedEvent, event)
             )
     return answer
-
-
-async def get_answer(
-    session: Session,
-    question: str,
-    attachments: Sequence[Attachment] | None = None,
-    message_id: str | None = None,
-) -> str:
-    answer = ""
-    async for event in get_answer_streaming(
-        session=session,
-        question=question,
-        attachments=attachments,
-        message_id=message_id,
-    ):
-        if event.type == "response.completed":
-            answer = _assistant_text_from_completed_event(
-                cast(ResponseCompletedEvent, event)
-            )
-    return answer
-
-
-async def get_answer_streaming(
-    session: Session,
-    question: str,
-    attachments: Sequence[Attachment] | None = None,
-    message_id: str | None = None,
-) -> AsyncIterator[StreamingReplyItem]:
-    stored = await append_user_turn(
-        session,
-        question=question,
-        attachments=attachments,
-        message_ids=[message_id] if message_id else [],
-    )
-    if message_id and not stored:
-        return
-
-    async for event in _get_answer_streaming_from_history(session):
-        yield event

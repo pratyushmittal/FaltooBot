@@ -21,6 +21,7 @@ from faltoobot.config import Config, config_status_text, normalize_chat
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
+    append_user_turn,
     get_answer,
     get_last_usage,
     get_messages,
@@ -380,11 +381,14 @@ async def process_turn_locked(  # noqa: C901, PLR0912, PLR0915
                 transcription_prompt=TRANSCRIPTION_PROMPT,
                 model=config.openai_transcription_model,
             )
-        answer = await get_answer(
-            session=session,
+        stored = await append_user_turn(
+            session,
             question=_prompt_with_reply_context(prompt, quoted_message_text),
             attachments=attachments or None,
         )
+        if not stored:
+            return
+        answer = await get_answer(session)
         if answer and answer.strip() != "[noreply]":
             await send_text(
                 client, chat=chat, text=answer, event=event, workspace=workspace
@@ -567,9 +571,7 @@ def _turn_from_pending_album(pending_album: PendingAlbum) -> Turn:
 
 async def _handle_pending_album(  # noqa: PLR0913
     client: NewAClient,
-    session: tuple[str, str],
     *,
-    config: Config,
     pending_albums: dict[str, PendingAlbum],
     current_album_id: str | None,
     message_id: str,
@@ -579,59 +581,48 @@ async def _handle_pending_album(  # noqa: PLR0913
     quoted_message_text: str,
     message: Any,
     workspace: Path,
-) -> bool:
+) -> Turn | None:
     if not current_album_id:
-        return False
+        return None
     pending_album = pending_albums.get(current_album_id)
     if pending_album is None:
-        return False
+        return None
     if message_id in pending_album["message_ids"]:
         logger.info("Skipping duplicate message %s from %s", message_id, chat_jid)
-        return True
-    if image_message:
-        # comment: absorb the next image into the buffered album turn.
-        pending_album["message_ids"].append(message_id)
-        pending_album["attachments"].append(
-            await save_image_attachment(
-                client,
-                message,
-                workspace=workspace,
-                message_id=message_id,
-            )
-        )
-        # comment: merge any caption text into the album prompt as images arrive.
-        if user_text and user_text != pending_album["prompt"]:
-            pending_album["prompt"] = (
-                user_text
-                if not pending_album["prompt"]
-                else f"{pending_album['prompt']}\n{user_text}"
-            )
-        # comment: remember the first quoted-message context so the final turn keeps it.
-        if quoted_message_text and not pending_album["quoted_message_text"]:
-            pending_album["quoted_message_text"] = quoted_message_text
-        # comment: keep buffering until WhatsApp says the album is complete.
-        if len(pending_album["attachments"]) < pending_album["expected_images"]:
-            return True
-        # comment: flush the completed album as one normalized turn.
+        return None
+    if not image_message:
         pending_albums.pop(current_album_id, None)
-        await process_turn_locked(
-            client,
-            session,
-            config=config,
-            turn=_turn_from_pending_album(pending_album),
+        return (
+            _turn_from_pending_album(pending_album)
+            if pending_album["attachments"]
+            else None
         )
-        return True
 
-    # comment: if the stream moved on, stop buffering this album before handling the new event.
-    pending_albums.pop(current_album_id, None)
-    if pending_album["attachments"]:
-        await process_turn_locked(
+    # comment: absorb the next image into the buffered album turn.
+    pending_album["message_ids"].append(message_id)
+    pending_album["attachments"].append(
+        await save_image_attachment(
             client,
-            session,
-            config=config,
-            turn=_turn_from_pending_album(pending_album),
+            message,
+            workspace=workspace,
+            message_id=message_id,
         )
-    return False
+    )
+    # comment: merge any caption text into the album prompt as images arrive.
+    if user_text and user_text != pending_album["prompt"]:
+        pending_album["prompt"] = (
+            user_text
+            if not pending_album["prompt"]
+            else f"{pending_album['prompt']}\n{user_text}"
+        )
+    # comment: remember the first quoted-message context so the final turn keeps it.
+    if quoted_message_text and not pending_album["quoted_message_text"]:
+        pending_album["quoted_message_text"] = quoted_message_text
+    # comment: keep buffering until WhatsApp says the album is complete.
+    if len(pending_album["attachments"]) < pending_album["expected_images"]:
+        return None
+    pending_albums.pop(current_album_id, None)
+    return _turn_from_pending_album(pending_album)
 
 
 async def _should_process_event(
@@ -714,10 +705,8 @@ async def get_turn_locked(
 
     # comment: WhatsApp sends media albums as separate events. We buffer them by album
     # id until all expected images arrive, then turn the finished album into one prompt.
-    if await _handle_pending_album(
+    pending_album_turn = await _handle_pending_album(
         client,
-        session,
-        config=config,
         pending_albums=pending_albums,
         current_album_id=current_album_id,
         message_id=message_id,
@@ -727,7 +716,10 @@ async def get_turn_locked(
         quoted_message_text=quoted_message_text,
         message=message,
         workspace=workspace,
-    ):
+    )
+    if pending_album_turn is not None:
+        return pending_album_turn
+    if current_album_id and current_album_id in pending_albums:
         return None
     if expected_album_images and current_album_id:
         pending_albums[current_album_id] = {

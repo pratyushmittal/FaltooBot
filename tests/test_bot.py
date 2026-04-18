@@ -31,7 +31,7 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
-from faltoobot.sessions import get_messages, get_session
+from faltoobot.sessions import get_messages, get_session, set_messages
 from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, runtime
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
@@ -620,8 +620,8 @@ async def test_process_message_transcribes_voice_notes(
         assert model == "gpt-4o-transcribe"
         return "Call mom at 6"
 
-    async def fake_get_answer(*, question: str, **_: object) -> str:
-        prompts.append(question)
+    async def fake_get_answer(session, **_: object) -> str:
+        prompts.append(str(get_messages(session)["messages"][-1]["content"]))
         return "Done"
 
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
@@ -658,8 +658,8 @@ async def test_process_message_includes_reply_quote_text_in_prompt(
     client = FakePresenceClient()
     prompts: list[str] = []
 
-    async def fake_get_answer(*, question: str, **_: object) -> str:
-        prompts.append(question)
+    async def fake_get_answer(session, **_: object) -> str:
+        prompts.append(str(get_messages(session)["messages"][-1]["content"]))
         return "Done"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
@@ -714,8 +714,8 @@ async def test_process_message_includes_reply_quote_text_for_voice_notes(
     ) -> str:
         return "Sure, tomorrow morning"
 
-    async def fake_get_answer(*, question: str, **_: object) -> str:
-        prompts.append(question)
+    async def fake_get_answer(session, **_: object) -> str:
+        prompts.append(str(get_messages(session)["messages"][-1]["content"]))
         return "Done"
 
     monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
@@ -819,21 +819,30 @@ async def test_process_message_sends_whatsapp_images_to_the_model(
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
 
-    async def fake_get_answer(
+    async def fake_append_user_turn(
+        session,
         *,
-        session: object,
         question: str,
         attachments: list[Path] | None = None,
-        **_: object,
-    ) -> str:
-        calls.append(
+        message_ids: list[str] | tuple[str, ...] = (),
+    ) -> bool:
+        messages_json = get_messages(session)
+        messages_json["messages"].append(
             {
-                "question": question,
-                "attachments": attachments or [],
+                "type": "message",
+                "role": "user",
+                "content": question,
             }
         )
+        messages_json["message_ids"].extend(message_ids)
+        set_messages(session, messages_json)
+        calls.append({"question": question, "attachments": list(attachments or [])})
+        return True
+
+    async def fake_get_answer(session, **_: object) -> str:
         return "nice cat"
 
+    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     event = fake_image_event(caption="what is in this image?")
@@ -862,20 +871,30 @@ async def test_process_message_allows_image_only_messages(
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
 
-    async def fake_get_answer(
+    async def fake_append_user_turn(
+        session,
         *,
         question: str,
         attachments: list[Path] | None = None,
-        **_: object,
-    ) -> str:
-        calls.append(
+        message_ids: list[str] | tuple[str, ...] = (),
+    ) -> bool:
+        messages_json = get_messages(session)
+        messages_json["messages"].append(
             {
-                "question": question,
-                "attachments": attachments or [],
+                "type": "message",
+                "role": "user",
+                "content": question,
             }
         )
+        messages_json["message_ids"].extend(message_ids)
+        set_messages(session, messages_json)
+        calls.append({"question": question, "attachments": list(attachments or [])})
+        return True
+
+    async def fake_get_answer(session, **_: object) -> str:
         return "looks good"
 
+    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
 
     await handle_message(
@@ -904,20 +923,30 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     calls: list[dict[str, Any]] = []
     pending_albums: dict[str, runtime.PendingAlbum] = {}
 
-    async def fake_get_answer(
+    async def fake_append_user_turn(
+        session,
         *,
         question: str,
         attachments: list[Path] | None = None,
-        **_: object,
-    ) -> str:
-        calls.append(
+        message_ids: list[str] | tuple[str, ...] = (),
+    ) -> bool:
+        messages_json = get_messages(session)
+        messages_json["messages"].append(
             {
-                "question": question,
-                "attachments": attachments or [],
+                "type": "message",
+                "role": "user",
+                "content": question,
             }
         )
+        messages_json["message_ids"].extend(message_ids)
+        set_messages(session, messages_json)
+        calls.append({"question": question, "attachments": list(attachments or [])})
+        return True
+
+    async def fake_get_answer(session, **_: object) -> str:
         return "done"
 
+    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
     expected_images = 2
@@ -977,20 +1006,30 @@ async def test_process_message_groups_captionless_album_images_into_one_turn(
     calls: list[dict[str, Any]] = []
     pending_albums: dict[str, runtime.PendingAlbum] = {}
 
-    async def fake_get_answer(
+    async def fake_append_user_turn(
+        session,
         *,
         question: str,
         attachments: list[Path] | None = None,
-        **_: object,
-    ) -> str:
-        calls.append(
+        message_ids: list[str] | tuple[str, ...] = (),
+    ) -> bool:
+        messages_json = get_messages(session)
+        messages_json["messages"].append(
             {
-                "question": question,
-                "attachments": attachments or [],
+                "type": "message",
+                "role": "user",
+                "content": question,
             }
         )
+        messages_json["message_ids"].extend(message_ids)
+        set_messages(session, messages_json)
+        calls.append({"question": question, "attachments": list(attachments or [])})
+        return True
+
+    async def fake_get_answer(session, **_: object) -> str:
         return "done"
 
+    monkeypatch.setattr(runtime, "append_user_turn", fake_append_user_turn)
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
     chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
     expected_images = 2
@@ -1223,9 +1262,9 @@ async def test_process_turn_locked_sends_notification_turn(
     seen: dict[str, object] = {}
     session = get_session(chat_key="15555550123@s.whatsapp.net")
 
-    async def fake_get_answer(*, session, question: str, **_: object) -> str:
+    async def fake_get_answer(session, **_: object) -> str:
         seen["session"] = session
-        seen["question"] = question
+        seen["question"] = get_messages(session)["messages"][-1]["content"]
         return "queued reply"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
@@ -1311,7 +1350,7 @@ async def test_process_turn_locked_skips_whatsapp_reply_for_noreply(
     config = make_config(tmp_path, allowed_chats=set())
     session = get_session(chat_key="15555550123@s.whatsapp.net")
 
-    async def fake_get_answer(*, session, question: str, **_: object) -> str:
+    async def fake_get_answer(session, **_: object) -> str:
         return "[noreply]"
 
     monkeypatch.setattr(runtime, "get_answer", fake_get_answer)

@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -118,6 +120,23 @@ def _config(tmp_path: Path) -> SimpleNamespace:
         openai_thinking="low",
         openai_fast=False,
     )
+
+
+async def run_answer(
+    session: sessions.Session,
+    question: str,
+    attachments: Sequence[sessions.Attachment] | None = None,
+    message_id: str | None = None,
+) -> str:
+    stored = await sessions.append_user_turn(
+        session,
+        question=question,
+        attachments=attachments,
+        message_ids=[message_id] if message_id else [],
+    )
+    if message_id and not stored:
+        return ""
+    return await sessions.get_answer(session)
 
 
 def test_get_dir_chat_key_supports_subagent_prefix(
@@ -245,12 +264,12 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(
         "---\ndescription: Write small pytest e2e checks\n---\nAlways keep tests small.\n",
         encoding="utf-8",
     )
-    answer = await sessions.get_answer(
+    answer = await run_answer(
         session=session,
         question="Hi",
         message_id="msg-1",
     )
-    duplicate = await sessions.get_answer(
+    duplicate = await run_answer(
         session=session,
         question="Hi again",
         message_id="msg-1",
@@ -383,7 +402,7 @@ async def test_get_answer_exposes_shell_tool_for_whatsapp_chats(
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
 
     session = sessions.get_session(chat_key="15551234567@s.whatsapp.net")
-    answer = await sessions.get_answer(session=session, question="Hi")
+    answer = await run_answer(session=session, question="Hi")
 
     assert answer == "ok"
     tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
@@ -439,8 +458,8 @@ async def test_get_answer_caches_system_prompt_per_session(
     monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
 
     session = sessions.get_session(chat_key="code@test")
-    assert await sessions.get_answer(session=session, question="one") == "ok"
-    assert await sessions.get_answer(session=session, question="two") == "ok"
+    assert await run_answer(session=session, question="one") == "ok"
+    assert await run_answer(session=session, question="two") == "ok"
 
     payload = sessions.get_messages(session)
     assert calls["count"] == 1
@@ -486,7 +505,7 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
         chat_key=chat_key,
         workspace=tmp_path / "workspace",
     )
-    answer = await sessions.get_answer(
+    answer = await run_answer(
         session=session,
         question="Look",
         attachments=[image],
@@ -514,7 +533,7 @@ async def test_get_answer_uploads_and_resizes_image_attachments(
 async def test_get_answer_uses_codex_output_when_completed_response_output_is_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_get_answer_streaming(**_: Any):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield SimpleNamespace(
             type="response.completed",
             response=type(
@@ -542,11 +561,13 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
             )(),
         )
 
-    monkeypatch.setattr(sessions, "get_answer_streaming", fake_get_answer_streaming)
-
-    answer = await sessions.get_answer(
-        session=("code@test", "session-1"), question="Hi"
+    monkeypatch.setattr(
+        sessions,
+        "get_answer_streaming",
+        fake_get_answer_streaming,
     )
+
+    answer = await sessions.get_answer(("code@test", "session-1"))
 
     assert answer == "hello from codex"
 
@@ -597,7 +618,7 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
         chat_key="code@test",
         workspace=tmp_path / "workspace",
     )
-    answer = await sessions.get_answer(
+    answer = await run_answer(
         session=session,
         question="Look",
         attachments=[image],
@@ -649,7 +670,7 @@ async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
         chat_key="code@test",
         workspace=tmp_path / "workspace",
     )
-    answer = await sessions.get_answer(
+    answer = await run_answer(
         session=session,
         question="compare",
         attachments=attachments,
@@ -668,4 +689,123 @@ async def test_get_answer_keeps_multiple_image_attachments_in_one_user_message(
                 {"type": "input_image", "file_id": "file_123", "detail": "auto"},
             ],
         }
+    ]
+
+
+@pytest.mark.anyio
+async def test_append_user_turn_appends_user_content_and_message_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+
+    async def fake_upload_attachments(
+        attachments: list[Path],
+        workspace: Path,
+        config: object,
+    ) -> list[dict[str, Any]]:
+        assert attachments
+        return [{"type": "input_image", "file_id": "file_123", "detail": "auto"}]
+
+    monkeypatch.setattr(sessions, "_upload_attachments", fake_upload_attachments)
+
+    attachment = tmp_path / "one.png"
+    attachment.write_bytes(b"png")
+    session = sessions.get_session(chat_key="code@test")
+
+    await sessions.append_user_turn(
+        session,
+        question="compare",
+        attachments=[attachment],
+        message_ids=["msg-1", "msg-2"],
+    )
+
+    assert sessions.get_messages(session)["message_ids"] == ["msg-1", "msg-2"]
+    assert sessions.get_messages(session)["messages"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "compare"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_get_answer_reuses_existing_user_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
+    calls: list[MessageHistory] = []
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+        prompt_cache_key: str | None = None,
+    ):
+        calls.append(list(input))
+        input.append(
+            cast(
+                Any,
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                },
+            )
+        )
+        yield FakeCompletedEvent(
+            [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                }
+            ],
+            {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 2,
+            },
+        )
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    session = sessions.get_session(chat_key="code@test")
+    await sessions.append_user_turn(session, question="Hi", message_ids=["msg-1"])
+
+    answer = await sessions.get_answer(session)
+
+    assert answer == "hello"
+    assert calls == [
+        [
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Hi",
+            }
+        ]
+    ]
+    assert sessions.get_messages(session)["messages"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": "Hi",
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}],
+        },
     ]

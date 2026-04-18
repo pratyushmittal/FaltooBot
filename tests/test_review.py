@@ -1323,13 +1323,8 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
     create_modified_files(workspace)
     seen: list[str] = []
 
-    async def fake_get_answer_streaming(
-        *,
-        session: sessions.Session,
-        question: str,
-        attachments=None,
-    ):
-        seen.append(question)
+    async def fake_get_answer_streaming(session: sessions.Session):
+        seen.append(str(sessions.get_messages(session)["messages"][-1]["content"]))
         if False:
             yield None
 

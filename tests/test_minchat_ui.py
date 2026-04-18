@@ -480,12 +480,13 @@ async def test_minchat_submits_composer_attachments(
     image.write_bytes(b"png")
     seen: list[dict[str, Any]] = []
 
-    async def fake_get_answer_streaming(
-        *,
+    async def fake_append_user_turn(
         session: sessions.Session,
+        *,
         question: str,
         attachments: list[sessions.Attachment] | None = None,
-    ):
+        message_ids: list[str] | None = None,
+    ) -> bool:
         seen.append(
             {
                 "session": session,
@@ -493,9 +494,16 @@ async def test_minchat_submits_composer_attachments(
                 "attachments": attachments,
             }
         )
+        return True
+
+    async def fake_get_answer_streaming(session: sessions.Session):
         if False:
             yield None
 
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.append_user_turn",
+        fake_append_user_turn,
+    )
     monkeypatch.setattr(
         "faltoobot.faltoochat.app.sessions.get_answer_streaming",
         fake_get_answer_streaming,
@@ -554,12 +562,8 @@ async def test_minchat_queues_messages_while_streaming(
     release = asyncio.Event()
     seen: list[str] = []
 
-    async def fake_get_answer_streaming(
-        *,
-        session: sessions.Session,
-        question: str,
-        attachments: list[sessions.Attachment] | None = None,
-    ):
+    async def fake_get_answer_streaming(session: sessions.Session):
+        question = str(sessions.get_messages(session)["messages"][-1]["content"])
         seen.append(question)
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
         if question == "hello":
@@ -681,12 +685,7 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
 
-    async def fake_get_answer_streaming(
-        *,
-        session: sessions.Session,
-        question: str,
-        attachments: list[sessions.Attachment] | None = None,
-    ):
+    async def fake_get_answer_streaming(session: sessions.Session):
         yield type(
             "Event",
             (),
@@ -742,12 +741,7 @@ async def test_minchat_answer_completion_does_not_focus_composer_outside_chat(
     _, app = build_app(tmp_path, monkeypatch)
     release = asyncio.Event()
 
-    async def fake_get_answer_streaming(
-        *,
-        session: sessions.Session,
-        question: str,
-        attachments: list[sessions.Attachment] | None = None,
-    ):
+    async def fake_get_answer_streaming(session: sessions.Session):
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
         await release.wait()
         yield type("Event", (), {"type": "response.output_text.done"})()
