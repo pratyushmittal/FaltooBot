@@ -105,6 +105,8 @@ def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
         other_param_properties: dict[str, Any] = {}
         if param.annotation is int:
             param_type = "integer"
+        elif param.annotation is bool:
+            param_type = "boolean"
         elif param.annotation is str:
             param_type = "string"
         elif inspect.isclass(param.annotation) and issubclass(param.annotation, Enum):

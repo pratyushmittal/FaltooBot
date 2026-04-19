@@ -1,8 +1,8 @@
 import json
 import os
 import subprocess
-from collections.abc import Callable
 from collections.abc import Awaitable
+from collections.abc import Callable
 from pathlib import Path
 
 from openai.types.responses import (
@@ -15,6 +15,7 @@ from faltoobot import images
 from faltoobot.config import build_config
 from faltoobot.gpt_utils import get_openai_client
 from faltoobot.openai_auth import uses_chatgpt_oauth
+from faltoobot.repl import run_python_script_in_session
 
 MAX_SHELL_OUTPUT = 12_000
 ToolOutput = str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -90,6 +91,44 @@ def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
         - timeout_ms: Kill the command after this timeout in milliseconds.
     """
     return run_shell_call
+
+
+def get_run_in_python_shell_tool(
+    workspace: Path,
+    session_key: str | None = None,
+) -> Callable[[str, bool], str]:
+    workspace = workspace.expanduser().resolve()
+    workspace_str = str(workspace)
+    repl_session_key = workspace_str if session_key is None else session_key
+
+    def run_in_python_shell(script: str, continue_session: bool) -> str:
+        result = run_python_script_in_session(
+            repl_session_key,
+            workspace_str,
+            script,
+            continue_session,
+        )
+        return json.dumps(
+            {
+                "stdout": _clipped_text(result["stdout"]),
+                "stderr": _clipped_text(result["stderr"]),
+                "raised": result["raised"],
+            }
+        )
+
+    run_in_python_shell.__doc__ = f"""Run Python code in a persistent interpreter session. Use it for multi-turn execution in tool calls where you need to check one step's output before the next. Especially useful for browser use and other Python-based skills.
+
+    Returns the output of stdout and stderr.
+
+    Code runs from `{workspace}` directory.
+
+    Use `print(...)` to inspect values.
+
+    Args:
+        - script: Python code to execute. Use `print(...)` to inspect values.
+        - continue_session: Whether to reuse the previous Python session for this workspace.
+    """
+    return run_in_python_shell
 
 
 async def load_image_in_workspace(workspace: str, image_path: str) -> ToolOutput:

@@ -1032,6 +1032,39 @@ async def test_review_focus_reloads_already_loaded_file(
 
 
 @pytest.mark.anyio
+async def test_review_refresh_files_binding_reloads_current_tab_contents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        alpha_viewer = alpha_pane.query_one(ReviewDiffView)
+        alpha_viewer.focus()
+        await wait_for_condition(lambda: bool(alpha_viewer.diff))
+        assert "b = 20" in alpha_viewer.text
+
+        (workspace / "alpha.py").write_text(
+            "\n".join(["a = 1", "b = 200", "c = 3", "d = 4", "e = 50", "f = 6"]) + "\n",
+            encoding="utf-8",
+        )
+
+        await pilot.press("R")
+        await wait_for_condition(lambda: "b = 200" in alpha_viewer.text)
+
+        assert app.screen.focused is alpha_viewer
+        assert "b = 200" in alpha_viewer.text
+
+
+@pytest.mark.anyio
 async def test_review_refresh_files_binding_reloads_unstaged_and_untracked_tabs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

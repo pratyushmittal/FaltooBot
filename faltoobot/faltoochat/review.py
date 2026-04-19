@@ -346,6 +346,27 @@ class ReviewView(TabPane):
         if self.query("#review-empty"):
             self.query_one("#review-empty", ReviewEmpty).focus()
 
+    async def _reviewable_files(
+        self,
+        workspace: Path,
+        *,
+        close_unmodified: bool,
+    ) -> tuple[str | None, ModifiedFiles]:
+        if close_unmodified:
+            message, files = await asyncio.to_thread(_get_modified_files, workspace)
+            self.extra_paths = [path for path in self.extra_paths if path in files]
+            return message, files
+
+        # comment: manually opened files may be deleted outside the app, so drop missing paths.
+        self.extra_paths = [
+            path for path in self.extra_paths if (workspace / path).is_file()
+        ]
+        return await asyncio.to_thread(
+            _get_modified_files,
+            workspace,
+            self.extra_paths,
+        )
+
     async def refresh_files(self, *, close_unmodified: bool = False) -> None:
         """Refresh review tabs from git, optionally closing tabs without modifications."""
         # comment: review refresh can be queued before the nested review tabs finish mounting.
@@ -354,22 +375,14 @@ class ReviewView(TabPane):
         except NoMatches:
             return
 
-        active_path = None if self.active_pane is None else self.active_pane.file_path
+        active_pane = self.active_pane
+        active_path = None if active_pane is None else active_pane.file_path
         workspace = cast("FaltooChatApp", self.app).workspace
 
-        if close_unmodified:
-            message, files = await asyncio.to_thread(_get_modified_files, workspace)
-            self.extra_paths = [path for path in self.extra_paths if path in files]
-        else:
-            # comment: manually opened files may be deleted outside the app, so drop missing paths.
-            self.extra_paths = [
-                path for path in self.extra_paths if (workspace / path).is_file()
-            ]
-            message, files = await asyncio.to_thread(
-                _get_modified_files,
-                workspace,
-                self.extra_paths,
-            )
+        message, files = await self._reviewable_files(
+            workspace,
+            close_unmodified=close_unmodified,
+        )
 
         # comment: when there are no reviewable files, clear file tabs and return to the empty tab.
         if message is not None:
@@ -392,6 +405,13 @@ class ReviewView(TabPane):
 
         # comment: keep the current file active when it still exists after the refresh.
         if active_path is not None and self.set_active_tab(active_path):
+            # comment: focusing the same viewer again does not fire a new focus event in Textual.
+            if self.active_pane is active_pane and self.active_pane is not None:
+                # comment: shutdown can unmount the viewer while this async refresh is still running.
+                try:
+                    await self.active_pane.reload_in_place()
+                except NoMatches:
+                    pass
             return
 
         # comment: if nothing was active yet, focus the first available review tab.
