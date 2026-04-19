@@ -288,12 +288,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
         }
     ]
     tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
-    assert set(tool_defs_by_name) == {
-        "run_shell_call",
-        "run_in_python_shell",
-        "load_image",
-        "load_skill",
-    }
+    assert set(tool_defs_by_name) == {"run_shell_call", "load_image", "load_skill"}
 
     shell_tool = tool_defs_by_name["run_shell_call"]
     assert shell_tool["type"] == "function"
@@ -326,30 +321,6 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
             },
         },
         "required": ["command", "command_summary", "timeout_ms"],
-        "additionalProperties": False,
-    }
-
-    python_tool = tool_defs_by_name["run_in_python_shell"]
-    assert python_tool["type"] == "function"
-    assert python_tool["strict"] is True
-    assert python_tool["description"].startswith(
-        "Run Python code in a persistent interpreter session."
-    )
-    assert "multi-turn" in python_tool["description"]
-    assert "Returns the output of stdout and stderr." in python_tool["description"]
-    assert python_tool["parameters"] == {
-        "type": "object",
-        "properties": {
-            "script": {
-                "type": "string",
-                "description": "Python code to execute. Use `print(...)` to inspect values.",
-            },
-            "continue_session": {
-                "type": "boolean",
-                "description": "Whether to reuse the previous Python session for this workspace.",
-            },
-        },
-        "required": ["script", "continue_session"],
         "additionalProperties": False,
     }
 

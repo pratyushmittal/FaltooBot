@@ -116,7 +116,7 @@ def get_run_in_python_shell_tool(
             }
         )
 
-    run_in_python_shell.__doc__ = f"""Run Python code in a persistent interpreter session. Use it for multi-turn execution in tool calls where you need to check one step's output before the next. Especially useful for browser use and other Python-based skills.
+    run_in_python_shell.__doc__ = f"""Run Python code in a persistent interpreter session. Use it for multi-turn execution in tool calls where you need to check one step's output before the next. Especially useful for Python-based skills.
 
     Returns the output of stdout and stderr.
 
