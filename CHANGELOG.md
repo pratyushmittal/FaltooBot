@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.0.5 — 2026-04-20
+
+### Fixed
+- Shell `python` commands now reuse Faltoochat's Python environment.
+
 ## 3.0.4 — 2026-04-18
 
 ### Added
