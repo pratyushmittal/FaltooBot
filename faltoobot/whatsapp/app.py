@@ -134,14 +134,12 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
         if turn is None:
             return
-        stored = True
-        if turn["prompt"] not in runtime.SLASH_COMMANDS:
-            stored = await append_user_turn(
-                session,
-                question=turn["prompt"],
-                attachments=turn["attachments"] or None,
-                message_ids=turn["message_ids"],
-            )
+        stored = turn["prompt"] in runtime.SLASH_COMMANDS or await append_user_turn(
+            session,
+            question=turn["prompt"],
+            attachments=turn["attachments"] or None,
+            message_ids=turn["message_ids"],
+        )
     if not stored:
         return
     current_timer = debounce_timers.pop(chat_key, None)
