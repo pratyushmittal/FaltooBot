@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.1.2 — 2026-04-20
+
+### Changed
+- Fixed slash-command debounce handling.
+
 ## 3.1.1 — 2026-04-20
 
 ### Changed
