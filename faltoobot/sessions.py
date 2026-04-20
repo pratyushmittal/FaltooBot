@@ -23,7 +23,11 @@ from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
-from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
+from faltoobot.tools import (
+    get_load_image_tool,
+    get_run_in_python_shell_tool,
+    get_run_shell_call_tool,
+)
 
 MESSAGES_FILE = "messages.json"
 LAST_USED_FILE = "last_used"
@@ -285,8 +289,10 @@ async def get_answer_streaming(
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])
     chat_key = session[0]
+    session_id = session[1]
     tools: list[Tool] = [
         get_run_shell_call_tool(workspace),
+        get_run_in_python_shell_tool(workspace, session_key=f"{chat_key}:{session_id}"),
         get_load_image_tool(workspace),
     ]
     available_skills, load_skill_tool = get_load_skill_tool(

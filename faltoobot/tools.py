@@ -1,7 +1,6 @@
 import json
 import os
 import subprocess
-import sys
 from collections.abc import Awaitable
 from collections.abc import Callable
 from pathlib import Path
@@ -30,11 +29,6 @@ def _clipped_text(value: str | bytes | None) -> str:
 
 def _tool_env() -> dict[str, str]:
     env = dict(os.environ)
-    tool_python = Path(sys.executable).resolve()
-    tool_bin = str(tool_python.parent)
-    tool_env = str(tool_python.parent.parent)
-    env["PATH"] = f"{tool_bin}:{env.get('PATH', '')}".rstrip(":")
-    env["VIRTUAL_ENV"] = tool_env
     config = build_config()
     if config.gemini_api_key:
         # comment: image-generation shell examples use google-genai, which expects the Gemini key
@@ -124,7 +118,7 @@ def get_run_in_python_shell_tool(
 
     run_in_python_shell.__doc__ = f"""Run Python code in a persistent interpreter session. Use it for multi-turn execution in tool calls where you need to check one step's output before the next. Especially useful for Python-based skills.
 
-    Returns the output of stdout and stderr.
+    This runs in a separate Python environment, not the workspace's `uv run` environment.
 
     Code runs from `{workspace}` directory.
 

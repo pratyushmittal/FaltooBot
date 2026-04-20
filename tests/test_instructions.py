@@ -33,5 +33,5 @@ def test_get_system_instructions_skips_empty_agents_files(
 
     result = instructions.get_system_instructions(config, "code@test", workspace)
 
-    assert "You are Faltoo." in result
+    assert "You are Faltoo, an AI coding agent with shell access." in result
     assert "Session AGENTS.md" not in result
