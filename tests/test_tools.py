@@ -96,6 +96,26 @@ PY""",
     assert "gem-key" in result["stdout"]
 
 
+def test_tool_env_prefers_current_python_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_env = tmp_path / "faltoochat-env"
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(tools.sys, "executable", str(tool_env / "bin" / "python"))
+    monkeypatch.setattr(
+        tools,
+        "build_config",
+        lambda: type("Config", (), {"gemini_api_key": ""})(),
+        raising=False,
+    )
+
+    env = tools._tool_env()
+
+    assert env["PATH"].startswith(f"{tool_env / 'bin'}:")
+    assert env["VIRTUAL_ENV"] == str(tool_env)
+
+
 def test_get_run_in_python_shell_tool_builds_valid_tool_definition(
     tmp_path: Path,
 ) -> None:

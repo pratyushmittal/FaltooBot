@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Awaitable
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +30,11 @@ def _clipped_text(value: str | bytes | None) -> str:
 
 def _tool_env() -> dict[str, str]:
     env = dict(os.environ)
+    tool_python = Path(sys.executable).resolve()
+    tool_bin = str(tool_python.parent)
+    tool_env = str(tool_python.parent.parent)
+    env["PATH"] = f"{tool_bin}:{env.get('PATH', '')}".rstrip(":")
+    env["VIRTUAL_ENV"] = tool_env
     config = build_config()
     if config.gemini_api_key:
         # comment: image-generation shell examples use google-genai, which expects the Gemini key
