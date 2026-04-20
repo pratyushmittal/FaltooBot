@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.1.1 — 2026-04-20
+
+### Changed
+- Refined the Python skill docs for `run_in_python_shell`, including the multi-turn image-generation examples.
+
 ## 3.1.0 — 2026-04-20
 
 ### Added
