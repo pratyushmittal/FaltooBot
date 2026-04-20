@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.1.0 — 2026-04-20
+
+### Added
+- `run_in_python_shell` for multi-step Python work and optional integrations.
+
+### Changed
+- Python skill examples now use `run_in_python_shell`.
+- Shell commands use their normal shell environment again.
+
 ## 3.0.5 — 2026-04-20
 
 ### Fixed

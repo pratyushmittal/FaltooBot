@@ -57,10 +57,9 @@ nohup sh -c 'faltoochat "Review this PR: https://github.com/some-org/some-repo/p
 
 ## Python API Example
 
-If you are already in Python, you can enqueue notifications directly:
+If you are using `run_in_python_shell`, `faltoobot` is already available there:
 
-```bash
-uv run python - <<'PY'
+```python
 from faltoobot import notify_queue
 
 notify_queue.enqueue_notification(
@@ -68,7 +67,6 @@ notify_queue.enqueue_notification(
     "Maintenance job finished successfully.",
     source="script:maintenance",
 )
-PY
 ```
 
 ## Practical Reminders

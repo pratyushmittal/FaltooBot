@@ -2,7 +2,7 @@
 description: Using Playwright for browser use and persistent sessions. Use this when you need to open JS heavy websites in browser, such as X/Twitter, Instagram, or Booking.com. Also useful when you want to reuse the logged in session of the user in the browser.
 ---
 
-`playwright` is already installed.
+`playwright` is already installed in `run_in_python_shell`.
 
 Prefer Python + Playwright for browser tasks. Always use the configured persistent browser settings so login state can be reused.
 
@@ -19,8 +19,7 @@ Preferred pattern:
 
 Example:
 
-```bash
-uv run python - <<'PY'
+```python
 from pathlib import Path
 from playwright.sync_api import BrowserType, sync_playwright
 
@@ -48,7 +47,6 @@ with sync_playwright() as playwright:
     page.screenshot(path=str(screenshot), full_page=True)
     print(page.title())
     print(screenshot)
-PY
 ```
 
 Use `load_image` tool for seeing saved screenshots.

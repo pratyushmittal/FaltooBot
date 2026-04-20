@@ -2,7 +2,7 @@
 description: Use latest image generation models to create pictures or edit existing photos and creatives. Use this when the user asks for image generation, image editing, retouching, background changes, or *any* other visual modifications.
 ---
 
-`google-genai` is already installed.
+`google-genai` is already installed in `run_in_python_shell`.
 
 Image generation can take up to 60 seconds. When using `run_shell_call`, set `timeout_ms` to 60000 for image generation and image editing commands.
 
@@ -14,8 +14,7 @@ Use this when the user wants a brand new image from a prompt.
 
 Simple usage example:
 
-```bash
-uv run python - <<'PY'
+```python
 from pathlib import Path
 import base64
 from google import genai
@@ -39,7 +38,6 @@ for output in response.outputs or []:
     break
 # comment: print the interaction id so it can be reused next turn if the user requests edits.
 print("response id:", response.id)
-PY
 ```
 
 
@@ -49,8 +47,7 @@ Use this when the user gives an existing image and asks for changes.
 
 Example pattern:
 
-```bash
-uv run python - <<'PY'
+```python
 from pathlib import Path
 import base64
 import mimetypes
@@ -87,15 +84,13 @@ for output in response.outputs or []:
     break
 # comment: print the interaction id so it can be reused next turn if the user requests edits.
 print("response id:", response.id)
-PY
 ```
 
 You can pass multiple reference images too. Gemini can use up to 14 images in one editing request. This is useful for group photos, collages, moodboards, or combining several references into one composition.
 
 Example with multiple reference images:
 
-```bash
-uv run python - <<'PY'
+```python
 from pathlib import Path
 import base64
 import mimetypes
@@ -147,49 +142,78 @@ for output in response.outputs or []:
     print(path)
 # comment: print the interaction id so it can be reused next turn if the user requests edits.
 print("response id:", response.id)
-PY
 ```
 
 ## Multi-Turn Image Updates
 
-`client.interactions` supports multi-turn image work. After one generation or edit finishes, keep the printed `interaction.id`. On the next turn, pass it as `previous_interaction_id` so Gemini can continue from that earlier result.
+For native multi-turn image work, prefer `client.chats.create(...)` and keep the `chat` object alive across turns. When using `run_in_python_shell`, set `continue_session=True` on the first turn if you plan to reuse that Python session in follow-up turns.
 
-Example follow-up pattern:
 
-```bash
-uv run python - <<'PY'
-from pathlib import Path
-import base64
+First turn example:
+
+```python
 from google import genai
+from google.genai import types
 
-previous_interaction_id = "paste-the-previous-interaction-id-here"
 client = genai.Client()
-response = client.interactions.create(
+chat = client.chats.create(
     model="{gemini_model}",
-    input="Make the mascot more original. Give it asymmetrical ears, blue overalls, and a yellow scarf. Keep the rest unchanged.",
-    tools=[{"type": "google_search", "search_types": ["web_search"]}],
-    previous_interaction_id=previous_interaction_id,
-    response_modalities=["image"],
+    config=types.GenerateContentConfig(
+        response_modalities=["TEXT", "IMAGE"],
+        tools=[{"google_search": {}}],
+    ),
 )
 
-for output in response.outputs or []:
-    if getattr(output, "type", None) != "image":
+message = "Create a vibrant infographic that explains photosynthesis as if it were a recipe for a plant's favorite food. Show the ingredients (sunlight, water, CO2) and the finished dish (sugar/energy). The style should be like a page from a colorful kids' cookbook, suitable for a 4th grader."
+response = chat.send_message(message)
+
+for part in response.parts:
+    if part.text is not None:
+        print(part.text)
         continue
-    raw = base64.b64decode(output.data) if isinstance(output.data, str) else bytes(output.data)
-    path = Path("workspace/mascot-followup.jpg")
-    path.write_bytes(raw)
-    # comment: print the saved path so this image can be sent back to the user.
-    print(path)
-    break
-# comment: print the interaction id so it can be reused next turn if the user requests edits.
-print("response id:", response.id)
-PY
+    image = part.as_image()
+    if image is None:
+        continue
+    image.save("workspace/photosynthesis.png")
+    print("workspace/photosynthesis.png")
+```
+
+Follow-up turn in the same Python session:
+
+```python
+from google.genai import types
+
+message = "Update this infographic to be in Spanish. Do not change any other elements of the image."
+aspect_ratio = "16:9"  # "1:1","1:4","1:8","2:3","3:2","3:4","4:1","4:3","4:5","5:4","8:1","9:16","16:9","21:9"
+resolution = "2K"  # "512", "1K", "2K", "4K"
+
+response = chat.send_message(
+    message,
+    config=types.GenerateContentConfig(
+        image_config=types.ImageConfig(
+            aspect_ratio=aspect_ratio,
+            image_size=resolution,
+        ),
+    ),
+)
+
+for part in response.parts:
+    if part.text is not None:
+        print(part.text)
+        continue
+    image = part.as_image()
+    if image is None:
+        continue
+    image.save("workspace/photosynthesis_spanish.png")
+    print("workspace/photosynthesis_spanish.png")
 ```
 
 Use multi-turns when the user wants:
 - iterative refinements
 - small edits on the last generated image
 - a sequence like “make it brighter”, “now remove the background”, “now make it more minimal”
+
+`client.interactions` also supports multi-turn image work. Save the printed `interaction.id`, then pass it as `previous_interaction_id` on the next turn. This works even without Python session persistence.
 
 ## Good Prompt Examples
 
