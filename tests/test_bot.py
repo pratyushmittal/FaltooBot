@@ -355,12 +355,14 @@ async def handle_message(
         )
         if turn is None:
             return
-        stored = await sessions.append_user_turn(
-            session,
-            question=turn["prompt"],
-            attachments=turn["attachments"] or None,
-            message_ids=turn["message_ids"],
-        )
+        stored = True
+        if turn["prompt"] not in runtime.SLASH_COMMANDS:
+            stored = await sessions.append_user_turn(
+                session,
+                question=turn["prompt"],
+                attachments=turn["attachments"] or None,
+                message_ids=turn["message_ids"],
+            )
         if stored:
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
 
@@ -986,14 +988,6 @@ async def test_process_turn_locked_status_reports_version_and_config(
         "attachments": [],
         "audio": None,
     }
-    stored = await sessions.append_user_turn(
-        session,
-        question=turn["prompt"],
-        attachments=turn["attachments"] or None,
-        message_ids=turn["message_ids"],
-    )
-
-    assert stored is True
     await runtime.process_turn_locked(
         cast(NewAClient, client),
         session,
@@ -1072,11 +1066,10 @@ async def test_process_message_reset_creates_new_session_for_chat(
     assert second != first
     assert client.replies == ["Memory cleared for this chat."]
     assert get_messages(first)["messages"] == [
-        {"type": "message", "role": "user", "content": "hi"},
-        {"type": "message", "role": "user", "content": "/reset"},
+        {"type": "message", "role": "user", "content": "hi"}
     ]
     assert get_messages(second)["messages"] == []
-    assert get_messages(second)["message_ids"] == ["msg-1", "msg-2"]
+    assert get_messages(second)["message_ids"] == ["msg-1"]
 
 
 class _DummyClient:
