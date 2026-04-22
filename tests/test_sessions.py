@@ -733,6 +733,72 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
 
 
 @pytest.mark.anyio
+async def test_append_user_turn_prefixes_group_sender_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    session = sessions.get_session(chat_key="120363000000000000@g.us")
+
+    await sessions.append_user_turn(
+        session,
+        question="Hello",
+        message_ids=["msg-1"],
+        sender_name="Alice",
+    )
+
+    assert sessions.get_messages(session)["messages"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": "[from Alice] Hello",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_append_user_turn_prefixes_group_sender_name_for_attachment_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+
+    async def fake_upload_attachments(
+        attachments: list[Path],
+        workspace: Path,
+        config: object,
+    ) -> list[dict[str, Any]]:
+        return [{"type": "input_image", "file_id": "file_123", "detail": "auto"}]
+
+    monkeypatch.setattr(sessions, "_upload_attachments", fake_upload_attachments)
+
+    attachment = tmp_path / "one.png"
+    attachment.write_bytes(b"png")
+    session = sessions.get_session(chat_key="120363000000000000@g.us")
+
+    await sessions.append_user_turn(
+        session,
+        question="",
+        attachments=[attachment],
+        message_ids=["msg-1"],
+        sender_name="Alice",
+    )
+
+    assert sessions.get_messages(session)["messages"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "[from Alice]"},
+                {"type": "input_image", "file_id": "file_123", "detail": "auto"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.anyio
 async def test_get_answer_reuses_existing_user_turn(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

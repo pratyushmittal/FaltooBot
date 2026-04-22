@@ -70,6 +70,7 @@ async def _start_polling_notifications() -> None:
                         question=turn["prompt"],
                         attachments=turn["attachments"] or None,
                         message_ids=turn["message_ids"],
+                        sender_name=turn.get("sender_name"),
                     )
                     if stored:
                         await runtime.process_turn_locked(
@@ -140,6 +141,7 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
             question=turn["prompt"],
             attachments=turn["attachments"] or None,
             message_ids=turn["message_ids"],
+            sender_name=turn.get("sender_name"),
         )
     if not stored or not turn["should_reply"]:
         return

@@ -362,6 +362,7 @@ async def handle_message(
                 question=turn["prompt"],
                 attachments=turn["attachments"] or None,
                 message_ids=turn["message_ids"],
+                sender_name=turn.get("sender_name"),
             )
         if stored and turn["should_reply"]:
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
@@ -380,6 +381,7 @@ def recording_append_user_turn(calls: list[dict[str, Any]]):
         question: str,
         attachments: list[Path] | None = None,
         message_ids: list[str] | tuple[str, ...] = (),
+        sender_name: str | None = None,
     ) -> bool:
         messages_json = get_messages(session)
         messages_json["messages"].append(
@@ -527,6 +529,7 @@ async def test_get_turn_locked_stores_group_messages_without_bot_mention(
 
     assert turn is not None
     assert turn["prompt"] == "hello group"
+    assert turn["sender_name"] == "15555550123"
     assert turn["should_reply"] is False
 
 
@@ -556,6 +559,7 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
 
     assert turn is not None
     assert turn["prompt"] == "hi @faltoo"
+    assert turn["sender_name"] == "15555550123"
     assert turn["should_reply"] is True
     assert client.get_me_calls == 1
 
@@ -607,8 +611,8 @@ async def test_group_follow_up_mention_sees_earlier_unmentioned_history(
     assert client.replies == ["Done"]
     assert seen == [
         [
-            "We need to order milk today",
-            "@faltoo find the best way to do this",
+            "[from 15555550123] We need to order milk today",
+            "[from 15555550123] @faltoo find the best way to do this",
         ]
     ]
 

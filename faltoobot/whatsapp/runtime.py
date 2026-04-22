@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import re
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 from uuid import uuid4
 
 from neonize.aioze.client import NewAClient
@@ -67,6 +67,7 @@ class PendingAlbum(TypedDict):
     quoted_message_text: str
     reply_event: MessageEv
     should_reply: bool
+    sender_name: str | None
 
 
 def source_chat_ids(source: Any) -> set[str]:
@@ -274,6 +275,7 @@ class Turn(TypedDict):
     attachments: list[Path]
     audio: Any
     should_reply: bool
+    sender_name: NotRequired[str | None]
 
 
 async def _handle_slash_command(
@@ -414,6 +416,18 @@ def _quoted_participant_ids(message: Message) -> set[str]:
     return {chat for chat in quoted_ids if chat}
 
 
+def _sender_name(event: MessageEv) -> str | None:
+    pushname = " ".join(str(getattr(event.Info, "Pushname", "") or "").split()).strip()
+    if pushname:
+        return pushname
+    source = event.Info.MessageSource
+    for jid in (source.SenderAlt, source.Sender):
+        user = str(getattr(jid, "User", "") or "").strip()
+        if user:
+            return user.split(":", 1)[0]
+    return None
+
+
 async def _bot_identity_ids(client: NewAClient) -> set[str]:
     """Return the normalized WhatsApp IDs that identify the connected bot account."""
     cache_key = id(client)
@@ -499,6 +513,7 @@ def _turn_from_pending_album(pending_album: PendingAlbum) -> Turn:
         "attachments": pending_album["attachments"],
         "audio": None,
         "should_reply": pending_album["should_reply"],
+        "sender_name": pending_album["sender_name"],
     }
 
 
@@ -513,6 +528,7 @@ async def _handle_pending_album(  # noqa: PLR0913
     user_text: str,
     quoted_message_text: str,
     should_reply: bool,
+    sender_name: str | None,
     message: Any,
     workspace: Path,
 ) -> Turn | None:
@@ -553,6 +569,8 @@ async def _handle_pending_album(  # noqa: PLR0913
     if quoted_message_text and not pending_album["quoted_message_text"]:
         pending_album["quoted_message_text"] = quoted_message_text
     pending_album["should_reply"] = pending_album["should_reply"] or should_reply
+    if sender_name and not pending_album["sender_name"]:
+        pending_album["sender_name"] = sender_name
     # comment: keep buffering until WhatsApp says the album is complete.
     if len(pending_album["attachments"]) < pending_album["expected_images"]:
         return None
@@ -635,6 +653,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         return None
 
     should_reply = True
+    sender_name = _sender_name(event) if source.IsGroup else None
     if source.IsGroup:
         should_reply = await is_bot_addressed(client, event.Message)
 
@@ -661,6 +680,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         user_text=user_text,
         quoted_message_text=quoted_message_text,
         should_reply=should_reply,
+        sender_name=sender_name,
         message=message,
         workspace=workspace,
     )
@@ -687,6 +707,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
             "quoted_message_text": quoted_message_text,
             "reply_event": event,
             "should_reply": should_reply,
+            "sender_name": sender_name,
         }
         return None
     attachments = (
@@ -743,4 +764,5 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         "attachments": attachments,
         "audio": None,
         "should_reply": should_reply,
+        "sender_name": sender_name,
     }
