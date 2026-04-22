@@ -2,6 +2,12 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.1.3 — 2026-04-20
+
+### Changed
+- WhatsApp group chats now keep recent unmentioned messages as context for later mentions and replies.
+- Group turns now include the sender name in stored chat context.
+
 ## 3.1.2 — 2026-04-20
 
 ### Changed
