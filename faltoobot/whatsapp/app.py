@@ -63,6 +63,7 @@ async def _start_polling_notifications() -> None:
                         "quoted_message_text": "",
                         "attachments": [],
                         "audio": None,
+                        "should_reply": True,
                     }
                     stored = await append_user_turn(
                         session,
@@ -140,7 +141,7 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
             attachments=turn["attachments"] or None,
             message_ids=turn["message_ids"],
         )
-    if not stored:
+    if not stored or not turn["should_reply"]:
         return
     current_timer = debounce_timers.pop(chat_key, None)
     if current_timer is not None:

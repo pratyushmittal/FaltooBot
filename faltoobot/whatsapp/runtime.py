@@ -66,6 +66,7 @@ class PendingAlbum(TypedDict):
     prompt: str
     quoted_message_text: str
     reply_event: MessageEv
+    should_reply: bool
 
 
 def source_chat_ids(source: Any) -> set[str]:
@@ -272,6 +273,7 @@ class Turn(TypedDict):
     quoted_message_text: str
     attachments: list[Path]
     audio: Any
+    should_reply: bool
 
 
 async def _handle_slash_command(
@@ -496,6 +498,7 @@ def _turn_from_pending_album(pending_album: PendingAlbum) -> Turn:
         "quoted_message_text": "",
         "attachments": pending_album["attachments"],
         "audio": None,
+        "should_reply": pending_album["should_reply"],
     }
 
 
@@ -509,6 +512,7 @@ async def _handle_pending_album(  # noqa: PLR0913
     image_message: bool,
     user_text: str,
     quoted_message_text: str,
+    should_reply: bool,
     message: Any,
     workspace: Path,
 ) -> Turn | None:
@@ -548,6 +552,7 @@ async def _handle_pending_album(  # noqa: PLR0913
     # comment: remember the first quoted-message context so the final turn keeps it.
     if quoted_message_text and not pending_album["quoted_message_text"]:
         pending_album["quoted_message_text"] = quoted_message_text
+    pending_album["should_reply"] = pending_album["should_reply"] or should_reply
     # comment: keep buffering until WhatsApp says the album is complete.
     if len(pending_album["attachments"]) < pending_album["expected_images"]:
         return None
@@ -555,8 +560,28 @@ async def _handle_pending_album(  # noqa: PLR0913
     return _turn_from_pending_album(pending_album)
 
 
-async def _should_process_event(
-    client: NewAClient,
+def _is_group_allowed(
+    event: MessageEv,
+    *,
+    config: Config,
+    chat_jid: str,
+    sender_jid: str,
+) -> bool:
+    source_ids = source_chat_ids(event.Info.MessageSource)
+    if not config.allow_group_chats or not _matches_allowed_chats(
+        config.allow_group_chats, source_ids
+    ):
+        logger.info(
+            "Ignoring group message from %s in %s because it is not group-allowlisted. Seen IDs: %s",
+            sender_jid,
+            chat_jid,
+            ", ".join(sorted(source_ids)) or "<none>",
+        )
+        return False
+    return True
+
+
+async def _should_store_event(
     event: MessageEv,
     *,
     config: Config,
@@ -567,27 +592,15 @@ async def _should_process_event(
     if source.IsFromMe:
         return False
 
-    source_ids = source_chat_ids(source)
     if source.IsGroup:
-        if not config.allow_group_chats or not _matches_allowed_chats(
-            config.allow_group_chats, source_ids
-        ):
-            logger.info(
-                "Ignoring group message from %s in %s because it is not group-allowlisted. Seen IDs: %s",
-                sender_jid,
-                chat_jid,
-                ", ".join(sorted(source_ids)) or "<none>",
-            )
-            return False
-        if not await is_bot_addressed(client, event.Message):
-            logger.info(
-                "Ignoring group message from %s in %s because the bot was neither mentioned nor quoted.",
-                sender_jid,
-                chat_jid,
-            )
-            return False
-        return True
+        return _is_group_allowed(
+            event,
+            config=config,
+            chat_jid=chat_jid,
+            sender_jid=sender_jid,
+        )
 
+    source_ids = source_chat_ids(source)
     allowed = _matches_allowed_chats(config.allowed_chats, source_ids)
     if not allowed:
         logger.info(
@@ -613,14 +626,17 @@ async def get_turn_locked(  # noqa: C901, PLR0911
     chat_jid = Jid2String(source.Chat)
     sender_jid = Jid2String(source.Sender)
 
-    if not await _should_process_event(
-        client,
+    if not await _should_store_event(
         event,
         config=config,
         chat_jid=chat_jid,
         sender_jid=sender_jid,
     ):
         return None
+
+    should_reply = True
+    if source.IsGroup:
+        should_reply = await is_bot_addressed(client, event.Message)
 
     workspace = Path(get_messages(session)["workspace"])
     message = event.Message
@@ -644,6 +660,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         image_message=image_message,
         user_text=user_text,
         quoted_message_text=quoted_message_text,
+        should_reply=should_reply,
         message=message,
         workspace=workspace,
     )
@@ -669,6 +686,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
             "prompt": "",
             "quoted_message_text": quoted_message_text,
             "reply_event": event,
+            "should_reply": should_reply,
         }
         return None
     attachments = (
@@ -724,4 +742,5 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         "quoted_message_text": "",
         "attachments": attachments,
         "audio": None,
+        "should_reply": should_reply,
     }
