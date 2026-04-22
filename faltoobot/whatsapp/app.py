@@ -63,14 +63,12 @@ async def _start_polling_notifications() -> None:
                         "quoted_message_text": "",
                         "attachments": [],
                         "audio": None,
-                        "should_reply": True,
                     }
                     stored = await append_user_turn(
                         session,
                         question=turn["prompt"],
                         attachments=turn["attachments"] or None,
                         message_ids=turn["message_ids"],
-                        sender_name=turn.get("sender_name"),
                     )
                     if stored:
                         await runtime.process_turn_locked(
@@ -141,9 +139,10 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
             question=turn["prompt"],
             attachments=turn["attachments"] or None,
             message_ids=turn["message_ids"],
-            sender_name=turn.get("sender_name"),
         )
-    if not stored or not turn["should_reply"]:
+    if not stored or await runtime.is_unmentioned_group_message(
+        current_client, turn["event"]
+    ):
         return
     current_timer = debounce_timers.pop(chat_key, None)
     if current_timer is not None:

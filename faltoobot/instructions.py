@@ -4,7 +4,6 @@ from faltoobot.config import Config
 from faltoobot.prompts.coding_agent import PROMPT as CODING_AGENT_PROMPT
 from faltoobot.prompts.sub_agent import PROMPT as SUB_AGENT_PROMPT
 from faltoobot.prompts.whatsapp import PROMPT as WHATSAPP_PROMPT
-from faltoobot.prompts.whatsapp_group import PROMPT as WHATSAPP_GROUP_PROMPT
 
 
 def _agents_file(path: Path) -> Path:
@@ -41,8 +40,6 @@ def get_system_instructions(config: Config, chat_key: str, workspace: Path) -> s
             prompt = SUB_AGENT_PROMPT
         case key if key.startswith("code@"):
             prompt = CODING_AGENT_PROMPT
-        case key if key.endswith("@g.us"):
-            prompt = WHATSAPP_GROUP_PROMPT
         case _:
             prompt = WHATSAPP_PROMPT
     return "\n\n".join(

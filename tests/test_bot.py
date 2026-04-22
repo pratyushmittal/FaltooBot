@@ -362,9 +362,10 @@ async def handle_message(
                 question=turn["prompt"],
                 attachments=turn["attachments"] or None,
                 message_ids=turn["message_ids"],
-                sender_name=turn.get("sender_name"),
             )
-        if stored and turn["should_reply"]:
+        if stored and not await runtime.is_unmentioned_group_message(
+            client, turn["event"]
+        ):
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
 
 
@@ -381,7 +382,6 @@ def recording_append_user_turn(calls: list[dict[str, Any]]):
         question: str,
         attachments: list[Path] | None = None,
         message_ids: list[str] | tuple[str, ...] = (),
-        sender_name: str | None = None,
     ) -> bool:
         messages_json = get_messages(session)
         messages_json["messages"].append(
@@ -504,7 +504,7 @@ async def test_get_turn_locked_uses_group_allowlist(
     )
 
     assert allowed_turn is not None
-    assert allowed_turn["prompt"] == "hi"
+    assert allowed_turn["prompt"] == "[from 15555550123] hi"
     assert blocked_turn is None
 
 
@@ -528,9 +528,7 @@ async def test_get_turn_locked_stores_group_messages_without_bot_mention(
     )
 
     assert turn is not None
-    assert turn["prompt"] == "hello group"
-    assert turn["sender_name"] == "15555550123"
-    assert turn["should_reply"] is False
+    assert turn["prompt"] == "[from 15555550123] hello group"
 
 
 @pytest.mark.anyio
@@ -558,10 +556,7 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
     )
 
     assert turn is not None
-    assert turn["prompt"] == "hi @faltoo"
-    assert turn["sender_name"] == "15555550123"
-    assert turn["should_reply"] is True
-    assert client.get_me_calls == 1
+    assert turn["prompt"] == "[from 15555550123] hi @faltoo"
 
 
 @pytest.mark.anyio
@@ -618,6 +613,54 @@ async def test_group_follow_up_mention_sees_earlier_unmentioned_history(
 
 
 @pytest.mark.anyio
+async def test_get_turn_locked_prefers_group_push_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+    event = fake_group_event(sender_phone="15555550123", text="hello group")
+    cast(Any, event.Info).PushName = "Aditya"
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        event,
+        config=config,
+        session=session,
+    )
+
+    assert turn is not None
+    assert turn["prompt"] == "[from Aditya] hello group"
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_keeps_group_slash_command_unprefixed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(sender_phone="15555550123", text="/status"),
+        config=config,
+        session=session,
+    )
+
+    assert turn is not None
+    assert turn["prompt"] == "/status"
+
+
+@pytest.mark.anyio
 async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -642,6 +685,7 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
 
     assert turn is not None
     assert turn["prompt"] == (
+        "[from 15555550123]\n"
         "The user is replying to an earlier message.\n\n"
         "Earlier message:\n> Please share the file\n\n"
         "User reply:\nthanks"
@@ -1047,7 +1091,6 @@ async def test_process_turn_locked_status_reports_version_and_config(
         "quoted_message_text": "",
         "attachments": [],
         "audio": None,
-        "should_reply": True,
     }
     await runtime.process_turn_locked(
         cast(NewAClient, client),
@@ -1243,7 +1286,6 @@ async def test_handle_message_debounces_reply_until_timer_fires(
         "quoted_message_text": "",
         "attachments": [],
         "audio": None,
-        "should_reply": True,
     }
     calls: list[str] = []
 
@@ -1300,7 +1342,6 @@ async def test_handle_message_schedules_debounce_outside_chat_lock(
         "quoted_message_text": "",
         "attachments": [],
         "audio": None,
-        "should_reply": True,
     }
     seen: list[bool] = []
 
@@ -1353,7 +1394,6 @@ async def test_handle_message_resets_existing_debounce_timer(
             "quoted_message_text": "",
             "attachments": [],
             "audio": None,
-            "should_reply": True,
         },
         {
             "event": events[1],
@@ -1363,7 +1403,6 @@ async def test_handle_message_resets_existing_debounce_timer(
             "quoted_message_text": "",
             "attachments": [],
             "audio": None,
-            "should_reply": True,
         },
     ]
     processed: list[str] = []
@@ -1428,7 +1467,6 @@ async def test_debounce_timer_processes_under_same_chat_lock(
         "quoted_message_text": "",
         "attachments": [],
         "audio": None,
-        "should_reply": True,
     }
     seen: list[bool] = []
     chat_key = "chat@s.whatsapp.net"
@@ -1469,16 +1507,15 @@ async def test_handle_message_stores_turn_without_reply_when_not_addressed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     loop = FakeDebounceLoop()
-    event = fake_event(text="hello")
+    event = fake_group_event(text="hello")
     turn: runtime.Turn = {
         "event": event,
         "chat": event.Info.MessageSource.Chat,
         "message_ids": [event.Info.ID],
-        "prompt": "hello",
+        "prompt": "[from 15555550123] hello",
         "quoted_message_text": "",
         "attachments": [],
         "audio": None,
-        "should_reply": False,
     }
     calls: list[str] = []
 
@@ -1488,7 +1525,7 @@ async def test_handle_message_stores_turn_without_reply_when_not_addressed(
     monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
     monkeypatch.setattr(whatsapp_app, "debounce_timers", {})
     monkeypatch.setattr(
-        whatsapp_app, "normalize_chat", lambda value: "chat@s.whatsapp.net"
+        whatsapp_app, "normalize_chat", lambda value: "120363000000000000@g.us"
     )
     monkeypatch.setattr(
         whatsapp_app, "get_session", lambda chat_key: (chat_key, "session-1")
@@ -1505,9 +1542,17 @@ async def test_handle_message_stores_turn_without_reply_when_not_addressed(
     async def fake_process_turn_locked(*args: object, **kwargs: object) -> None:
         calls.append("process")
 
+    async def fake_is_unmentioned_group_message(
+        *args: object, **kwargs: object
+    ) -> bool:
+        return True
+
     monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
     monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
     monkeypatch.setattr(runtime, "process_turn_locked", fake_process_turn_locked)
+    monkeypatch.setattr(
+        runtime, "is_unmentioned_group_message", fake_is_unmentioned_group_message
+    )
 
     await whatsapp_app._handle_message(cast(NewAClient, FakePresenceClient()), event)
 
@@ -1545,7 +1590,6 @@ async def test_process_turn_locked_handles_notification_turn_answers(
         "quoted_message_text": "",
         "attachments": [],
         "audio": None,
-        "should_reply": True,
     }
 
     stored = await sessions.append_user_turn(

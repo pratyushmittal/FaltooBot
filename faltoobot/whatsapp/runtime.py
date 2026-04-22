@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import re
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict, cast
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 from neonize.aioze.client import NewAClient
@@ -66,7 +66,6 @@ class PendingAlbum(TypedDict):
     prompt: str
     quoted_message_text: str
     reply_event: MessageEv
-    should_reply: bool
     sender_name: str | None
 
 
@@ -274,8 +273,6 @@ class Turn(TypedDict):
     quoted_message_text: str
     attachments: list[Path]
     audio: Any
-    should_reply: bool
-    sender_name: NotRequired[str | None]
 
 
 async def _handle_slash_command(
@@ -404,6 +401,19 @@ def _mentioned_chat_ids(message: Message) -> set[str]:
     return {chat for chat in mentioned if chat}
 
 
+def _prompt_with_sender(prompt: str, sender_name: str | None) -> str:
+    text = prompt.strip()
+    if text in SLASH_COMMANDS or not sender_name:
+        return text
+    speaker = " ".join(sender_name.split()).strip()
+    if not speaker:
+        return text
+    prefix = f"[from {speaker}]"
+    if not text:
+        return prefix
+    return f"{prefix}\n{text}" if "\n" in text else f"{prefix} {text}"
+
+
 def _quoted_participant_ids(message: Message) -> set[str]:
     """Return normalized participant IDs referenced by the quoted message context."""
     context_info = _message_context_info(message)
@@ -417,7 +427,13 @@ def _quoted_participant_ids(message: Message) -> set[str]:
 
 
 def _sender_name(event: MessageEv) -> str | None:
-    pushname = " ".join(str(getattr(event.Info, "Pushname", "") or "").split()).strip()
+    pushname = " ".join(
+        str(
+            getattr(event.Info, "PushName", "")
+            or getattr(event.Info, "Pushname", "")
+            or ""
+        ).split()
+    ).strip()
     if pushname:
         return pushname
     source = event.Info.MessageSource
@@ -445,13 +461,20 @@ async def _bot_identity_ids(client: NewAClient) -> set[str]:
     return normalized
 
 
-async def is_bot_addressed(client: NewAClient, message: Message) -> bool:
-    """Return whether the message explicitly mentions or quotes the bot account."""
-    addressed_ids = _mentioned_chat_ids(message) | _quoted_participant_ids(message)
-    if not addressed_ids:
+async def is_unmentioned_group_message(
+    client: NewAClient,
+    event: MessageEv | None,
+) -> bool:
+    """Return whether the event is a group message that neither mentions nor quotes the bot."""
+    if event is None or not event.Info.MessageSource.IsGroup:
         return False
+    addressed_ids = _mentioned_chat_ids(event.Message) | _quoted_participant_ids(
+        event.Message
+    )
+    if not addressed_ids:
+        return True
     bot_ids = await _bot_identity_ids(client)
-    return not addressed_ids.isdisjoint(bot_ids)
+    return addressed_ids.isdisjoint(bot_ids)
 
 
 def _quoted_reply_text(text: str, *, max_chars: int = 500) -> str:
@@ -506,14 +529,15 @@ def _turn_from_pending_album(pending_album: PendingAlbum) -> Turn:
         "event": pending_album["reply_event"],
         "chat": pending_album["reply_event"].Info.MessageSource.Chat,
         "message_ids": pending_album["message_ids"],
-        "prompt": _prompt_with_reply_context(
-            pending_album["prompt"], pending_album["quoted_message_text"]
+        "prompt": _prompt_with_sender(
+            _prompt_with_reply_context(
+                pending_album["prompt"], pending_album["quoted_message_text"]
+            ),
+            pending_album["sender_name"],
         ),
         "quoted_message_text": "",
         "attachments": pending_album["attachments"],
         "audio": None,
-        "should_reply": pending_album["should_reply"],
-        "sender_name": pending_album["sender_name"],
     }
 
 
@@ -527,7 +551,6 @@ async def _handle_pending_album(  # noqa: PLR0913
     image_message: bool,
     user_text: str,
     quoted_message_text: str,
-    should_reply: bool,
     sender_name: str | None,
     message: Any,
     workspace: Path,
@@ -568,7 +591,6 @@ async def _handle_pending_album(  # noqa: PLR0913
     # comment: remember the first quoted-message context so the final turn keeps it.
     if quoted_message_text and not pending_album["quoted_message_text"]:
         pending_album["quoted_message_text"] = quoted_message_text
-    pending_album["should_reply"] = pending_album["should_reply"] or should_reply
     if sender_name and not pending_album["sender_name"]:
         pending_album["sender_name"] = sender_name
     # comment: keep buffering until WhatsApp says the album is complete.
@@ -652,10 +674,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
     ):
         return None
 
-    should_reply = True
     sender_name = _sender_name(event) if source.IsGroup else None
-    if source.IsGroup:
-        should_reply = await is_bot_addressed(client, event.Message)
 
     workspace = Path(get_messages(session)["workspace"])
     message = event.Message
@@ -679,7 +698,6 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         image_message=image_message,
         user_text=user_text,
         quoted_message_text=quoted_message_text,
-        should_reply=should_reply,
         sender_name=sender_name,
         message=message,
         workspace=workspace,
@@ -706,7 +724,6 @@ async def get_turn_locked(  # noqa: C901, PLR0911
             "prompt": "",
             "quoted_message_text": quoted_message_text,
             "reply_event": event,
-            "should_reply": should_reply,
             "sender_name": sender_name,
         }
         return None
@@ -759,10 +776,11 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         "event": event,
         "chat": event.Info.MessageSource.Chat,
         "message_ids": [message_id],
-        "prompt": _prompt_with_reply_context(user_text, quoted_message_text),
+        "prompt": _prompt_with_sender(
+            _prompt_with_reply_context(user_text, quoted_message_text),
+            sender_name,
+        ),
         "quoted_message_text": "",
         "attachments": attachments,
         "audio": None,
-        "should_reply": should_reply,
-        "sender_name": sender_name,
     }

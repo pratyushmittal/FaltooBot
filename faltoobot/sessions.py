@@ -238,26 +238,12 @@ def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
     return ""
 
 
-def _sender_text(question: str, sender_name: str | None) -> str:
-    text = question.strip()
-    if not sender_name:
-        return text
-    speaker = " ".join(sender_name.split()).strip()
-    if not speaker:
-        return text
-    prefix = f"[from {speaker}]"
-    if not text:
-        return prefix
-    return f"{prefix}\n{text}" if "\n" in text else f"{prefix} {text}"
-
-
 async def append_user_turn(
     session: Session,
     *,
     question: str,
     attachments: Sequence[Attachment] | None = None,
     message_ids: Sequence[str] = (),
-    sender_name: str | None = None,
 ) -> bool:
     config = build_config()
     # comment: load the current session payload and skip fully-duplicate message ids.
@@ -270,7 +256,7 @@ async def append_user_turn(
 
     # comment: convert the user turn into the exact content shape expected by the model.
     workspace = Path(messages_json["workspace"])
-    text = _sender_text(question, sender_name)
+    text = question.strip()
     if attachments:
         content: str | list[dict[str, Any]] = []
         if text:
