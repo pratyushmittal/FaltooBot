@@ -414,6 +414,17 @@ def _prompt_with_sender(prompt: str, sender_name: str | None) -> str:
     return f"{prefix}\n{text}" if "\n" in text else f"{prefix} {text}"
 
 
+def _normalized_slash_command(text: str) -> str:
+    prompt = text.strip()
+    if prompt in SLASH_COMMANDS:
+        return prompt
+    match = re.fullmatch(r"(?:@\S+\s+)+(?P<command>/\w+)", prompt)
+    if match is None:
+        return prompt
+    command = match.group("command")
+    return command if command in SLASH_COMMANDS else prompt
+
+
 def _quoted_participant_ids(message: Message) -> set[str]:
     """Return normalized participant IDs referenced by the quoted message context."""
     context_info = _message_context_info(message)
@@ -766,6 +777,15 @@ async def get_turn_locked(  # noqa: C901, PLR0911
                 workspace=workspace,
             )
             return None
+    normalized_user_text = _normalized_slash_command(user_text)
+    prompt = (
+        normalized_user_text
+        if normalized_user_text in SLASH_COMMANDS
+        else _prompt_with_sender(
+            _prompt_with_reply_context(user_text, quoted_message_text),
+            sender_name,
+        )
+    )
     logger.info(
         "Received message from %s in %s: %s",
         sender_jid,
@@ -776,10 +796,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
         "event": event,
         "chat": event.Info.MessageSource.Chat,
         "message_ids": [message_id],
-        "prompt": _prompt_with_sender(
-            _prompt_with_reply_context(user_text, quoted_message_text),
-            sender_name,
-        ),
+        "prompt": prompt,
         "quoted_message_text": "",
         "attachments": attachments,
         "audio": None,

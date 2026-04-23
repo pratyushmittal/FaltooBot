@@ -661,6 +661,33 @@ async def test_get_turn_locked_keeps_group_slash_command_unprefixed(
 
 
 @pytest.mark.anyio
+async def test_get_turn_locked_normalizes_addressed_group_slash_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(
+            sender_phone="15555550123",
+            text="@faltoo /status",
+            mentioned_jids=["15555550999@s.whatsapp.net"],
+        ),
+        config=config,
+        session=session,
+    )
+
+    assert turn is not None
+    assert turn["prompt"] == "/status"
+
+
+@pytest.mark.anyio
 async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
