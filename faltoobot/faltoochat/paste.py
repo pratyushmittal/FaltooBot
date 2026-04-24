@@ -15,7 +15,7 @@ IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 
 def _attachment_path(session: sessions.Session) -> Path:
     return (
-        sessions.get_messages_path(session).parent
+        session.session_dir
         / "attachments"
         / f"clipboard-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')}.png"
     )

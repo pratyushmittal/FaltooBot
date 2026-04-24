@@ -30,10 +30,7 @@ def test_submit_queue_stores_messages_under_chat_root(
     assert queue[0]["content"] == "hello"
     assert queue[0]["id"]
     assert submit_queue.get_queue(session) == queue
-    assert (
-        sessions.get_messages_path(session).parent.parent
-        / submit_queue.SUBMIT_QUEUE_FILE
-    ).exists()
+    assert (session.chat_root / submit_queue.SUBMIT_QUEUE_FILE).exists()
 
 
 def test_submit_queue_updates_order_and_auto_submit(

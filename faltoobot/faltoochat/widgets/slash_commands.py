@@ -68,12 +68,12 @@ class SlashCommandsOptionList(OptionList):
         app = cast("FaltooChatApp", self.app)
         match command:
             case "/tree":
-                open_in_default_editor(sessions.get_messages_path(app.session))
+                open_in_default_editor(app.session.messages_path)
                 return True
             case "/reset":
                 workspace = app.workspace
                 app.session = sessions.get_session(
-                    chat_key=app.session[0],
+                    chat_key=app.session.chat_key,
                     session_id=str(uuid4()),
                     workspace=workspace,
                 )

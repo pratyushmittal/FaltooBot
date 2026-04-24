@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -99,7 +100,8 @@ def test_get_session_creates_messages_json_and_workspace(
     session = sessions.get_session(chat_key=chat_key)
     payload = sessions.get_messages(session)
 
-    assert payload["id"] == session[1]
+    assert isinstance(session, sessions.Session)
+    assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
     assert payload["messages"] == []
@@ -107,7 +109,12 @@ def test_get_session_creates_messages_json_and_workspace(
     assert Path(payload["workspace"]).is_dir()
     assert (Path(payload["workspace"]) / "AGENTS.md").exists()
     assert (
-        tmp_path / ".faltoobot" / "sessions" / chat_key / session[1] / "messages.json"
+        tmp_path
+        / ".faltoobot"
+        / "sessions"
+        / chat_key
+        / session.session_id
+        / "messages.json"
     ).exists()
 
 
@@ -164,10 +171,10 @@ def test_get_session_sets_dir_chat_key_and_last_used(
 
     session = sessions.get_session(chat_key=chat_key, workspace=workspace)
     payload = sessions.get_messages(session)
-    last_used = (
-        (tmp_path / ".faltoobot" / "sessions" / chat_key / sessions.LAST_USED_FILE)
-        .read_text(encoding="utf-8")
-        .strip()
+    metadata = json.loads(
+        (
+            tmp_path / ".faltoobot" / "sessions" / chat_key / sessions.SESSIONS_FILE
+        ).read_text(encoding="utf-8")
     )
 
     assert payload["chat_key"] == chat_key
@@ -175,7 +182,10 @@ def test_get_session_sets_dir_chat_key_and_last_used(
         f"code@{workspace.resolve().name}-"
         f"{hashlib.md5(str(workspace.resolve()).encode('utf-8')).hexdigest()[-6:]}"
     )
-    assert last_used == session[1]
+    assert metadata == {
+        "last_used": session.session_id,
+        "sessions": {session.session_id: session.session_id},
+    }
 
 
 def test_get_session_reads_last_used_session(
@@ -190,7 +200,7 @@ def test_get_session_reads_last_used_session(
     payload = sessions.get_messages(second)
 
     assert second == first
-    assert payload["id"] == first[1]
+    assert payload["id"] == first.session_id
 
 
 @pytest.mark.anyio
@@ -220,7 +230,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     ):
         assert instructions.startswith("system prompt")
         calls.append(list(input))
-        assert prompt_cache_key == session[1]
+        assert prompt_cache_key == session.session_id
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         input.append(
             cast(
@@ -624,7 +634,16 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
         fake_get_answer_streaming,
     )
 
-    answer = await sessions.get_answer(("code@test", "session-1"))
+    answer = await sessions.get_answer(
+        sessions.Session(
+            chat_key="code@test",
+            session_id="session-1",
+            chat_root=Path("chat-root"),
+            session_dir=Path("session-dir"),
+            messages_path=Path("messages.json"),
+            sessions_path=Path("sessions.json"),
+        )
+    )
 
     assert answer == "hello from codex"
 

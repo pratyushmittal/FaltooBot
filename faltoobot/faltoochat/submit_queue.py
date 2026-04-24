@@ -14,7 +14,7 @@ _QUEUE_LOCKS_GUARD = Lock()
 
 
 def _queue_path(session: sessions.Session) -> Path:
-    return sessions.get_messages_path(session).parent.parent / SUBMIT_QUEUE_FILE
+    return session.chat_root / SUBMIT_QUEUE_FILE
 
 
 def _queue_lock(session: sessions.Session) -> RLock:

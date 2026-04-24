@@ -21,6 +21,7 @@ from faltoobot.config import Config, config_status_text, normalize_chat
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
+    Session,
     get_answer,
     get_last_usage,
     get_messages,
@@ -278,7 +279,7 @@ class Turn(TypedDict):
 async def _handle_slash_command(
     client: NewAClient,
     *,
-    session: tuple[str, str],
+    session: Session,
     config: Config,
     turn: Turn,
     messages_json: MessagesJson,
@@ -292,7 +293,7 @@ async def _handle_slash_command(
             config_status_text(config, get_last_usage(session)), event
         )
     elif prompt == "/reset":
-        reset_session = get_session(chat_key=session[0], session_id=str(uuid4()))
+        reset_session = get_session(chat_key=session.chat_key, session_id=str(uuid4()))
         reset_messages_json = get_messages(reset_session)
         reset_messages_json["message_ids"] = list(messages_json["message_ids"])
         set_messages(reset_session, reset_messages_json)
@@ -301,7 +302,7 @@ async def _handle_slash_command(
 
 async def process_turn_locked(
     client: NewAClient,
-    session: tuple[str, str],
+    session: Session,
     *,
     config: Config,
     turn: "Turn",
@@ -668,7 +669,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911
     event: MessageEv,
     *,
     config: Config,
-    session: tuple[str, str],
+    session: Session,
     pending_albums: dict[str, PendingAlbum] | None = None,
 ) -> Turn | None:
     """Return a normalized turn for one event while the caller holds the chat lock."""

@@ -1,8 +1,9 @@
 import hashlib
 import json
+from dataclasses import dataclass
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, AsyncIterator, TypeAlias, TypedDict, cast
+from typing import Any, AsyncIterator, TypedDict, cast
 from uuid import uuid4
 
 from openai import AsyncOpenAI
@@ -30,7 +31,7 @@ from faltoobot.tools import (
 )
 
 MESSAGES_FILE = "messages.json"
-LAST_USED_FILE = "last_used"
+SESSIONS_FILE = "sessions.json"
 WORKSPACE_DIR = "workspace"
 
 
@@ -43,8 +44,22 @@ class MessagesJson(TypedDict):
     message_ids: list[str]
 
 
+class SessionsJson(TypedDict):
+    last_used: str
+    sessions: dict[str, str]
+
+
 Attachment = str | Path
-Session: TypeAlias = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class Session:
+    chat_key: str
+    session_id: str
+    chat_root: Path
+    session_dir: Path
+    messages_path: Path
+    sessions_path: Path
 
 
 def _validate_chat_key(chat_key: str) -> str:
@@ -64,6 +79,7 @@ def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
 def _normalized_messages_json(
     chat_key: str,
     session_id: str,
+    session_dir: Path,
     payload: dict[str, Any],
     workspace: Path | None = None,
 ) -> MessagesJson:
@@ -72,7 +88,7 @@ def _normalized_messages_json(
         workspace = (
             Path(saved_workspace)
             if isinstance(saved_workspace, str)
-            else get_messages_path((chat_key, session_id)).parent / WORKSPACE_DIR
+            else session_dir / WORKSPACE_DIR
         )
     else:
         workspace = workspace.expanduser()
@@ -95,22 +111,12 @@ def _write_text_atomic(path: Path, value: str) -> None:
     temp.replace(path)
 
 
-def get_last_used_session_id(chat_key: str) -> str | None:
-    path = app_root() / "sessions" / _validate_chat_key(chat_key) / LAST_USED_FILE
+def _get_last_used_session_id(chat_key: str) -> str | None:
+    path = app_root() / "sessions" / chat_key / SESSIONS_FILE
     if not path.exists():
         return None
-    value = path.read_text(encoding="utf-8").strip()
-    return value or None
-
-
-def _session_parts(session: Session) -> tuple[str, str]:
-    chat_key, session_id = session
-    return _validate_chat_key(chat_key), session_id
-
-
-def get_messages_path(session: Session) -> Path:
-    chat_key, session_id = _session_parts(session)
-    return app_root() / "sessions" / chat_key / session_id / MESSAGES_FILE
+    sessions_json = cast(SessionsJson, json.loads(path.read_text(encoding="utf-8")))
+    return sessions_json["last_used"] or None
 
 
 def get_session(
@@ -119,11 +125,14 @@ def get_session(
     workspace: Path | None = None,
 ) -> Session:
     chat_key = _validate_chat_key(chat_key)
-    session_id = session_id or get_last_used_session_id(chat_key) or str(uuid4())
-    session = (chat_key, session_id)
-    messages_path = get_messages_path(session)
+    session_id = session_id or _get_last_used_session_id(chat_key) or str(uuid4())
+    chat_root = app_root() / "sessions" / chat_key
+    session_dir = chat_root / session_id
+    messages_path = session_dir / MESSAGES_FILE
+    sessions_path = chat_root / SESSIONS_FILE
+    session_dir.mkdir(parents=True, exist_ok=True)
     # comment: load saved state, normalize it, then ensure the workspace and metadata files exist.
-    payload = (
+    messages_payload = (
         json.loads(messages_path.read_text(encoding="utf-8"))
         if messages_path.exists()
         else {}
@@ -131,10 +140,17 @@ def get_session(
     messages_json = _normalized_messages_json(
         chat_key,
         session_id,
-        payload,
+        session_dir,
+        messages_payload,
         workspace,
     )
-    messages_path.parent.mkdir(parents=True, exist_ok=True)
+    sessions_json = (
+        cast(SessionsJson, json.loads(sessions_path.read_text(encoding="utf-8")))
+        if sessions_path.exists()
+        else cast(SessionsJson, {"last_used": "", "sessions": {}})
+    )
+    sessions_json["last_used"] = session_id
+    sessions_json["sessions"].setdefault(session_id, session_id)
     workspace_path = Path(messages_json["workspace"])
     workspace_path.mkdir(parents=True, exist_ok=True)
     # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
@@ -146,28 +162,24 @@ def get_session(
     )
     # comment: update the last-used session marker on disk.
     _write_text_atomic(
-        app_root() / "sessions" / chat_key / LAST_USED_FILE,
-        f"{session_id}\n",
+        sessions_path,
+        json.dumps(sessions_json, indent=2, ensure_ascii=False) + "\n",
     )
-    return session
+    return Session(
+        chat_key=chat_key,
+        session_id=session_id,
+        chat_root=chat_root,
+        session_dir=session_dir,
+        messages_path=messages_path,
+        sessions_path=sessions_path,
+    )
 
 
 def get_messages(session: Session) -> MessagesJson:
-    chat_key, session_id = _session_parts(session)
-    messages_path = get_messages_path(session)
-    payload = (
-        json.loads(messages_path.read_text(encoding="utf-8"))
-        if messages_path.exists()
-        else {}
+    payload = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    return _normalized_messages_json(
+        session.chat_key, session.session_id, session.session_dir, payload
     )
-    if not payload:
-        get_session(chat_key=chat_key, session_id=session_id)
-        payload = (
-            json.loads(messages_path.read_text(encoding="utf-8"))
-            if messages_path.exists()
-            else {}
-        )
-    return _normalized_messages_json(chat_key, session_id, payload)
 
 
 def get_last_usage(session: Session) -> dict[str, Any] | None:
@@ -181,14 +193,8 @@ def get_last_usage(session: Session) -> dict[str, Any] | None:
 
 
 def set_messages(session: Session, messages_json: MessagesJson) -> None:
-    chat_key, session_id = _session_parts(session)
-    get_session(
-        chat_key=chat_key,
-        session_id=session_id,
-        workspace=Path(messages_json["workspace"]),
-    )
     _write_text_atomic(
-        get_messages_path(session),
+        session.messages_path,
         json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
     )
 
@@ -288,8 +294,8 @@ async def get_answer_streaming(
     config = build_config()
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])
-    chat_key = session[0]
-    session_id = session[1]
+    chat_key = session.chat_key
+    session_id = session.session_id
     tools: list[Tool] = [
         get_run_shell_call_tool(workspace),
         get_run_in_python_shell_tool(workspace, session_key=f"{chat_key}:{session_id}"),

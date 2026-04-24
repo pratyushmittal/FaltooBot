@@ -377,7 +377,7 @@ class FaltooChatApp(App[None]):
         """Deliver queued notifications for this chat and ack or requeue them."""
         try:
             for path, notification in notify_queue.claim_notifications(
-                lambda item: item["chat_key"] == self.session[0]
+                lambda item: item["chat_key"] == self.session.chat_key
             ):
                 try:
                     message_item = get_local_user_message_item(
