@@ -101,6 +101,7 @@ def test_get_session_creates_messages_json_and_workspace(
     payload = sessions.get_messages(session)
 
     assert isinstance(session, sessions.Session)
+    assert session.name == session.session_id
     assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
@@ -116,6 +117,14 @@ def test_get_session_creates_messages_json_and_workspace(
         / session.session_id
         / "messages.json"
     ).exists()
+    assert json.loads(
+        (
+            tmp_path / ".faltoobot" / "sessions" / chat_key / sessions.SESSIONS_FILE
+        ).read_text(encoding="utf-8")
+    ) == {
+        "last_used": session.session_id,
+        "sessions": {session.session_id: session.session_id},
+    }
 
 
 def _config(tmp_path: Path) -> SimpleNamespace:
@@ -201,6 +210,76 @@ def test_get_session_reads_last_used_session(
 
     assert second == first
     assert payload["id"] == first.session_id
+
+
+def test_set_session_name_persists_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="code@test")
+
+    sessions.set_session_name(session, "Fix flaky tests")
+    renamed = sessions.get_session(
+        chat_key=session.chat_key,
+        session_id=session.session_id,
+    )
+
+    assert renamed.name == "Fix flaky tests"
+    assert sessions.list_sessions(session.chat_key) == [
+        {"id": session.session_id, "name": "Fix flaky tests"}
+    ]
+    assert json.loads(
+        (
+            tmp_path
+            / ".faltoobot"
+            / "sessions"
+            / session.chat_key
+            / sessions.SESSIONS_FILE
+        ).read_text(encoding="utf-8")
+    ) == {
+        "last_used": session.session_id,
+        "sessions": {session.session_id: "Fix flaky tests"},
+    }
+
+
+def test_list_sessions_includes_unnamed_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    first = sessions.get_session(chat_key="code@test", session_id="first")
+    second = sessions.get_session(chat_key="code@test", session_id="second")
+    sessions.set_session_name(first, "Fix flaky tests")
+
+    assert sessions.list_sessions("code@test") == [
+        {"id": "first", "name": "Fix flaky tests"},
+        {"id": "second", "name": "second"},
+    ]
+
+
+def test_list_sessions_ignores_stale_named_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="code@test", session_id="live")
+    sessions.set_session_name(session, "Live session")
+    (
+        tmp_path / ".faltoobot" / "sessions" / session.chat_key / sessions.SESSIONS_FILE
+    ).write_text(
+        json.dumps(
+            {
+                "last_used": "live",
+                "sessions": {"live": "Live session", "missing": "Missing session"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert sessions.list_sessions("code@test") == [
+        {"id": "live", "name": "Live session"}
+    ]
 
 
 @pytest.mark.anyio
@@ -638,6 +717,7 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
         sessions.Session(
             chat_key="code@test",
             session_id="session-1",
+            name="session-1",
             chat_root=Path("chat-root"),
             session_dir=Path("session-dir"),
             messages_path=Path("messages.json"),

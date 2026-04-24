@@ -1,3 +1,5 @@
+from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
@@ -9,6 +11,9 @@ from faltoobot.config import build_config, config_status_text
 from faltoobot.faltoochat.terminal import open_in_default_editor
 from faltoobot.session_utils import get_local_user_message_item
 
+from faltoobot.faltoochat.widgets.session_picker import SessionPicker
+from faltoobot.faltoochat.widgets.text_input_modal import TextInputModal
+
 from ..slash_commands import SlashCommandStore
 
 if TYPE_CHECKING:
@@ -16,7 +21,9 @@ if TYPE_CHECKING:
 
 
 SLASH_COMMANDS = {
+    "/name": "name the current session",
     "/reset": "start a fresh session",
+    "/resume": "resume another session",
     "/status": "show bot status",
     "/tree": "open the current session messages file",
 }
@@ -67,6 +74,32 @@ class SlashCommandsOptionList(OptionList):
     async def _handle_builtin_command(self, command: str) -> bool:
         app = cast("FaltooChatApp", self.app)
         match command:
+            case "/name":
+
+                async def on_result(name: str | None) -> None:
+                    if name is not None:
+                        sessions.set_session_name(app.session, name)
+                        app.session = replace(
+                            app.session,
+                            name=name or app.session.session_id,
+                        )
+                        await app.show_local_answer(
+                            f"`Saved session name: {name}`"
+                            if name
+                            else "`Cleared session name.`"
+                        )
+                    app.focus_composer()
+
+                app.push_screen(
+                    TextInputModal(
+                        initial_value=app.session.name,
+                        title="Name session",
+                        placeholder="Enter a session name",
+                        allow_empty=True,
+                    ),
+                    on_result,
+                )
+                return True
             case "/tree":
                 open_in_default_editor(app.session.messages_path)
                 return True
@@ -80,6 +113,27 @@ class SlashCommandsOptionList(OptionList):
                 app.workspace = workspace
                 await app.load_messages()
                 await app.queue().refresh_queue()
+                return True
+            case "/resume":
+
+                async def on_result(result: dict[str, str] | None) -> None:
+                    if result is None:
+                        app.focus_composer()
+                        return
+                    app.session = sessions.get_session(
+                        chat_key=app.session.chat_key,
+                        session_id=result["id"],
+                    )
+                    app.workspace = Path(
+                        sessions.get_messages(app.session)["workspace"]
+                    )
+                    await app.load_messages()
+                    await app.queue().refresh_queue()
+
+                app.push_screen(
+                    SessionPicker(chat_key=app.session.chat_key),
+                    on_result,
+                )
                 return True
             case "/status":
                 await app.show_local_answer(

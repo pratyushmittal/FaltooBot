@@ -13,7 +13,12 @@ from faltoobot.session_utils import (
     get_local_user_message_item,
 )
 from faltoobot.faltoochat.review import ReviewView
-from faltoobot.faltoochat.widgets import QueueWidget, SlashCommandsOptionList
+from faltoobot.faltoochat.widgets import (
+    QueueWidget,
+    SessionPicker,
+    SlashCommandsOptionList,
+    TextInputModal,
+)
 from faltoobot.faltoochat.widgets.search_file import SearchFile
 from textual.widgets import Input, Markdown, OptionList, TabbedContent
 
@@ -125,9 +130,110 @@ async def test_minchat_shows_slash_command_suggestions(
         option_list = app.query_one("#slash-commands", SlashCommandsOptionList)
         assert option_list.display
         assert [str(option.prompt) for option in option_list.options] == [
+            "/name — name the current session",
             "/reset — start a fresh session",
+            "/resume — resume another session",
             "/status — show bot status",
             "/tree — open the current session messages file",
+        ]
+
+
+@pytest.mark.anyio
+async def test_minchat_name_command_opens_modal_and_saves_session_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("/name")
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        modal = app.screen
+        assert isinstance(modal, TextInputModal)
+        name_input = modal.query_one("#text-input-input", Input)
+        name_input.value = ""
+        await pilot.click(name_input)
+        await pilot.press(
+            "F",
+            "i",
+            "x",
+            "space",
+            "f",
+            "l",
+            "a",
+            "k",
+            "y",
+            "space",
+            "t",
+            "e",
+            "s",
+            "t",
+            "s",
+            "enter",
+        )
+        await wait_for_condition(
+            lambda: (
+                sessions.list_sessions(app.session.chat_key)
+                == [{"id": app.session.session_id, "name": "Fix flaky tests"}]
+            )
+        )
+
+        assert sessions.list_sessions(app.session.chat_key) == [
+            {"id": app.session.session_id, "name": "Fix flaky tests"}
+        ]
+
+
+@pytest.mark.anyio
+async def test_minchat_resume_command_opens_picker_and_switches_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    current_messages = sessions.get_messages(app.session)
+    current_messages["messages"] = [
+        {"type": "message", "role": "user", "content": "current session"}
+    ]
+    sessions.set_messages(app.session, current_messages)
+    target = sessions.get_session(
+        chat_key=app.session.chat_key,
+        session_id="target-session",
+        workspace=workspace,
+    )
+    target_messages = sessions.get_messages(target)
+    target_messages["messages"] = [
+        {"type": "message", "role": "user", "content": "resume target"}
+    ]
+    sessions.set_messages(target, target_messages)
+    sessions.set_session_name(target, "Fix flaky tests")
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("/resume")
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        modal = app.screen
+        assert isinstance(modal, SessionPicker)
+        search_input = modal.query_one("#telescope-input", Input)
+        await pilot.click(search_input)
+        await pilot.press("F", "i", "x")
+        await wait_for_condition(
+            lambda: len(modal.query_one("#telescope-options", OptionList).options) == 1
+        )
+        await pilot.press("enter")
+        await wait_for_condition(lambda: app.session.session_id == target.session_id)
+
+        transcript = app.query_one("#transcript")
+        assert app.session.session_id == target.session_id
+        assert [block._markdown for block in transcript.query(Markdown)] == [
+            "resume target"
         ]
 
 

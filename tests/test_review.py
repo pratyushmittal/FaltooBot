@@ -2038,7 +2038,7 @@ async def test_review_search_mode_jumps_by_search_and_escape_resets_it(
         await pilot.press("/")
         await pilot.pause(0)
         search_modal = app.screen
-        search_input = search_modal.query_one("#review-search-input")
+        search_input = search_modal.query_one("#text-input-input")
         await pilot.click(search_input)
         await pilot.press("5", "0", "enter")
         await pilot.pause(0)

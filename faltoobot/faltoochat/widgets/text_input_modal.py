@@ -5,15 +5,15 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 
-class SearchInFile(ModalScreen[str | None]):
+class TextInputModal(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "cancel", priority=True, show=False)]
 
     DEFAULT_CSS = """
-    SearchInFile {
+    TextInputModal {
         align: center middle;
     }
 
-    #review-search-dialog {
+    #text-input-dialog {
         width: 80;
         max-width: 80;
         height: auto;
@@ -22,33 +22,43 @@ class SearchInFile(ModalScreen[str | None]):
         border: round $primary;
     }
 
-    #review-search-input {
+    #text-input-input {
         width: 1fr;
     }
     """
 
-    def __init__(self, *, initial_term: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        initial_value: str = "",
+        title: str = "Search review",
+        placeholder: str = "Enter search term",
+        allow_empty: bool = False,
+    ) -> None:
         super().__init__()
-        self.initial_term = initial_term
+        self.initial_value = initial_value
+        self.title = title
+        self.placeholder = placeholder
+        self.allow_empty = allow_empty
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="review-search-dialog"):
-            yield Static("Search review")
+        with Vertical(id="text-input-dialog"):
+            yield Static(self.title)
             yield Input(
-                self.initial_term,
-                placeholder="Enter search term",
-                id="review-search-input",
+                self.initial_value,
+                placeholder=self.placeholder,
+                id="text-input-input",
             )
 
     def on_mount(self) -> None:
-        self.query_one("#review-search-input", Input).focus()
+        self.query_one("#text-input-input", Input).focus()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         term = event.value.strip()
-        if not term:
+        if not term and not self.allow_empty:
             self.dismiss(None)
             return
         self.dismiss(term)

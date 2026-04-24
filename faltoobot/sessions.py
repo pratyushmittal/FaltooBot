@@ -56,6 +56,7 @@ Attachment = str | Path
 class Session:
     chat_key: str
     session_id: str
+    name: str
     chat_root: Path
     session_dir: Path
     messages_path: Path
@@ -111,25 +112,22 @@ def _write_text_atomic(path: Path, value: str) -> None:
     temp.replace(path)
 
 
-def _get_last_used_session_id(chat_key: str) -> str | None:
-    path = app_root() / "sessions" / chat_key / SESSIONS_FILE
-    if not path.exists():
-        return None
-    sessions_json = cast(SessionsJson, json.loads(path.read_text(encoding="utf-8")))
-    return sessions_json["last_used"] or None
-
-
 def get_session(
     chat_key: str,
     session_id: str | None = None,
     workspace: Path | None = None,
 ) -> Session:
     chat_key = _validate_chat_key(chat_key)
-    session_id = session_id or _get_last_used_session_id(chat_key) or str(uuid4())
     chat_root = app_root() / "sessions" / chat_key
+    sessions_path = chat_root / SESSIONS_FILE
+    sessions_json = (
+        cast(SessionsJson, json.loads(sessions_path.read_text(encoding="utf-8")))
+        if sessions_path.exists()
+        else cast(SessionsJson, {"last_used": "", "sessions": {}})
+    )
+    session_id = session_id or sessions_json["last_used"] or str(uuid4())
     session_dir = chat_root / session_id
     messages_path = session_dir / MESSAGES_FILE
-    sessions_path = chat_root / SESSIONS_FILE
     session_dir.mkdir(parents=True, exist_ok=True)
     # comment: load saved state, normalize it, then ensure the workspace and metadata files exist.
     messages_payload = (
@@ -144,13 +142,9 @@ def get_session(
         messages_payload,
         workspace,
     )
-    sessions_json = (
-        cast(SessionsJson, json.loads(sessions_path.read_text(encoding="utf-8")))
-        if sessions_path.exists()
-        else cast(SessionsJson, {"last_used": "", "sessions": {}})
-    )
     sessions_json["last_used"] = session_id
     sessions_json["sessions"].setdefault(session_id, session_id)
+    session_name = sessions_json["sessions"].get(session_id) or session_id
     workspace_path = Path(messages_json["workspace"])
     workspace_path.mkdir(parents=True, exist_ok=True)
     # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
@@ -168,6 +162,7 @@ def get_session(
     return Session(
         chat_key=chat_key,
         session_id=session_id,
+        name=session_name,
         chat_root=chat_root,
         session_dir=session_dir,
         messages_path=messages_path,
@@ -175,10 +170,43 @@ def get_session(
     )
 
 
+def set_session_name(session: Session, name: str) -> None:
+    sessions_json = cast(
+        SessionsJson,
+        json.loads(session.sessions_path.read_text(encoding="utf-8")),
+    )
+    sessions_json["sessions"][session.session_id] = name
+    _write_text_atomic(
+        session.sessions_path,
+        json.dumps(sessions_json, indent=2, ensure_ascii=False) + "\n",
+    )
+
+
+def list_sessions(chat_key: str) -> list[dict[str, str]]:
+    chat_key = _validate_chat_key(chat_key)
+    chat_root = app_root() / "sessions" / chat_key
+    names = cast(
+        SessionsJson,
+        json.loads((chat_root / SESSIONS_FILE).read_text(encoding="utf-8")),
+    )["sessions"]
+    return [
+        {
+            "id": session_id,
+            "name": names.get(session_id) or session_id,
+        }
+        for session_id in sorted(
+            path.parent.name for path in chat_root.glob(f"*/{MESSAGES_FILE}")
+        )
+    ]
+
+
 def get_messages(session: Session) -> MessagesJson:
     payload = json.loads(session.messages_path.read_text(encoding="utf-8"))
     return _normalized_messages_json(
-        session.chat_key, session.session_id, session.session_dir, payload
+        session.chat_key,
+        session.session_id,
+        session.session_dir,
+        payload,
     )
 
 

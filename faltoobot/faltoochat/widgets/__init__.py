@@ -4,7 +4,8 @@ from .review_comment_modal import ReviewCommentModal
 from .review_diff import ReviewDiffView
 from .search_file import SearchFile
 from .search_project import SearchProject
-from .search_in_file import SearchInFile
+from .text_input_modal import TextInputModal
+from .session_picker import SessionPicker
 from .slash_commands import SlashCommandsOptionList
 from .telescope import Telescope
 
@@ -15,7 +16,8 @@ __all__ = [
     "ReviewCommentModal",
     "ReviewDiffView",
     "SearchFile",
-    "SearchInFile",
+    "TextInputModal",
+    "SessionPicker",
     "SlashCommandsOptionList",
     "SearchProject",
     "Telescope",

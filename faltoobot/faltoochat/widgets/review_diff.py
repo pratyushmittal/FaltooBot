@@ -31,7 +31,7 @@ from ..review_api import get_review
 from ..terminal import open_in_editor
 
 from .review_comment_modal import ReviewCommentModal
-from .search_in_file import SearchInFile
+from .text_input_modal import TextInputModal
 
 if TYPE_CHECKING:
     from ..app import FaltooChatApp
@@ -512,7 +512,7 @@ class ReviewDiffView(TextArea):
             self.action_review_jump_next()
 
         self.app.push_screen(
-            SearchInFile(initial_term=self.review_view.search_term),
+            TextInputModal(initial_value=self.review_view.search_term),
             on_term,
         )
 
