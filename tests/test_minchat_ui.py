@@ -186,6 +186,11 @@ async def test_minchat_name_command_opens_modal_and_saves_session_name(
         assert sessions.list_sessions(app.session.chat_key) == [
             {"id": app.session.session_id, "name": "Fix flaky tests"}
         ]
+        transcript = app.query_one("#transcript")
+        assert any(
+            "Saved session name: Fix flaky tests" in block._markdown
+            for block in transcript.query(Markdown)
+        )
 
 
 @pytest.mark.anyio
