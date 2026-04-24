@@ -135,7 +135,6 @@ def _skill_context(chat_key: str) -> dict[str, str]:
         "browser_profile": str(browser_runtime.browser_profile_dir(config.root)),
         "cdp_url": f"http://127.0.0.1:{browser_runtime.CDP_PORT}",
         "cdp_port": str(browser_runtime.CDP_PORT),
-        "gemini_model": config.gemini_model,
     }
 
 

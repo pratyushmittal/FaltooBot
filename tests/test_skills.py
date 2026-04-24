@@ -123,14 +123,13 @@ def test_load_skill_injects_runtime_placeholders(monkeypatch, tmp_path: Path) ->
         lambda: SimpleNamespace(
             root=home_root,
             browser_binary="/tmp/chromium",
-            gemini_model="gemini-test-image",
         ),
     )
     workspace = tmp_path / "workspace"
     _write_file_skill(
         home_root / "skills",
         "notification-listener",
-        "---\ndescription: sub-agent helper\n---\nnotify key: {chat_key}\nbrowser: {browser_binary}\nprofile: {browser_profile}\ncdp: {cdp_url}\nport: {cdp_port}\ngemini: {gemini_model}\n",
+        "---\ndescription: sub-agent helper\n---\nnotify key: {chat_key}\nbrowser: {browser_binary}\nprofile: {browser_profile}\ncdp: {cdp_url}\nport: {cdp_port}\n",
     )
 
     result = skills.load_skill(workspace, "notification-listener", chat_key="code@main")
@@ -142,7 +141,6 @@ def test_load_skill_injects_runtime_placeholders(monkeypatch, tmp_path: Path) ->
             f"profile: {home_root / 'faltoobot'}",
             "cdp: http://127.0.0.1:9222",
             "port: 9222",
-            "gemini: gemini-test-image",
         ]
     )
 

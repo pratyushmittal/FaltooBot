@@ -69,13 +69,13 @@ def test_run_shell_call_in_workspace_runs_in_workspace(tmp_path: Path) -> None:
     assert "xworld" in result["stdout"]
 
 
-def test_run_shell_call_in_workspace_sets_gemini_key_from_config(
+def test_run_shell_call_in_workspace_sets_openai_key_from_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         tools,
         "build_config",
-        lambda: type("Config", (), {"gemini_api_key": "gem-key"})(),
+        lambda: type("Config", (), {"api_key": "openai-key"})(),
         raising=False,
     )
 
@@ -84,7 +84,7 @@ def test_run_shell_call_in_workspace_sets_gemini_key_from_config(
             str(tmp_path),
             """python - <<'PY'
 import os
-print(os.environ.get("GEMINI_API_KEY", ""))
+print(os.environ.get("OPENAI_API_KEY", ""))
 PY""",
             timeout_ms=5000,
         )
@@ -93,7 +93,7 @@ PY""",
     assert result["stderr"] == ""
     assert result["exit_code"] == 0
     assert result["timed_out"] is False
-    assert "gem-key" in result["stdout"]
+    assert "openai-key" in result["stdout"]
 
 
 def test_get_run_in_python_shell_tool_builds_valid_tool_definition(
