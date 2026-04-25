@@ -77,3 +77,54 @@ def test_format_notification_message_without_source_still_wraps_message() -> Non
     assert "Reply with [noreply]" in message
     assert "## message" in message
     assert "hello" in message
+
+
+def test_notify_queue_claim_limit_leaves_other_notifications_pending(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+    first_id = notify_queue.enqueue_notification("code@demo", "first")
+    second_id = notify_queue.enqueue_notification("code@demo", "second")
+    ordered_ids = [
+        path.stem
+        for path in sorted(
+            (tmp_path / ".faltoobot" / "notify-queue" / "pending").glob("*.json")
+        )
+    ]
+    assert sorted([first_id, second_id]) == sorted(ordered_ids)
+
+    claimed = notify_queue.claim_notifications(
+        lambda item: item["chat_key"] == "code@demo",
+        limit=1,
+    )
+
+    assert [item[1]["id"] for item in claimed] == [ordered_ids[0]]
+    pending_names = sorted(
+        path.name
+        for path in (tmp_path / ".faltoobot" / "notify-queue" / "pending").glob("*.json")
+    )
+    assert pending_names == [f"{ordered_ids[1]}.json"]
+    notify_queue.ack_notification(claimed[0][0])
+
+
+def test_notify_queue_recovers_processing_notifications(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+    notification_id = notify_queue.enqueue_notification("code@demo", "hello")
+    claimed = notify_queue.claim_notifications(
+        lambda item: item["chat_key"] == "code@demo"
+    )
+
+    assert [item[1]["id"] for item in claimed] == [notification_id]
+
+    recovered = notify_queue.requeue_processing_notifications(
+        lambda item: item["chat_key"] == "code@demo"
+    )
+
+    assert [item["id"] for item in recovered] == [notification_id]
+    claimed_again = notify_queue.claim_notifications(
+        lambda item: item["chat_key"] == "code@demo"
+    )
+    assert [item[1]["id"] for item in claimed_again] == [notification_id]
+    notify_queue.ack_notification(claimed_again[0][0])

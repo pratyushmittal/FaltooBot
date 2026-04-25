@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,6 +7,8 @@ from typing import NotRequired, TextIO, TypedDict
 from uuid import uuid4
 
 from faltoobot.config import app_root
+
+logger = logging.getLogger("faltoobot")
 
 
 class Notification(TypedDict):
@@ -96,6 +99,8 @@ def enqueue_notification(
 
 def claim_notifications(
     matches: Callable[[Notification], bool],
+    *,
+    limit: int | None = None,
 ) -> list[ClaimedNotification]:
     pending = _pending_dir()
     processing = _processing_dir()
@@ -112,12 +117,57 @@ def claim_notifications(
             path.replace(claimed_path)
         except FileNotFoundError:
             continue
+        except OSError:
+            logger.exception("Failed to claim notification file %s", path)
+            continue
         claimed_notification = _read_notification(claimed_path)
         if claimed_notification is None:
             claimed_path.unlink(missing_ok=True)
             continue
         claimed.append((claimed_path, claimed_notification))
+        if limit is not None and len(claimed) >= limit:
+            break
     return claimed
+
+
+def requeue_processing_notifications(
+    matches: Callable[[Notification], bool],
+) -> list[Notification]:
+    processing = _processing_dir()
+    if not processing.is_dir():
+        return []
+    pending = _pending_dir()
+    pending.mkdir(parents=True, exist_ok=True)
+    requeued: list[Notification] = []
+    for path in sorted(processing.glob("*.json")):
+        notification = _read_notification(path)
+        if notification is None:
+            logger.error(
+                "Dropping invalid claimed notification file stuck in processing: %s",
+                path,
+            )
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception(
+                    "Failed to remove invalid claimed notification file %s",
+                    path,
+                )
+            continue
+        if not matches(notification):
+            continue
+        try:
+            path.replace(pending / path.name)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            logger.exception(
+                "Failed to recover claimed notification file stuck in processing: %s",
+                path,
+            )
+            continue
+        requeued.append(notification)
+    return requeued
 
 
 def ack_notification(path: Path) -> None:

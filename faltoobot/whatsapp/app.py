@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from neonize.aioze.client import NewAClient
@@ -29,6 +30,55 @@ pending_albums: dict[str, runtime.PendingAlbum] = {}
 notifications_stop = asyncio.Event()
 
 
+def _is_whatsapp_notification(notification: notify_queue.Notification) -> bool:
+    return notification["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
+
+
+def _ack_claimed_notification(
+    path: Path, notification: notify_queue.Notification
+) -> None:
+    try:
+        notify_queue.ack_notification(path)
+    except Exception:
+        logger.exception(
+            "Failed to ack claimed notification %s for %s",
+            notification["id"],
+            notification["chat_key"],
+        )
+
+
+def _requeue_claimed_notification(
+    path: Path, notification: notify_queue.Notification, *, reason: str
+) -> None:
+    try:
+        notify_queue.requeue_notification(path)
+    except Exception:
+        logger.exception(
+            "Failed to requeue claimed notification %s for %s after %s",
+            notification["id"],
+            notification["chat_key"],
+            reason,
+        )
+        return
+    logger.warning(
+        "Requeued notification %s for %s after %s",
+        notification["id"],
+        notification["chat_key"],
+        reason,
+    )
+
+
+def _recover_stuck_notifications() -> None:
+    recovered = notify_queue.requeue_processing_notifications(_is_whatsapp_notification)
+    if not recovered:
+        return
+    logger.warning(
+        "Recovered %d stuck notification%s from processing for WhatsApp delivery",
+        len(recovered),
+        "" if len(recovered) == 1 else "s",
+    )
+
+
 async def on_exit() -> None:
     logger.info("Stopping Faltoobot")
     notifications_stop.set()
@@ -39,9 +89,13 @@ async def on_exit() -> None:
 
 async def _start_polling_notifications() -> None:
     while not notifications_stop.is_set():
-        for path, notification in notify_queue.claim_notifications(
-            lambda item: item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
-        ):
+        _recover_stuck_notifications()
+        claimed = notify_queue.claim_notifications(
+            _is_whatsapp_notification,
+            limit=1,
+        )
+        if claimed:
+            path, notification = claimed[0]
             try:
                 chat_key = notification["chat_key"]
                 user, server = chat_key.split("@", 1)
@@ -67,11 +121,27 @@ async def _start_polling_notifications() -> None:
                         config=config,
                         turn=turn,
                     )
-            except Exception:
-                notify_queue.requeue_notification(path)
+            except asyncio.CancelledError:
+                _requeue_claimed_notification(
+                    path,
+                    notification,
+                    reason="delivery task cancelled",
+                )
                 raise
+            except Exception:
+                logger.exception(
+                    "Failed to deliver notification %s to %s",
+                    notification["id"],
+                    notification["chat_key"],
+                )
+                _requeue_claimed_notification(
+                    path,
+                    notification,
+                    reason="delivery error",
+                )
             else:
-                notify_queue.ack_notification(path)
+                _ack_claimed_notification(path, notification)
+            continue
         try:
             await asyncio.wait_for(notifications_stop.wait(), timeout=1.0)
         except TimeoutError:

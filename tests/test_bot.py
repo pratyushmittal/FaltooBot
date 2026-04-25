@@ -1047,7 +1047,7 @@ async def test_start_polling_notifications_claims_and_acks(
     monkeypatch.setattr(
         whatsapp_app.notify_queue,
         "claim_notifications",
-        lambda matches: [
+        lambda matches, limit=None: [
             (
                 tmp_path / "notify.json",
                 {
@@ -1084,6 +1084,98 @@ async def test_start_polling_notifications_claims_and_acks(
         "## message\nqueued user message",
         "ack",
     ]
+
+
+@pytest.mark.anyio
+async def test_start_polling_notifications_recovers_processing_notifications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(whatsapp_app.notify_queue, "app_root", lambda: queue_root)
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: queue_root)
+    notification_id = whatsapp_app.notify_queue.enqueue_notification(
+        "15555550123@s.whatsapp.net",
+        "queued user message",
+    )
+    claimed = whatsapp_app.notify_queue.claim_notifications(
+        lambda item: item["chat_key"] == "15555550123@s.whatsapp.net"
+    )
+    assert [item[1]["id"] for item in claimed] == [notification_id]
+
+    monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
+    monkeypatch.setattr(
+        whatsapp_app, "config", make_config(tmp_path, allowed_chats=set())
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    seen: list[str] = []
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+        seen.extend(cast(list[str], kwargs["turn"]["message_ids"]))
+        whatsapp_app.notifications_stop.set()
+
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
+    )
+
+    await whatsapp_app._start_polling_notifications()
+
+    assert seen == [notification_id]
+    assert not list((queue_root / "notify-queue" / "pending").glob("*.json"))
+    assert not list((queue_root / "notify-queue" / "processing").glob("*.json"))
+
+
+@pytest.mark.anyio
+async def test_start_polling_notifications_requeues_failed_delivery_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    queue_root = tmp_path / ".faltoobot"
+    monkeypatch.setattr(whatsapp_app.notify_queue, "app_root", lambda: queue_root)
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: queue_root)
+    first_id = whatsapp_app.notify_queue.enqueue_notification(
+        "15555550123@s.whatsapp.net",
+        "first",
+    )
+    second_id = whatsapp_app.notify_queue.enqueue_notification(
+        "15555550123@s.whatsapp.net",
+        "second",
+    )
+    ordered_ids = [path.stem for path in sorted((queue_root / "notify-queue" / "pending").glob("*.json"))]
+    assert sorted([first_id, second_id]) == sorted(ordered_ids)
+
+    monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
+    monkeypatch.setattr(
+        whatsapp_app, "config", make_config(tmp_path, allowed_chats=set())
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    attempts: list[str] = []
+    delivered: list[str] = []
+    failed_once = {ordered_ids[0]}
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+        notification_id = cast(list[str], kwargs["turn"]["message_ids"])[0]
+        attempts.append(notification_id)
+        if notification_id in failed_once:
+            failed_once.remove(notification_id)
+            raise RuntimeError("boom")
+        delivered.append(notification_id)
+        if len(delivered) == len(ordered_ids):
+            whatsapp_app.notifications_stop.set()
+
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
+    )
+
+    with caplog.at_level("WARNING", logger="faltoobot"):
+        await whatsapp_app._start_polling_notifications()
+
+    assert attempts == [ordered_ids[0], ordered_ids[0], ordered_ids[1]]
+    assert delivered == ordered_ids
+    assert "Failed to deliver notification" in caplog.text
+    assert "Requeued notification" in caplog.text
+    assert not list((queue_root / "notify-queue" / "pending").glob("*.json"))
+    assert not list((queue_root / "notify-queue" / "processing").glob("*.json"))
 
 
 @pytest.mark.anyio
