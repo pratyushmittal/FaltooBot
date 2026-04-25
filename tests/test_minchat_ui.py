@@ -486,6 +486,14 @@ async def test_minchat_status_command_shows_config_status_and_last_usage(
         blocks = [block for block in transcript.query(Markdown)]
         assert any("Faltoobot status" in block._markdown for block in blocks)
         assert any("openai_model" in block._markdown for block in blocks)
+        assert any("Session" in block._markdown for block in blocks)
+        assert any(
+            f'session_id="{app.session.session_id}"' in block._markdown
+            for block in blocks
+        )
+        assert any(
+            f'workspace="{app.workspace}"' in block._markdown for block in blocks
+        )
         assert any("Session usage" in block._markdown for block in blocks)
         assert any('"total_tokens": 5' in block._markdown for block in blocks)
 

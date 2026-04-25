@@ -142,7 +142,10 @@ class SlashCommandsOptionList(OptionList):
             case "/status":
                 await app.show_local_answer(
                     config_status_text(
-                        build_config(), sessions.get_last_usage(app.session)
+                        build_config(),
+                        sessions.get_last_usage(app.session),
+                        session_id=app.session.session_id,
+                        workspace=app.workspace,
                     )
                 )
                 return True

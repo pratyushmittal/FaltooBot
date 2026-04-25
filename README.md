@@ -70,7 +70,7 @@ Example `~/.faltoobot/config.toml`:
 [openai]
 api_key = "your_key_here"
 oauth = ""
-model = "gpt-5.4"
+model = "gpt-5.5"
 thinking = "high"
 fast = false
 

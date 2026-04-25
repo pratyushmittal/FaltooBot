@@ -330,7 +330,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
     tool_output = cast(ResponseFunctionToolCallOutputItem, items[9])
     assert tool_output.output == "hello Faltoobot"
     assert client.responses.calls[0]["context_management"] == [
-        {"type": "compaction", "compact_threshold": 210_000}
+        {"type": "compaction", "compact_threshold": 200_000}
     ]
     assert client.responses.calls[0]["prompt_cache_key"] == omit
     assert client.responses.calls[0]["extra_headers"] is None

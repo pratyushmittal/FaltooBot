@@ -1,7 +1,11 @@
 from pathlib import Path
 
-from faltoobot.config import Config
-from faltoobot.migrate import main, remove_session_last_used_files
+from faltoobot.config import Config, default_config, render_config
+from faltoobot.migrate import (
+    main,
+    remove_session_last_used_files,
+    update_default_openai_model,
+)
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -18,7 +22,7 @@ def make_config(tmp_path: Path) -> Config:
         run_script=root / "run.sh",
         openai_api_key="",
         openai_oauth="",
-        openai_model="gpt-5.4",
+        openai_model="gpt-5.5",
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
@@ -61,3 +65,39 @@ def test_migrate_main_returns_empty_when_clean(tmp_path: Path) -> None:
     config = make_config(tmp_path)
 
     assert main(config) == []
+
+
+def test_update_default_openai_model_moves_old_default(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data = default_config()
+    data["openai"]["model"] = "gpt-5.4"
+    config.config_file.parent.mkdir(parents=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    changed = update_default_openai_model(config)
+
+    assert changed
+    assert 'model = "gpt-5.5"' in config.config_file.read_text(encoding="utf-8")
+
+
+def test_update_default_openai_model_keeps_custom_model(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data = default_config()
+    data["openai"]["model"] = "gpt-5.2-codex"
+    config.config_file.parent.mkdir(parents=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    changed = update_default_openai_model(config)
+
+    assert not changed
+    assert 'model = "gpt-5.2-codex"' in config.config_file.read_text(encoding="utf-8")
+
+
+def test_migrate_main_updates_default_openai_model(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data = default_config()
+    data["openai"]["model"] = "gpt-5.4"
+    config.config_file.parent.mkdir(parents=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    assert main(config) == ["migration:update-default-openai-model"]

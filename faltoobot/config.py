@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
-MODEL_OPTIONS = ("gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
+MODEL_OPTIONS = ("gpt-5.5", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
 TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
@@ -267,9 +267,35 @@ def build_config() -> Config:
     )
 
 
+def _render_config_status_value(key: str, value: Any) -> str | bool | list[str]:
+    if isinstance(value, str):
+        rendered = value.strip()
+        if (key.endswith("_api_key") or key.endswith("_oauth")) and rendered:
+            return "<set>"
+        return rendered
+    if isinstance(value, list):
+        return [str(item) for item in value if isinstance(item, str)]
+    return value
+
+
+def _session_status_lines(
+    session_id: str | None,
+    workspace: Path | str | None,
+) -> list[str]:
+    lines: list[str] = []
+    if session_id is not None:
+        lines.append(f"• session_id={json.dumps(session_id)}")
+    if workspace is not None:
+        lines.append(f"• workspace={json.dumps(str(workspace))}")
+    return lines
+
+
 def config_status_text(
     config: Config,
     last_usage: dict[str, Any] | None = None,
+    *,
+    session_id: str | None = None,
+    workspace: Path | str | None = None,
 ) -> str:
     try:
         version_text = package_version("faltoobot")
@@ -289,18 +315,13 @@ def config_status_text(
 
     add_entries("", data)
 
-    lines = ["Faltoobot status", "", f"Version: {version_text}", "", "Config status"]
+    lines = ["Faltoobot status", "", f"Version: {version_text}"]
+    session_lines = _session_status_lines(session_id, workspace)
+    if session_lines:
+        lines.extend(["", "Session", *session_lines])
+    lines.extend(["", "Config status"])
     for key, value in entries:
-        rendered: str | bool | list[str]
-        if isinstance(value, str):
-            rendered = value.strip()
-            if (key.endswith("_api_key") or key.endswith("_oauth")) and rendered:
-                rendered = "<set>"
-        elif isinstance(value, list):
-            rendered = [str(item) for item in value if isinstance(item, str)]
-        else:
-            rendered = value
-        lines.append(f"• {key}={json.dumps(rendered)}")
+        lines.append(f"• {key}={json.dumps(_render_config_status_value(key, value))}")
     if last_usage is not None:
         lines.extend(
             [

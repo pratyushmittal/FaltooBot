@@ -288,7 +288,13 @@ async def _handle_slash_command(
         await client.reply_message(HELP_TEXT, event)
     elif prompt == "/status":
         await client.reply_message(
-            config_status_text(config, get_last_usage(session)), event
+            config_status_text(
+                config,
+                get_last_usage(session),
+                session_id=session.session_id,
+                workspace=messages_json["workspace"],
+            ),
+            event,
         )
     elif prompt == "/reset":
         reset_session = get_session(chat_key=session.chat_key, session_id=str(uuid4()))

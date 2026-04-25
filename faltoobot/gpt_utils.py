@@ -20,7 +20,7 @@ from openai.types.responses import (
 from faltoobot.config import Config, build_config
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
-COMPACT_THRESHOLD = 210_000
+COMPACT_THRESHOLD = 200_000
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]

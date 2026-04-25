@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections import defaultdict
 from importlib.metadata import version as package_version
 from io import BytesIO
@@ -1144,6 +1145,10 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 "Faltoobot status",
                 "",
                 f"Version: {package_version('faltoobot')}",
+                "",
+                "Session",
+                f"• session_id={json.dumps(session.session_id)}",
+                f"• workspace={json.dumps(get_messages(session)['workspace'])}",
                 "",
                 "Config status",
                 '• openai_api_key="<set>"',
