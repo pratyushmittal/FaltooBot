@@ -187,15 +187,29 @@ def test_run_whatsapp_command_runs_service_flow(tmp_path: Path, monkeypatch) -> 
     assert calls == ["reinstall", "logs"]
 
 
-def test_handle_command_runs_makemigrations(monkeypatch, tmp_path: Path) -> None:
+def test_run_migrations_reports_actual_changes(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
-    calls: list[str] = []
 
-    monkeypatch.setattr(cli, "run_makemigrations_command", lambda: calls.append("ran"))
+    monkeypatch.setattr(cli, "migrate_config_file", lambda path: False)
+    monkeypatch.setattr(
+        cli, "run_migrations", lambda config: ["migration:remove-session-last-used"]
+    )
 
-    cli.handle_command(cli.argparse.Namespace(command="makemigrations"), config)
+    assert cli._run_migrations(config) == [
+        "sessions",
+        "migration:remove-session-last-used",
+    ]
+    assert config.sessions_dir.exists()
 
-    assert calls == ["ran"]
+
+def test_run_migrations_is_quiet_when_clean(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    config.sessions_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(cli, "migrate_config_file", lambda path: False)
+    monkeypatch.setattr(cli, "run_migrations", lambda config: [])
+
+    assert cli._run_migrations(config) == []
 
 
 def test_run_configure_command_runs_selected_setup(tmp_path: Path, monkeypatch) -> None:

@@ -27,7 +27,8 @@ def _git_text(cwd: Path, *args: str) -> str | None:
 
 
 def _repo_root(filepath: Path) -> Path | None:
-    probe = filepath.parent if filepath.is_file() or filepath.suffix else filepath
+    # comment: deleted files may no longer be valid cwd values, so ask git from the parent.
+    probe = filepath if filepath.is_dir() else filepath.parent
     root = _git_text(probe, "rev-parse", "--show-toplevel")
     if root is None:
         return None

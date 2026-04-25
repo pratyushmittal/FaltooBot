@@ -2,6 +2,22 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.2.0 — 2026-04-25
+
+### Added
+- Faltoochat sessions can now be named, resumed from a picker, and are sorted by recent use.
+- Review diff navigation now supports jumping back to the previous cursor position with `Ctrl+O`.
+
+### Changed
+- The bundled image-generation skill now uses OpenAI image examples.
+- WhatsApp group and album turn handling is simpler and more consistent, including addressed slash commands in groups.
+- Update now runs a simpler built-in migration step instead of the old versioned migration runner.
+
+### Fixed
+- OpenAI OAuth login now URL-encodes authorization parameters more safely.
+- Review refresh no longer crashes when an active untracked file is deleted.
+- Update now removes obsolete session `last_used` marker files.
+
 ## 3.1.3 — 2026-04-20
 
 ### Changed

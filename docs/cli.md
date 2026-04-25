@@ -34,10 +34,6 @@ Use the wizard unless you want to update only one part.
 
 If a service is already installed, `configure` restarts it after saving changes.
 
-### `faltoobot makemigrations`
-
-Dev-only command used from the repo to create release migration scripts.
-
 ## Suggested flow
 
 ### First setup

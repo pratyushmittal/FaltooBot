@@ -144,14 +144,6 @@ faltoobot configure
 
 Opens the setup menu and restarts the service if it is already installed.
 
-### `faltoobot makemigrations`
-
-```bash
-faltoobot makemigrations
-```
-
-Dev-only command for creating release migration scripts inside this repo.
-
 ## Terminal chat
 
 You can also use Faltoobot locally in the terminal.

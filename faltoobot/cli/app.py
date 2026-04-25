@@ -19,8 +19,6 @@ from rich.text import Text
 
 from faltoobot import notify_queue
 from faltoobot.cli import browser as browser_runtime
-from faltoobot.cli.migrations import main as run_makemigrations_command
-from faltoobot.cli.migrations import run_release_migrations
 from faltoobot.config import (
     APP_LABEL,
     DEFAULT_THINKING,
@@ -39,6 +37,7 @@ from faltoobot.config import (
     normalize_chat,
     render_config,
 )
+from faltoobot.migrate import main as run_migrations
 from faltoobot.openai_login import run_openai_login
 
 console = Console()
@@ -62,21 +61,6 @@ CRONTAB_DEFAULT_PATH_PARTS = [
 def _require_service_platform() -> None:
     if sys.platform not in {"darwin", "linux"}:
         raise SystemExit("This command supports macOS and Linux only.")
-
-
-def _project_root() -> Path:
-    """Return the best available root for release migrations.
-
-    Editable checkouts keep the `migrations/` folder at the repo root, while
-    installed packages only have the package tree available.
-    """
-    package_root = Path(__file__).resolve().parents[1]
-    repo_root = Path(__file__).resolve().parents[2]
-    # comment: editable checkouts keep release migrations at the repo root, but installed
-    # packages only have the package tree available.
-    if (repo_root / "migrations").is_dir():
-        return repo_root
-    return package_root
 
 
 def _uv_bin() -> str:
@@ -617,10 +601,12 @@ def _run_migrations(config: Config) -> list[str]:
     changes: list[str] = []
     if migrate_config_file(config.config_file):
         changes.append("config")
+    created_sessions_dir = not config.sessions_dir.exists()
     config.sessions_dir.mkdir(parents=True, exist_ok=True)
-    changes.append("sessions")
-    for version in run_release_migrations(config, _project_root()):
-        changes.append(f"migration:{version}")
+    # comment: report session setup only when update created the root directory.
+    if created_sessions_dir:
+        changes.append("sessions")
+    changes.extend(run_migrations(config))
     return changes
 
 
@@ -780,7 +766,6 @@ def parse_args() -> argparse.Namespace:
         help="identifier explaining why this notification was sent",
     )
     sub.add_parser("configure", help="configure Faltoobot")
-    sub.add_parser("makemigrations", help="dev: create migrations with the model")
     sub.add_parser(SERVICE_COMMAND, help=argparse.SUPPRESS)
     return parser.parse_args()
 
@@ -802,8 +787,6 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_notify_command(args)
     elif args.command == "configure":
         run_configure_command(config)
-    elif args.command == "makemigrations":
-        run_makemigrations_command()
     else:
         # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
         raise SystemExit(f"unknown command: {args.command}")
