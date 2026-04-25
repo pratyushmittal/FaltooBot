@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.3.0 — 2026-04-25
+
+### Added
+- WhatsApp bot now supports `/inspect` to show the last 20 tool calls for the current chat.
+
 ## 3.2.5 — 2026-04-25
 
 ### Changed
