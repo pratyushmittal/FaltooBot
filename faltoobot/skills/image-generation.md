@@ -2,9 +2,7 @@
 description: Use latest image generation models to create pictures or edit existing photos and creatives. Use this when the user asks for image generation, image editing, retouching, background changes, or any other visual modifications.
 ---
 
-`openai` is already installed. Prefer `run_shell_call` for image jobs.
-
-Image generation and editing can take up to 2 minutes on complex prompts. When using `run_shell_call`, use `timeout_ms` 120000 for complex image jobs.
+`openai` is already installed in `run_in_python_shell`. Prefer `run_in_python_shell` for image jobs.
 
 ## Normal Image Generation
 
