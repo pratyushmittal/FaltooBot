@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.2.2 — 2026-04-25
+
+### Changed
+- WhatsApp group prompts now use the primary sender ID in `[from ...]` labels so it lines up better with mention references.
+
 ## 3.2.1 — 2026-04-25
 
 ### Changed
