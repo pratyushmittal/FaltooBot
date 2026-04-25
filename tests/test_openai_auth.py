@@ -1,7 +1,13 @@
 import asyncio
 import json
+import ssl
 from collections.abc import Awaitable, Callable
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
+
+import pytest
 
 from faltoobot import openai_auth
 from faltoobot.config import Config
@@ -146,3 +152,48 @@ def test_oauth_provider_refreshes_auth_json(monkeypatch, tmp_path: Path) -> None
     assert payload["tokens"]["access_token"] == "new-refresh-token"
     assert payload["tokens"]["refresh_token"] == "new-refresh-token"
     assert payload["last_refresh"]
+
+
+class FakeResponse:
+    pass
+
+
+def test_open_url_retries_certifi_on_missing_local_ca(monkeypatch) -> None:
+    calls: list[object] = []
+
+    def fake_urlopen(request, *, timeout: int, context=None):
+        calls.append(context)
+        if context is None:
+            raise URLError(ssl.SSLCertVerificationError("missing ca"))
+        return FakeResponse()
+
+    monkeypatch.setattr(openai_auth, "urlopen", fake_urlopen)
+
+    response = openai_auth.open_url(Request("https://example.test"), timeout=30)
+
+    assert isinstance(response, FakeResponse)
+    assert calls[0] is None
+    assert calls[1] is not None
+
+
+def test_open_url_keeps_non_ssl_errors(monkeypatch) -> None:
+    def fake_urlopen(request, *, timeout: int, context=None):
+        raise URLError("offline")
+
+    monkeypatch.setattr(openai_auth, "urlopen", fake_urlopen)
+
+    with pytest.raises(URLError, match="offline"):
+        openai_auth.open_url(Request("https://example.test"), timeout=30)
+
+
+def test_open_url_keeps_http_errors(monkeypatch) -> None:
+    error = HTTPError("https://example.test", 400, "Bad Request", Message(), None)
+
+    def fake_urlopen(request, *, timeout: int, context=None):
+        raise error
+
+    monkeypatch.setattr(openai_auth, "urlopen", fake_urlopen)
+
+    with pytest.raises(HTTPError) as exc_info:
+        openai_auth.open_url(Request("https://example.test"), timeout=30)
+    assert exc_info.value is error

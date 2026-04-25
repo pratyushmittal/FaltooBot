@@ -5,10 +5,13 @@ import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import ssl
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
+
+import certifi
 
 from faltoobot.config import Config, app_root
 
@@ -36,6 +39,25 @@ OpenAIClientOptions: TypeAlias = tuple[
 
 class OpenAIAuthError(RuntimeError):
     pass
+
+
+def open_url(request: Request, *, timeout: int) -> Any:
+    """Open an HTTPS request, retrying macOS CA-store failures with certifi.
+
+    Some python.org macOS installs do not have a working default certificate
+    store, which makes urllib fail during OpenAI OAuth token requests. Keep the
+    normal urllib path first, then retry only certificate verification failures
+    with certifi's bundled CA store.
+    """
+    try:
+        return urlopen(request, timeout=timeout)
+    except URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if not isinstance(reason, ssl.SSLCertVerificationError):
+            # comment: only retry with certifi for missing or broken local CA stores.
+            raise
+        context = ssl.create_default_context(cafile=certifi.where())
+        return urlopen(request, timeout=timeout, context=context)
 
 
 def _utcnow() -> datetime:
@@ -210,7 +232,7 @@ def _request_token_refresh(refresh_token: str) -> JsonObject:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:
+        with open_url(request, timeout=30) as response:
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

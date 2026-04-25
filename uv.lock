@@ -346,6 +346,7 @@ name = "faltoobot"
 version = "3.2.3"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "google-genai" },
     { name = "neonize" },
     { name = "openai" },
@@ -372,6 +373,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2026.4.22" },
     { name = "google-genai", specifier = ">=1.73.1" },
     { name = "neonize", specifier = ">=0.3.16.post0" },
     { name = "openai", specifier = ">=2.32.0" },

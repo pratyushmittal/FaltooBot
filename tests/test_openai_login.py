@@ -114,7 +114,7 @@ def test_exchange_code_for_tokens_posts_form_encoded_body(
 ) -> None:
     seen: dict[str, str] = {}
 
-    def fake_urlopen(request, timeout: int):
+    def fake_open_url(request, *, timeout: int):
         seen["url"] = request.full_url
         seen["body"] = request.data.decode("utf-8")
         seen["content_type"] = request.headers["Content-type"]
@@ -126,7 +126,7 @@ def test_exchange_code_for_tokens_posts_form_encoded_body(
             }
         )
 
-    monkeypatch.setattr(openai_login, "urlopen", fake_urlopen)
+    monkeypatch.setattr(openai_login, "open_url", fake_open_url)
 
     tokens = openai_login._exchange_code_for_tokens(
         code="code-123",

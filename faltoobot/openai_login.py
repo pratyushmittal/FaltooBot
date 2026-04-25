@@ -10,7 +10,7 @@ from threading import Event, Thread
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from rich.console import Console
 
@@ -18,6 +18,7 @@ from faltoobot.config import ensure_config_file, load_toml, merge_config, render
 from faltoobot.openai_auth import (
     CHATGPT_OAUTH_TOKEN_URL,
     OpenAIAuthError,
+    open_url,
     faltoobot_auth_file,
     openai_oauth_client_id,
     save_chatgpt_oauth_tokens,
@@ -119,7 +120,7 @@ def _exchange_code_for_tokens(
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:
+        with open_url(request, timeout=30) as response:
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
