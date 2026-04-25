@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.2.5 — 2026-04-25
+
+### Changed
+- Image generation skill guidance now points agents to the Python tool instead of shell commands.
+
 ## 3.2.4 — 2026-04-25
 
 ### Fixed
