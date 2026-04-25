@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.2.3 — 2026-04-25
+
+### Changed
+- Default OpenAI model is now `gpt-5.5`; update migrates configs that were still using the previous default.
+- `/status` now includes the current session ID and workspace.
+
+### Fixed
+- Conversation compaction now starts at the intended 200k token threshold.
+
 ## 3.2.2 — 2026-04-25
 
 ### Changed
