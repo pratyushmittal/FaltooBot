@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.2.4 — 2026-04-25
+
+### Fixed
+- OpenAI Codex login and token refresh now retry with a bundled certificate store when macOS Python cannot find local root certificates.
+
 ## 3.2.3 — 2026-04-25
 
 ### Changed
