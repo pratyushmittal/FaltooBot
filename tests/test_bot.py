@@ -399,6 +399,19 @@ def recording_append_user_turn(calls: list[dict[str, Any]]):
     return fake_append_user_turn
 
 
+def test_sender_id_prefers_primary_sender_for_mention_linkage() -> None:
+    event = SimpleNamespace(
+        Info=SimpleNamespace(
+            MessageSource=Neonize_pb2.MessageSource(
+                Sender=jid("15555555555555", "lid"),
+                SenderAlt=jid("15555550123", "s.whatsapp.net"),
+            )
+        )
+    )
+
+    assert runtime._sender_id(cast(MessageEv, event)) == "15555555555555"
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
@@ -504,7 +517,7 @@ async def test_get_turn_locked_uses_group_allowlist(
     )
 
     assert allowed_turn is not None
-    assert allowed_turn["prompt"] == "[from 15555550123] hi"
+    assert allowed_turn["prompt"] == "[from 15555555555555] hi"
     assert blocked_turn is None
 
 
@@ -528,7 +541,7 @@ async def test_get_turn_locked_stores_group_messages_without_bot_mention(
     )
 
     assert turn is not None
-    assert turn["prompt"] == "[from 15555550123] hello group"
+    assert turn["prompt"] == "[from 15555555555555] hello group"
 
 
 @pytest.mark.anyio
@@ -556,7 +569,7 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
     )
 
     assert turn is not None
-    assert turn["prompt"] == "[from 15555550123] hi @faltoo"
+    assert turn["prompt"] == "[from 15555555555555] hi @faltoo"
 
 
 @pytest.mark.anyio
@@ -606,8 +619,8 @@ async def test_group_follow_up_mention_sees_earlier_unmentioned_history(
     assert client.replies == ["Done"]
     assert seen == [
         [
-            "[from 15555550123] We need to order milk today",
-            "[from 15555550123] @faltoo find the best way to do this",
+            "[from 15555555555555] We need to order milk today",
+            "[from 15555555555555] @faltoo find the best way to do this",
         ]
     ]
 
@@ -634,7 +647,7 @@ async def test_get_turn_locked_prefers_group_push_name(
     )
 
     assert turn is not None
-    assert turn["prompt"] == "[from Aditya - 15555550123] hello group"
+    assert turn["prompt"] == "[from Aditya - 15555555555555] hello group"
 
 
 @pytest.mark.anyio
@@ -712,7 +725,7 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
 
     assert turn is not None
     assert turn["prompt"] == (
-        "[from 15555550123]\n"
+        "[from 15555555555555]\n"
         "The user is replying to an earlier message.\n\n"
         "Earlier message:\n> Please share the file\n\n"
         "User reply:\nthanks"

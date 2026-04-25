@@ -460,7 +460,8 @@ def _quoted_participant_ids(message: Message) -> set[str]:
 
 def _sender_id(event: MessageEv) -> str | None:
     source = event.Info.MessageSource
-    for jid in (source.SenderAlt, source.Sender):
+    # comment: prefer Sender so prompt IDs match WhatsApp's primary mention references.
+    for jid in (source.Sender, source.SenderAlt):
         user = str(getattr(jid, "User", "") or "").strip()
         if user:
             return user.split(":", 1)[0]
