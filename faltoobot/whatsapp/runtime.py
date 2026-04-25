@@ -29,7 +29,7 @@ from faltoobot.sessions import (
     set_messages,
 )
 
-from .audio import AudioError, audio_message, audio_prompt
+from .audio import AudioError, audio_prompt, get_audio
 
 logger = logging.getLogger("faltoobot")
 MIN_ALLOWLIST_DIGITS = 8
@@ -65,9 +65,7 @@ class PendingAlbum(TypedDict):
     message_ids: list[str]
     attachments: list[Path]
     prompt: str
-    quoted_message_text: str
     reply_event: MessageEv
-    sender_name: str | None
 
 
 def source_chat_ids(source: Any) -> set[str]:
@@ -402,28 +400,50 @@ def _mentioned_chat_ids(message: Message) -> set[str]:
     return {chat for chat in mentioned if chat}
 
 
-def _prompt_with_sender(prompt: str, sender_name: str | None) -> str:
+def _prompt_with_sender(
+    prompt: str,
+    sender_name: str | None,
+    sender_id: str | None,
+) -> str:
     text = prompt.strip()
     if text in SLASH_COMMANDS or not sender_name:
         return text
     speaker = " ".join(sender_name.split()).strip()
     if not speaker:
         return text
-    prefix = f"[from {speaker}]"
+    speaker_id = " ".join((sender_id or "").split()).strip()
+    prefix = (
+        f"[from {speaker} - {speaker_id}]"
+        if speaker_id and speaker_id != speaker
+        else f"[from {speaker}]"
+    )
     if not text:
         return prefix
     return f"{prefix}\n{text}" if "\n" in text else f"{prefix} {text}"
 
 
 def _normalized_slash_command(text: str) -> str:
+    """Return a bare slash command from direct or addressed WhatsApp command text."""
     prompt = text.strip()
     if prompt in SLASH_COMMANDS:
         return prompt
+    # comment: group commands often arrive as "@bot /status"; strip mentions before the command.
     match = re.fullmatch(r"(?:@\S+\s+)+(?P<command>/\w+)", prompt)
     if match is None:
         return prompt
     command = match.group("command")
     return command if command in SLASH_COMMANDS else prompt
+
+
+def _turn_prompt(user_text: str, event: MessageEv) -> str:
+    normalized_user_text = _normalized_slash_command(user_text)
+    if normalized_user_text in SLASH_COMMANDS:
+        return normalized_user_text
+    source = event.Info.MessageSource
+    sender_name = _sender_name(event) if source.IsGroup else None
+    sender_id = _sender_id(event) if source.IsGroup else None
+    prompt = _prompt_with_reply_context(user_text, _quoted_message_text(event.Message))
+    return _prompt_with_sender(prompt, sender_name, sender_id)
 
 
 def _quoted_participant_ids(message: Message) -> set[str]:
@@ -438,6 +458,15 @@ def _quoted_participant_ids(message: Message) -> set[str]:
     return {chat for chat in quoted_ids if chat}
 
 
+def _sender_id(event: MessageEv) -> str | None:
+    source = event.Info.MessageSource
+    for jid in (source.SenderAlt, source.Sender):
+        user = str(getattr(jid, "User", "") or "").strip()
+        if user:
+            return user.split(":", 1)[0]
+    return None
+
+
 def _sender_name(event: MessageEv) -> str | None:
     pushname = " ".join(
         str(
@@ -446,14 +475,7 @@ def _sender_name(event: MessageEv) -> str | None:
             or ""
         ).split()
     ).strip()
-    if pushname:
-        return pushname
-    source = event.Info.MessageSource
-    for jid in (source.SenderAlt, source.Sender):
-        user = str(getattr(jid, "User", "") or "").strip()
-        if user:
-            return user.split(":", 1)[0]
-    return None
+    return pushname or _sender_id(event)
 
 
 async def _bot_identity_ids(client: NewAClient) -> set[str]:
@@ -541,12 +563,7 @@ def _turn_from_pending_album(pending_album: PendingAlbum) -> Turn:
         "event": pending_album["reply_event"],
         "chat": pending_album["reply_event"].Info.MessageSource.Chat,
         "message_ids": pending_album["message_ids"],
-        "prompt": _prompt_with_sender(
-            _prompt_with_reply_context(
-                pending_album["prompt"], pending_album["quoted_message_text"]
-            ),
-            pending_album["sender_name"],
-        ),
+        "prompt": pending_album["prompt"],
         "quoted_message_text": "",
         "attachments": pending_album["attachments"],
         "audio": None,
@@ -561,9 +578,7 @@ async def _handle_pending_album(  # noqa: PLR0913
     message_id: str,
     chat_jid: str,
     image_message: bool,
-    user_text: str,
-    quoted_message_text: str,
-    sender_name: str | None,
+    prompt: str,
     message: Any,
     workspace: Path,
 ) -> Turn | None:
@@ -594,22 +609,91 @@ async def _handle_pending_album(  # noqa: PLR0913
         )
     )
     # comment: merge any caption text into the album prompt as images arrive.
-    if user_text and user_text != pending_album["prompt"]:
+    if prompt and prompt != pending_album["prompt"]:
         pending_album["prompt"] = (
-            user_text
+            prompt
             if not pending_album["prompt"]
-            else f"{pending_album['prompt']}\n{user_text}"
+            else f"{pending_album['prompt']}\n{prompt}"
         )
-    # comment: remember the first quoted-message context so the final turn keeps it.
-    if quoted_message_text and not pending_album["quoted_message_text"]:
-        pending_album["quoted_message_text"] = quoted_message_text
-    if sender_name and not pending_album["sender_name"]:
-        pending_album["sender_name"] = sender_name
     # comment: keep buffering until WhatsApp says the album is complete.
     if len(pending_album["attachments"]) < pending_album["expected_images"]:
         return None
     pending_albums.pop(current_album_id, None)
     return _turn_from_pending_album(pending_album)
+
+
+async def _handle_album_event(  # noqa: PLR0913
+    client: NewAClient,
+    *,
+    pending_albums: dict[str, PendingAlbum],
+    current_album_id: str | None,
+    expected_images: int,
+    chat_jid: str,
+    image_message: bool,
+    prompt: str,
+    workspace: Path,
+    event: MessageEv,
+) -> tuple[Turn | None, bool]:
+    turn = await _handle_pending_album(
+        client,
+        pending_albums=pending_albums,
+        current_album_id=current_album_id,
+        message_id=event.Info.ID,
+        chat_jid=chat_jid,
+        image_message=image_message,
+        prompt=prompt,
+        message=event.Message,
+        workspace=workspace,
+    )
+    if turn is not None:
+        return turn, True
+    if current_album_id and current_album_id in pending_albums:
+        return None, True
+    if expected_images and current_album_id:
+        pending_albums[current_album_id] = {
+            "expected_images": expected_images,
+            "message_ids": [event.Info.ID],
+            "attachments": [],
+            "prompt": prompt,
+            "reply_event": event,
+        }
+        return None, True
+    return None, False
+
+
+def _message_summary(user_text: str, audio: Any, image_message: bool) -> str:
+    if user_text:
+        return user_text
+    if image_message:
+        return "<image>"
+    return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
+
+
+async def _transcribe_audio_or_reply(
+    client: NewAClient,
+    event: MessageEv,
+    *,
+    config: Config,
+    workspace: Path,
+) -> str | None:
+    try:
+        return await audio_prompt(
+            client,
+            event,
+            openai_api_key=config.openai_api_key,
+            transcription_prompt=TRANSCRIPTION_PROMPT,
+            model=config.openai_transcription_model,
+        )
+    except AudioError as exc:
+        logger.info("Failed to transcribe audio %s: %s", event.Info.ID, exc)
+        await send_text(
+            client,
+            chat=event.Info.MessageSource.Chat,
+            text=str(exc),
+            event=event,
+            workspace=workspace,
+        )
+        return None
 
 
 def _is_group_allowed(
@@ -686,117 +770,68 @@ async def get_turn_locked(  # noqa: C901, PLR0911
     ):
         return None
 
-    sender_name = _sender_name(event) if source.IsGroup else None
-
     workspace = Path(get_messages(session)["workspace"])
-    message = event.Message
-    message_id = event.Info.ID
-    user_text = _message_text(message)
-    quoted_message_text = _quoted_message_text(message)
-    audio = audio_message(event)
-    image_message = message.HasField("imageMessage")
-    expected_album_images, current_album_id = _album_id(message, message_id)
-    if not user_text and audio is None and not image_message and not current_album_id:
+    user_text = _message_text(event.Message)
+    audio = get_audio(event)
+    image_message = event.Message.HasField("imageMessage")
+    expected_images, album_id = _album_id(event.Message, event.Info.ID)
+    if not user_text and audio is None and not image_message and not album_id:
         return None
 
-    # comment: WhatsApp sends media albums as separate events. We buffer them by album
-    # id until all expected images arrive, then turn the finished album into one prompt.
-    pending_album_turn = await _handle_pending_album(
+    if not user_text and audio is not None:
+        user_text = await _transcribe_audio_or_reply(
+            client,
+            event,
+            config=config,
+            workspace=workspace,
+        )
+        if not user_text:
+            return None
+
+    prompt = _turn_prompt(user_text, event)
+    album_turn, handled_album = await _handle_album_event(
         client,
         pending_albums=pending_albums,
-        current_album_id=current_album_id,
-        message_id=message_id,
+        current_album_id=album_id,
+        expected_images=expected_images,
         chat_jid=chat_jid,
         image_message=image_message,
-        user_text=user_text,
-        quoted_message_text=quoted_message_text,
-        sender_name=sender_name,
-        message=message,
+        prompt=prompt,
         workspace=workspace,
+        event=event,
     )
-    if pending_album_turn is not None:
-        summary = pending_album_turn["prompt"]
-        if not summary:
-            count = len(pending_album_turn["attachments"])
-            summary = "<image>" if count == 1 else f"<{count} images>"
-        logger.info(
-            "Received message from %s in %s: %s",
-            sender_jid,
-            chat_jid,
-            summary,
-        )
-        return pending_album_turn
-    if current_album_id and current_album_id in pending_albums:
-        return None
-    if expected_album_images and current_album_id:
-        pending_albums[current_album_id] = {
-            "expected_images": expected_album_images,
-            "message_ids": [message_id],
-            "attachments": [],
-            "prompt": "",
-            "quoted_message_text": quoted_message_text,
-            "reply_event": event,
-            "sender_name": sender_name,
-        }
-        return None
+    if handled_album:
+        if album_turn is not None:
+            logger.info(
+                "Received message from %s in %s: %s",
+                sender_jid,
+                chat_jid,
+                album_turn["prompt"],
+            )
+        return album_turn
+
     attachments = (
         [
             await save_image_attachment(
                 client,
-                message,
+                event.Message,
                 workspace=workspace,
-                message_id=message_id,
+                message_id=event.Info.ID,
             )
         ]
         if image_message
         else []
     )
-    summary = user_text
-    if not summary:
-        if attachments:
-            summary = (
-                "<image>" if len(attachments) == 1 else f"<{len(attachments)} images>"
-            )
-        else:
-            summary = f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
-    if not user_text and audio is not None:
-        try:
-            user_text = await audio_prompt(
-                client,
-                event,
-                openai_api_key=config.openai_api_key,
-                transcription_prompt=TRANSCRIPTION_PROMPT,
-                model=config.openai_transcription_model,
-            )
-        except AudioError as exc:
-            logger.info("Failed to transcribe audio %s: %s", event.Info.ID, exc)
-            await send_text(
-                client,
-                chat=event.Info.MessageSource.Chat,
-                text=str(exc),
-                event=event,
-                workspace=workspace,
-            )
-            return None
-    normalized_user_text = _normalized_slash_command(user_text)
-    prompt = (
-        normalized_user_text
-        if normalized_user_text in SLASH_COMMANDS
-        else _prompt_with_sender(
-            _prompt_with_reply_context(user_text, quoted_message_text),
-            sender_name,
-        )
-    )
     logger.info(
         "Received message from %s in %s: %s",
         sender_jid,
         chat_jid,
-        summary,
+        _message_summary(user_text, audio, image_message),
     )
     return {
         "event": event,
         "chat": event.Info.MessageSource.Chat,
-        "message_ids": [message_id],
+        "message_ids": [event.Info.ID],
         "prompt": prompt,
         "quoted_message_text": "",
         "attachments": attachments,

@@ -634,7 +634,7 @@ async def test_get_turn_locked_prefers_group_push_name(
     )
 
     assert turn is not None
-    assert turn["prompt"] == "[from Aditya] hello group"
+    assert turn["prompt"] == "[from Aditya - 15555550123] hello group"
 
 
 @pytest.mark.anyio

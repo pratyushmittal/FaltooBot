@@ -68,6 +68,13 @@ class ReviewDiffView(TextArea):
         ),
         Binding("ctrl+f", "review_page_down", "Page Down", priority=True, show=True),
         Binding("ctrl+b", "review_page_up", "Page Up", priority=True, show=True),
+        Binding(
+            "ctrl+o",
+            "review_previous_cursor_position",
+            "Previous Cursor",
+            priority=True,
+            show=True,
+        ),
         Binding("tab", "review_next_file_tab", "Next File", priority=True, show=True),
         Binding(
             "shift+tab",
@@ -144,6 +151,7 @@ class ReviewDiffView(TextArea):
         self.line_highlights = line_highlights
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
+        self.previous_cursor_locations: list[tuple[int, int]] = []
         self.missing_language_package: str | None = None
         kwargs.setdefault("soft_wrap", True)
         super().__init__("", language=None, **kwargs)
@@ -276,13 +284,38 @@ class ReviewDiffView(TextArea):
             self.gutter_width,
         )
 
+    def _record_cursor_jump(self) -> None:
+        location = self.cursor_location
+        # comment: repeated jumps to the same place should not fill the jump-back stack.
+        if (
+            self.previous_cursor_locations
+            and self.previous_cursor_locations[-1] == location
+        ):
+            return
+        self.previous_cursor_locations.append(location)
+
+    def _jump_cursor(
+        self,
+        location: tuple[int, int],
+        *,
+        center: bool = True,
+    ) -> None:
+        # comment: no-op jumps should not add duplicate entries to cursor history.
+        if location == self.cursor_location:
+            return
+        self._record_cursor_jump()
+        # comment: centering needs a mounted Textual app; tests can exercise jumps off-app.
+        self.move_cursor(
+            location, center=center and self.is_mounted, record_width=False
+        )
+
     def jump_to_file_line(self, line_number: int) -> None:
         if not self.diff:
             return
         target_line = self._display_line(
             _diff_line_for_file_line(self.diff, line_number)
         )
-        self.move_cursor((target_line, 0), record_width=False)
+        self._jump_cursor((target_line, 0))
         if self.is_mounted:
             self.scroll_cursor_visible(animate=False)
 
@@ -309,10 +342,27 @@ class ReviewDiffView(TextArea):
         self._move_cursor_lines(-1)
 
     def action_review_page_down(self) -> None:
+        self._record_cursor_jump()
         self.action_cursor_page_down()
 
     def action_review_page_up(self) -> None:
+        self._record_cursor_jump()
         self.action_cursor_page_up()
+
+    def action_review_previous_cursor_position(self) -> None:
+        # comment: Ctrl+O is a no-op until a cursor jump records a previous location.
+        if not self.previous_cursor_locations:
+            return
+        # comment: an empty diff has no valid document row to restore.
+        if self.document.line_count == 0:
+            return
+        line, column = self.previous_cursor_locations.pop()
+        # comment: the diff may have reloaded since the jump was recorded, so clamp the old location.
+        target_line = max(0, min(line, self.document.line_count - 1))
+        target_column = min(column, len(self.document.get_line(target_line)))
+        self.move_cursor(
+            (target_line, target_column), center=self.is_mounted, record_width=False
+        )
 
     def action_review_select_line(self) -> None:
         self.line_selection_anchor = self.cursor_location[0]
@@ -365,18 +415,18 @@ class ReviewDiffView(TextArea):
         )
 
     def action_review_scroll_home(self) -> None:
-        self.move_cursor((0, 0), record_width=False)
+        self._jump_cursor((0, 0), center=False)
 
     def action_review_scroll_end(self) -> None:
-        self.move_cursor((self.document.line_count - 1, 0), record_width=False)
+        self._jump_cursor((max(0, self.document.line_count - 1), 0), center=False)
 
     def action_review_next_word(self) -> None:
         if location := next_word_location(self.text, self.cursor_location):
-            self.move_cursor(location, record_width=False)
+            self._jump_cursor(location, center=False)
 
     def action_review_previous_word(self) -> None:
         if location := previous_word_location(self.text, self.cursor_location):
-            self.move_cursor(location, record_width=False)
+            self._jump_cursor(location, center=False)
 
     async def action_review_next_file_tab(self) -> None:
         if self._tab_switch_blocked():
@@ -426,7 +476,7 @@ class ReviewDiffView(TextArea):
         if line is None:
             return
         target = self._display_line(line)
-        self.move_cursor((target, 0), center=True, record_width=False)
+        self._jump_cursor((target, 0), center=True)
 
     def action_review_previous_modification(self) -> None:
         line = previous_modification(
@@ -435,31 +485,37 @@ class ReviewDiffView(TextArea):
         if line is None:
             return
         target = self._display_line(line)
-        self.move_cursor((target, 0), center=True, record_width=False)
+        self._jump_cursor((target, 0), center=True)
 
     def action_review_jump_next(self) -> None:
         if not self.review_view.search_term:
             return
+        visible_diff = [self.diff[index] for index in self.visible_diff_lines]
+        # comment: an empty diff has no visible rows to search.
+        if not visible_diff:
+            return
         if location := next_search_location(
-            self.diff,
+            visible_diff,
             self.review_view.search_term,
-            (self._visible_diff_line(self.cursor_location[0]), self.cursor_location[1]),
+            self.cursor_location,
             whole_word=self.review_view.search_whole_word,
         ):
-            target = self._display_line(location[0])
-            self.move_cursor((target, location[1]), center=True, record_width=False)
+            self._jump_cursor(location, center=True)
 
     def action_review_jump_previous(self) -> None:
         if not self.review_view.search_term:
             return
+        visible_diff = [self.diff[index] for index in self.visible_diff_lines]
+        # comment: an empty diff has no visible rows to search.
+        if not visible_diff:
+            return
         if location := previous_search_location(
-            self.diff,
+            visible_diff,
             self.review_view.search_term,
-            (self._visible_diff_line(self.cursor_location[0]), self.cursor_location[1]),
+            self.cursor_location,
             whole_word=self.review_view.search_whole_word,
         ):
-            target = self._display_line(location[0])
-            self.move_cursor((target, location[1]), center=True, record_width=False)
+            self._jump_cursor(location, center=True)
 
     async def action_review_refresh_current_file(self) -> None:
         await self.reload_in_place()

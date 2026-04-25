@@ -25,7 +25,7 @@ class AudioError(RuntimeError):
     pass
 
 
-def audio_message(event: Any) -> Any | None:
+def get_audio(event: Any) -> Any | None:
     message = getattr(event, "Message", None)
     if message is None or not hasattr(message, "HasField"):
         return None
@@ -68,7 +68,7 @@ async def audio_prompt(  # noqa: PLR0913
     model: str = AUDIO_MODEL,
     max_seconds: int = DEFAULT_AUDIO_MAX_SECONDS,
 ) -> str:
-    message = audio_message(event)
+    message = get_audio(event)
     if message is None:
         raise AudioError("No audio found in this message.")
     if int(getattr(message, "seconds", 0) or 0) > max_seconds:

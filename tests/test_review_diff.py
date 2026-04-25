@@ -70,6 +70,8 @@ class ReviewViewStub:
     def __init__(self) -> None:
         self.active_pane = None
         self.reviews = []
+        self.search_term = ""
+        self.search_whole_word = False
 
     def add_review(self, _review) -> None:
         return
@@ -284,6 +286,33 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode() -> None:
     assert viewer.text == "a = 1\nb = 2\nb = 20\nc = 3"
 
 
+def test_review_search_ignores_hidden_deleted_lines() -> None:
+    review_view = review_view_stub()
+    review_view.search_term = "needle"
+    review_view.search_whole_word = False
+    viewer = ReviewDiffView(
+        [
+            {"is_staged": False, "type": "", "text": "start"},
+            {"is_staged": False, "type": "-", "text": "needle deleted"},
+            {"is_staged": False, "type": "+", "text": "needle added"},
+            {"is_staged": False, "type": "", "text": "end"},
+        ],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view),
+    )
+    viewer.action_review_cycle_mode()
+
+    viewer.move_cursor((0, 0), record_width=False)
+    viewer.action_review_jump_next()
+
+    assert viewer.cursor_location == (1, 0)
+
+    viewer.move_cursor((2, 0), record_width=False)
+    viewer.action_review_jump_previous()
+
+    assert viewer.cursor_location == (1, 0)
+
+
 def test_review_range_includes_line_when_text_selection_ends_at_line_start() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(10)],
@@ -363,6 +392,23 @@ def test_previous_modification_jumps_to_previous_block_start() -> None:
 
     assert previous_modification(diff, 5) == 0
     assert previous_modification(diff, 4) == 0
+
+
+def test_review_previous_cursor_position_returns_after_jump() -> None:
+    viewer = ReviewDiffView(
+        [
+            {"is_staged": False, "type": "", "text": "alpha beta"},
+            {"is_staged": False, "type": "", "text": "gamma delta"},
+        ],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    viewer.move_cursor((1, 3), record_width=False)
+
+    viewer.action_review_scroll_home()
+    viewer.action_review_previous_cursor_position()
+
+    assert viewer.cursor_location == (1, 3)
 
 
 def test_jump_to_file_line_skips_deleted_lines() -> None:

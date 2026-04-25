@@ -165,6 +165,14 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
             "key_display": None,
         },
         {
+            "key": "ctrl+o",
+            "action": "review_previous_cursor_position",
+            "description": "Previous Cursor",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
             "key": "tab",
             "action": "review_next_file_tab",
             "description": "Next File",

@@ -101,6 +101,8 @@ def test_build_authorize_url_contains_expected_params() -> None:
 
     assert "response_type=code" in url
     assert "client_id=app_EMoamEEZ73f0CkXaXp7hrann" in url
+    assert "scope=openid%20profile%20email%20offline_access" in url
+    assert "+" not in url
     assert "code_challenge=challenge" in url
     assert "code_challenge_method=S256" in url
     assert "codex_cli_simplified_flow=true" in url

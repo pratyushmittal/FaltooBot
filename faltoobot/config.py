@@ -209,6 +209,12 @@ def as_int(value: Any, default: int, minimum: int) -> int:
 
 
 def normalize_chat(value: str) -> str:
+    """Return a stable WhatsApp chat key.
+
+    Examples:
+        ``"15551234567:42@s.whatsapp.net"`` -> ``"15551234567@s.whatsapp.net"``
+        ``"+1 (555) 123-4567"`` -> ``"15551234567@s.whatsapp.net"``
+    """
     value = value.strip()
     if not value:
         return value

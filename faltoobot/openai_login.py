@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Event, Thread
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from rich.console import Console
@@ -89,7 +89,8 @@ def _build_authorize_url(
             "codex_cli_simplified_flow": "true",
             "state": state,
             "originator": DEFAULT_ORIGINATOR,
-        }
+        },
+        quote_via=quote,
     )
     return f"{issuer}/oauth/authorize?{query}"
 
