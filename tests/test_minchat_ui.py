@@ -23,6 +23,10 @@ from faltoobot.faltoochat.widgets.search_file import SearchFile
 from textual.widgets import Input, Markdown, OptionList, TabbedContent
 
 
+def _listed_name(session: sessions.Session, name: str) -> str:
+    return sessions._session_label(name, session.messages_path)
+
+
 async def wait_for_condition(check: Any) -> None:
     while True:
         if check():
@@ -179,18 +183,73 @@ async def test_minchat_name_command_opens_modal_and_saves_session_name(
         await wait_for_condition(
             lambda: (
                 sessions.list_sessions(app.session.chat_key)
-                == [{"id": app.session.session_id, "name": "Fix flaky tests"}]
+                == [
+                    {
+                        "id": app.session.session_id,
+                        "name": _listed_name(app.session, "Fix flaky tests"),
+                    }
+                ]
             )
         )
 
         assert sessions.list_sessions(app.session.chat_key) == [
-            {"id": app.session.session_id, "name": "Fix flaky tests"}
+            {
+                "id": app.session.session_id,
+                "name": _listed_name(app.session, "Fix flaky tests"),
+            }
         ]
         transcript = app.query_one("#transcript")
         assert any(
             "Saved session name: Fix flaky tests" in block._markdown
             for block in transcript.query(Markdown)
         )
+
+
+@pytest.mark.anyio
+async def test_minchat_name_command_notifies_when_name_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    existing = sessions.get_session(
+        chat_key=app.session.chat_key,
+        session_id="Existing",
+        workspace=workspace,
+    )
+    notifications: list[tuple[str, str]] = []
+
+    def fake_notify(
+        message: str,
+        *,
+        title: str = "",
+        severity: str = "information",
+        timeout: int | float | None = None,
+        markup: bool = True,
+    ) -> None:
+        notifications.append((message, severity))
+
+    app.notify = cast(Any, fake_notify)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("/name")
+
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        modal = app.screen
+        assert isinstance(modal, TextInputModal)
+        name_input = modal.query_one("#text-input-input", Input)
+        name_input.value = existing.session_id
+        await pilot.click(name_input)
+        await pilot.press("enter")
+        await wait_for_condition(lambda: bool(notifications))
+
+    assert notifications == [
+        ("Could not rename session: Session already exists: Existing", "error")
+    ]
+    assert app.session.session_id != existing.session_id
 
 
 @pytest.mark.anyio

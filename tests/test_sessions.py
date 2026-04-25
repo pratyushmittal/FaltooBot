@@ -1,7 +1,6 @@
 from collections.abc import Sequence
 
 import hashlib
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -13,6 +12,10 @@ from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageHistory, get_tools_definition
+
+
+def _listed_name(session: sessions.Session, name: str) -> str:
+    return sessions._session_label(name, session.messages_path)
 
 
 def _fake_output_item(
@@ -101,7 +104,6 @@ def test_get_session_creates_messages_json_and_workspace(
     payload = sessions.get_messages(session)
 
     assert isinstance(session, sessions.Session)
-    assert session.name == session.session_id
     assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
@@ -117,14 +119,9 @@ def test_get_session_creates_messages_json_and_workspace(
         / session.session_id
         / "messages.json"
     ).exists()
-    assert json.loads(
-        (
-            tmp_path / ".faltoobot" / "sessions" / chat_key / sessions.SESSIONS_FILE
-        ).read_text(encoding="utf-8")
-    ) == {
-        "last_used": session.session_id,
-        "sessions": {session.session_id: session.session_id},
-    }
+    assert not (
+        tmp_path / ".faltoobot" / "sessions" / chat_key / "sessions.json"
+    ).exists()
 
 
 def _config(tmp_path: Path) -> SimpleNamespace:
@@ -180,21 +177,12 @@ def test_get_session_sets_dir_chat_key_and_last_used(
 
     session = sessions.get_session(chat_key=chat_key, workspace=workspace)
     payload = sessions.get_messages(session)
-    metadata = json.loads(
-        (
-            tmp_path / ".faltoobot" / "sessions" / chat_key / sessions.SESSIONS_FILE
-        ).read_text(encoding="utf-8")
-    )
-
     assert payload["chat_key"] == chat_key
     assert chat_key == (
         f"code@{workspace.resolve().name}-"
         f"{hashlib.md5(str(workspace.resolve()).encode('utf-8')).hexdigest()[-6:]}"
     )
-    assert metadata == {
-        "last_used": session.session_id,
-        "sessions": {session.session_id: session.session_id},
-    }
+    assert sessions.get_session(chat_key=chat_key) == session
 
 
 def test_get_session_reads_last_used_session(
@@ -218,29 +206,21 @@ def test_set_session_name_persists_name(
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     session = sessions.get_session(chat_key="code@test")
+    old_session_dir = session.session_dir
 
     sessions.set_session_name(session, "Fix flaky tests")
-    renamed = sessions.get_session(
-        chat_key=session.chat_key,
-        session_id=session.session_id,
-    )
+    payload = sessions.get_messages(session)
 
-    assert renamed.name == "Fix flaky tests"
+    assert session.session_id == "Fix flaky tests"
+    assert payload["id"] == "Fix flaky tests"
+    assert not old_session_dir.exists()
+    assert session.session_dir.exists()
     assert sessions.list_sessions(session.chat_key) == [
-        {"id": session.session_id, "name": "Fix flaky tests"}
+        {
+            "id": "Fix flaky tests",
+            "name": _listed_name(session, "Fix flaky tests"),
+        }
     ]
-    assert json.loads(
-        (
-            tmp_path
-            / ".faltoobot"
-            / "sessions"
-            / session.chat_key
-            / sessions.SESSIONS_FILE
-        ).read_text(encoding="utf-8")
-    ) == {
-        "last_used": session.session_id,
-        "sessions": {session.session_id: "Fix flaky tests"},
-    }
 
 
 def test_list_sessions_includes_unnamed_sessions(
@@ -253,32 +233,24 @@ def test_list_sessions_includes_unnamed_sessions(
     sessions.set_session_name(first, "Fix flaky tests")
 
     assert sessions.list_sessions("code@test") == [
-        {"id": "first", "name": "Fix flaky tests"},
-        {"id": "second", "name": "second"},
+        {
+            "id": "Fix flaky tests",
+            "name": _listed_name(first, "Fix flaky tests"),
+        },
+        {"id": "second", "name": _listed_name(second, "second")},
     ]
 
 
-def test_list_sessions_ignores_stale_named_sessions(
+def test_list_sessions_ignores_folders_without_messages(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     session = sessions.get_session(chat_key="code@test", session_id="live")
-    sessions.set_session_name(session, "Live session")
-    (
-        tmp_path / ".faltoobot" / "sessions" / session.chat_key / sessions.SESSIONS_FILE
-    ).write_text(
-        json.dumps(
-            {
-                "last_used": "live",
-                "sessions": {"live": "Live session", "missing": "Missing session"},
-            }
-        ),
-        encoding="utf-8",
-    )
+    session.chat_root.joinpath("missing").mkdir()
 
     assert sessions.list_sessions("code@test") == [
-        {"id": "live", "name": "Live session"}
+        {"id": "live", "name": _listed_name(session, "live")}
     ]
 
 
@@ -714,15 +686,7 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
     )
 
     answer = await sessions.get_answer(
-        sessions.Session(
-            chat_key="code@test",
-            session_id="session-1",
-            name="session-1",
-            chat_root=Path("chat-root"),
-            session_dir=Path("session-dir"),
-            messages_path=Path("messages.json"),
-            sessions_path=Path("sessions.json"),
-        )
+        sessions.Session(chat_key="code@test", session_id="session-1")
     )
 
     assert answer == "hello from codex"

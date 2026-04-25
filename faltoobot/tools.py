@@ -30,9 +30,12 @@ def _clipped_text(value: str | bytes | None) -> str:
 def _tool_env() -> dict[str, str]:
     env = dict(os.environ)
     config = build_config()
-    api_key = getattr(config, "api_key", "") or getattr(config, "openai_api_key", "")
-    if api_key:
-        env["OPENAI_API_KEY"] = api_key
+    if config.openai_api_key:
+        # comment: shell examples use the OpenAI SDK, which reads this key from the environment.
+        env["OPENAI_API_KEY"] = config.openai_api_key
+    if config.gemini_api_key:
+        # comment: Gemini shell snippets expect the key in the process environment.
+        env["GEMINI_API_KEY"] = config.gemini_api_key
     return env
 
 

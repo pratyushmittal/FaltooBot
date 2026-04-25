@@ -37,13 +37,13 @@ class TextInputModal(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.initial_value = initial_value
-        self.title = title
+        self.dialog_title = title
         self.placeholder = placeholder
         self.allow_empty = allow_empty
 
     def compose(self) -> ComposeResult:
         with Vertical(id="text-input-dialog"):
-            yield Static(self.title)
+            yield Static(self.dialog_title)
             yield Input(
                 self.initial_value,
                 placeholder=self.placeholder,

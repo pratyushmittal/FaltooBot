@@ -1,4 +1,3 @@
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
@@ -11,8 +10,8 @@ from faltoobot.config import build_config, config_status_text
 from faltoobot.faltoochat.terminal import open_in_default_editor
 from faltoobot.session_utils import get_local_user_message_item
 
-from faltoobot.faltoochat.widgets.session_picker import SessionPicker
-from faltoobot.faltoochat.widgets.text_input_modal import TextInputModal
+from .session_picker import SessionPicker
+from .text_input_modal import TextInputModal
 
 from ..slash_commands import SlashCommandStore
 
@@ -28,6 +27,20 @@ SLASH_COMMANDS = {
     "/tree": "open the current session messages file",
 }
 SLASH_COMMAND_STORE = SlashCommandStore(frozenset(SLASH_COMMANDS))
+
+
+async def _rename_session(app: "FaltooChatApp", name: str) -> None:
+    try:
+        sessions.set_session_name(app.session, name)
+    except (OSError, ValueError) as error:
+        app.notify(
+            f"Could not rename session: {error}",
+            severity="error",
+        )
+        return
+    await app.show_local_answer(
+        f"`Saved session name: {name}`" if name else "`Cleared session name.`"
+    )
 
 
 class SlashCommandsOptionList(OptionList):
@@ -78,21 +91,12 @@ class SlashCommandsOptionList(OptionList):
 
                 async def on_result(name: str | None) -> None:
                     if name is not None:
-                        sessions.set_session_name(app.session, name)
-                        app.session = replace(
-                            app.session,
-                            name=name or app.session.session_id,
-                        )
-                        await app.show_local_answer(
-                            f"`Saved session name: {name}`"
-                            if name
-                            else "`Cleared session name.`"
-                        )
+                        await _rename_session(app, name)
                     app.focus_composer()
 
                 app.push_screen(
                     TextInputModal(
-                        initial_value=app.session.name,
+                        initial_value=app.session.session_id,
                         title="Name session",
                         placeholder="Enter a session name",
                         allow_empty=True,

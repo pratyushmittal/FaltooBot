@@ -75,7 +75,11 @@ def test_run_shell_call_in_workspace_sets_openai_key_from_config(
     monkeypatch.setattr(
         tools,
         "build_config",
-        lambda: type("Config", (), {"api_key": "openai-key"})(),
+        lambda: type(
+            "Config",
+            (),
+            {"openai_api_key": "openai-key", "gemini_api_key": "gemini-key"},
+        )(),
         raising=False,
     )
 
@@ -85,6 +89,7 @@ def test_run_shell_call_in_workspace_sets_openai_key_from_config(
             """python - <<'PY'
 import os
 print(os.environ.get("OPENAI_API_KEY", ""))
+print(os.environ.get("GEMINI_API_KEY", ""))
 PY""",
             timeout_ms=5000,
         )
@@ -94,6 +99,7 @@ PY""",
     assert result["exit_code"] == 0
     assert result["timed_out"] is False
     assert "openai-key" in result["stdout"]
+    assert "gemini-key" in result["stdout"]
 
 
 def test_get_run_in_python_shell_tool_builds_valid_tool_definition(

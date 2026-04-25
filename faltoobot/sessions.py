@@ -1,7 +1,8 @@
 import hashlib
 import json
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, TypedDict, cast
 from uuid import uuid4
@@ -31,7 +32,6 @@ from faltoobot.tools import (
 )
 
 MESSAGES_FILE = "messages.json"
-SESSIONS_FILE = "sessions.json"
 WORKSPACE_DIR = "workspace"
 
 
@@ -44,29 +44,41 @@ class MessagesJson(TypedDict):
     message_ids: list[str]
 
 
-class SessionsJson(TypedDict):
-    last_used: str
-    sessions: dict[str, str]
-
-
 Attachment = str | Path
 
 
-@dataclass(frozen=True)
+@dataclass
 class Session:
     chat_key: str
     session_id: str
-    name: str
-    chat_root: Path
-    session_dir: Path
-    messages_path: Path
-    sessions_path: Path
+
+    @property
+    def chat_root(self) -> Path:
+        return _chat_root(self.chat_key)
+
+    @property
+    def session_dir(self) -> Path:
+        return self.chat_root / _validate_session_id(self.session_id)
+
+    @property
+    def messages_path(self) -> Path:
+        return self.session_dir / MESSAGES_FILE
 
 
 def _validate_chat_key(chat_key: str) -> str:
     if not chat_key or chat_key in {".", ".."} or "/" in chat_key:
         raise ValueError(f"Invalid chat key: {chat_key!r}")
     return chat_key
+
+
+def _validate_session_id(session_id: str) -> str:
+    if not session_id or session_id in {".", ".."} or "/" in session_id:
+        raise ValueError(f"Invalid session id: {session_id!r}")
+    return session_id
+
+
+def _chat_root(chat_key: str) -> Path:
+    return app_root() / "sessions" / _validate_chat_key(chat_key)
 
 
 def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
@@ -112,24 +124,27 @@ def _write_text_atomic(path: Path, value: str) -> None:
     temp.replace(path)
 
 
+def _latest_session_id(chat_key: str) -> str | None:
+    message_paths = list(_chat_root(chat_key).glob(f"*/{MESSAGES_FILE}"))
+    if not message_paths:
+        return None
+    message_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return message_paths[0].parent.name
+
+
 def get_session(
     chat_key: str,
     session_id: str | None = None,
     workspace: Path | None = None,
 ) -> Session:
     chat_key = _validate_chat_key(chat_key)
-    chat_root = app_root() / "sessions" / chat_key
-    sessions_path = chat_root / SESSIONS_FILE
-    sessions_json = (
-        cast(SessionsJson, json.loads(sessions_path.read_text(encoding="utf-8")))
-        if sessions_path.exists()
-        else cast(SessionsJson, {"last_used": "", "sessions": {}})
+    session_id = _validate_session_id(
+        session_id or _latest_session_id(chat_key) or str(uuid4())
     )
-    session_id = session_id or sessions_json["last_used"] or str(uuid4())
-    session_dir = chat_root / session_id
-    messages_path = session_dir / MESSAGES_FILE
-    session_dir.mkdir(parents=True, exist_ok=True)
-    # comment: load saved state, normalize it, then ensure the workspace and metadata files exist.
+    session = Session(chat_key=chat_key, session_id=session_id)
+    session_dir = session.session_dir
+    messages_path = session.messages_path
+    # comment: load saved state, normalize it, then ensure the workspace and message file exist.
     messages_payload = (
         json.loads(messages_path.read_text(encoding="utf-8"))
         if messages_path.exists()
@@ -142,66 +157,65 @@ def get_session(
         messages_payload,
         workspace,
     )
-    sessions_json["last_used"] = session_id
-    sessions_json["sessions"].setdefault(session_id, session_id)
-    session_name = sessions_json["sessions"].get(session_id) or session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
     workspace_path = Path(messages_json["workspace"])
     workspace_path.mkdir(parents=True, exist_ok=True)
     # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
     (workspace_path / "AGENTS.md").touch(exist_ok=True)
-    # comment: update the messages file on disk.
+    # comment: update messages.json so its mtime tracks the last-used session.
     _write_text_atomic(
         messages_path,
         json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
     )
-    # comment: update the last-used session marker on disk.
-    _write_text_atomic(
-        sessions_path,
-        json.dumps(sessions_json, indent=2, ensure_ascii=False) + "\n",
-    )
-    return Session(
-        chat_key=chat_key,
-        session_id=session_id,
-        name=session_name,
-        chat_root=chat_root,
-        session_dir=session_dir,
-        messages_path=messages_path,
-        sessions_path=sessions_path,
-    )
+    return session
 
 
 def set_session_name(session: Session, name: str) -> None:
-    sessions_json = cast(
-        SessionsJson,
-        json.loads(session.sessions_path.read_text(encoding="utf-8")),
-    )
-    sessions_json["sessions"][session.session_id] = name
-    _write_text_atomic(
-        session.sessions_path,
-        json.dumps(sessions_json, indent=2, ensure_ascii=False) + "\n",
-    )
+    new_session_id = _validate_session_id(name.strip() or str(uuid4()))
+    if new_session_id == session.session_id:
+        return
+
+    old_session_dir = session.session_dir
+    new_session_dir = session.chat_root / new_session_id
+    if new_session_dir.exists():
+        raise ValueError(f"Session already exists: {new_session_id}")
+
+    # comment: rename the whole folder so the session id is the user-visible name.
+    old_session_dir.rename(new_session_dir)
+    # comment: mutate the current session so active streams keep writing to the renamed folder.
+    session.session_id = new_session_id
+    # comment: keep the renamed current session at the top of the resume list.
+    session.messages_path.touch()
+
+
+def _session_label(session_id: str, messages_path: Path) -> str:
+    updated_at = datetime.fromtimestamp(messages_path.stat().st_mtime)
+    return f"{session_id} - {updated_at.day} {updated_at:%b}"
 
 
 def list_sessions(chat_key: str) -> list[dict[str, str]]:
     chat_key = _validate_chat_key(chat_key)
-    chat_root = app_root() / "sessions" / chat_key
-    names = cast(
-        SessionsJson,
-        json.loads((chat_root / SESSIONS_FILE).read_text(encoding="utf-8")),
-    )["sessions"]
+    message_paths = list(_chat_root(chat_key).glob(f"*/{MESSAGES_FILE}"))
+    message_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return [
         {
-            "id": session_id,
-            "name": names.get(session_id) or session_id,
+            "id": path.parent.name,
+            "name": _session_label(path.parent.name, path),
         }
-        for session_id in sorted(
-            path.parent.name for path in chat_root.glob(f"*/{MESSAGES_FILE}")
-        )
+        for path in message_paths
     ]
 
 
 def get_messages(session: Session) -> MessagesJson:
-    payload = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    messages_path = session.messages_path
+    payload = (
+        json.loads(messages_path.read_text(encoding="utf-8"))
+        if messages_path.exists()
+        else {}
+    )
+    if not payload:
+        get_session(chat_key=session.chat_key, session_id=session.session_id)
+        payload = json.loads(messages_path.read_text(encoding="utf-8"))
     return _normalized_messages_json(
         session.chat_key,
         session.session_id,
