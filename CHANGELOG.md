@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.2.1 — 2026-04-25
+
+### Changed
+- Updated locked Python and website dependencies, plus deploy workflow actions.
+
+### Fixed
+- Python tool calls now receive configured OpenAI and Gemini API keys, matching shell tool behavior.
+
 ## 3.2.0 — 2026-04-25
 
 ### Added
