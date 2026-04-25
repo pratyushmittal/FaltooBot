@@ -17,7 +17,7 @@ const docs = (await getCollection('docs')).sort(
   <ul class="docs-index-list">
     {docs.map((entry) => (
       <li>
-        <a href={`/docs/${entry.slug}/`}>
+        <a href={`/docs/${entry.id.replace(/\.md$/, '')}/`}>
           <strong>{entry.data.title}</strong>
           {entry.data.description && <span>{entry.data.description}</span>}
         </a>
