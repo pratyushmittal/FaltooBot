@@ -27,15 +27,21 @@ def _clipped_text(value: str | bytes | None) -> str:
     return (value or "")[:MAX_SHELL_OUTPUT]
 
 
-def _tool_env() -> dict[str, str]:
-    env = dict(os.environ)
+def _tool_env_overrides() -> dict[str, str]:
+    env: dict[str, str] = {}
     config = build_config()
     if config.openai_api_key:
-        # comment: shell examples use the OpenAI SDK, which reads this key from the environment.
+        # comment: tool examples use SDKs that read API keys from the environment.
         env["OPENAI_API_KEY"] = config.openai_api_key
     if config.gemini_api_key:
-        # comment: Gemini shell snippets expect the key in the process environment.
+        # comment: Gemini snippets expect the key in the process environment.
         env["GEMINI_API_KEY"] = config.gemini_api_key
+    return env
+
+
+def _tool_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(_tool_env_overrides())
     return env
 
 
@@ -109,6 +115,7 @@ def get_run_in_python_shell_tool(
             workspace_str,
             script,
             continue_session,
+            env_overrides=_tool_env_overrides(),
         )
         return json.dumps(
             {
