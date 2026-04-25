@@ -30,6 +30,7 @@ from faltoobot.sessions import (
 )
 
 from .audio import AudioError, audio_prompt, get_audio
+from .inspect import inspect_text_for_messages
 
 logger = logging.getLogger("faltoobot")
 MIN_ALLOWLIST_DIGITS = 8
@@ -46,7 +47,7 @@ IMAGE_SUFFIXES = {
 }
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
-SLASH_COMMANDS = {"/help", "/status", "/reset"}
+SLASH_COMMANDS = {"/help", "/inspect", "/status", "/reset"}
 
 
 HELP_TEXT = (
@@ -54,6 +55,7 @@ HELP_TEXT = (
     "• Send any message to ask the model\n"
     "• /reset — clear this chat's memory\n"
     "• /status — show bot status\n"
+    "• /inspect — show recent tool calls\n"
     "• /help — show this help"
 )
 
@@ -296,6 +298,8 @@ async def _handle_slash_command(
             ),
             event,
         )
+    elif prompt == "/inspect":
+        await client.reply_message(inspect_text_for_messages(messages_json), event)
     elif prompt == "/reset":
         reset_session = get_session(chat_key=session.chat_key, session_id=str(uuid4()))
         reset_messages_json = get_messages(reset_session)

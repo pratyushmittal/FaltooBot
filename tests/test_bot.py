@@ -35,7 +35,7 @@ from faltoobot.config import (
 from faltoobot import sessions
 from faltoobot.sessions import get_messages, get_session, set_messages
 from faltoobot.whatsapp import app as whatsapp_app
-from faltoobot.whatsapp import audio, runtime
+from faltoobot.whatsapp import audio, inspect, runtime
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
 
 
@@ -1171,6 +1171,93 @@ async def test_process_turn_locked_status_reports_version_and_config(
         )
     ]
     assert client.reply_ids == ["status-1"]
+
+
+@pytest.mark.anyio
+async def test_process_turn_locked_inspect_reports_recent_tool_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    client = FakePresenceClient()
+    config = make_config(tmp_path, allowed_chats=set())
+
+    async def fake_get_answer(*args: object, **kwargs: object) -> str:
+        raise AssertionError("get_answer should not run for /inspect")
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    messages_json = get_messages(session)
+    messages_json["messages"] = [
+        {
+            "type": "function_call",
+            "name": "run_shell_call",
+            "arguments": json.dumps(
+                {"command_summary": f"tool-call-{index:02d}", "command": "echo hi"}
+            ),
+        }
+        for index in range(22)
+    ]
+    messages_json["messages"].append(
+        {"type": "web_search_call", "action": {"query": "latest faltoobot"}}
+    )
+    set_messages(session, messages_json)
+    event = fake_event(message_id="inspect-1", text="/inspect")
+
+    turn: runtime.Turn = {
+        "event": event,
+        "chat": jid("15555550123", "s.whatsapp.net"),
+        "message_ids": ["inspect-1"],
+        "prompt": "/inspect",
+        "quoted_message_text": "",
+        "attachments": [],
+        "audio": None,
+    }
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn=turn,
+    )
+
+    lines = client.replies[0].splitlines()
+    assert lines[0] == "Recent tool calls:"
+    assert len(lines) == inspect.TOOL_INSPECT_LIMIT + 1
+    assert lines[1] == "1. run_shell_call: tool-call-03"
+    assert "tool-call-00" not in client.replies[0]
+    assert "tool-call-02" not in client.replies[0]
+    assert "tool-call-21" in client.replies[0]
+    assert lines[-1] == "20. web_search: latest faltoobot"
+    assert client.reply_ids == ["inspect-1"]
+
+
+@pytest.mark.anyio
+async def test_process_turn_locked_inspect_handles_empty_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    client = FakePresenceClient()
+    config = make_config(tmp_path, allowed_chats=set())
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    event = fake_event(message_id="inspect-empty", text="/inspect")
+
+    turn: runtime.Turn = {
+        "event": event,
+        "chat": jid("15555550123", "s.whatsapp.net"),
+        "message_ids": ["inspect-empty"],
+        "prompt": "/inspect",
+        "quoted_message_text": "",
+        "attachments": [],
+        "audio": None,
+    }
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn=turn,
+    )
+
+    assert client.replies == ["No tool calls yet."]
+    assert client.reply_ids == ["inspect-empty"]
 
 
 @pytest.mark.anyio
