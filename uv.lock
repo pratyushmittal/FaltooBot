@@ -343,7 +343,7 @@ wheels = [
 
 [[package]]
 name = "faltoobot"
-version = "3.3.0"
+version = "3.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

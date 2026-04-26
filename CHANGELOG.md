@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.3.1 — 2026-04-25
+
+### Changed
+- WhatsApp two-person groups now behave like direct chats and reply without needing a mention.
+
 ## 3.3.0 — 2026-04-25
 
 ### Added
