@@ -140,9 +140,7 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
             attachments=turn["attachments"] or None,
             message_ids=turn["message_ids"],
         )
-    if not stored or await runtime.is_unmentioned_group_message(
-        current_client, turn["event"]
-    ):
+    if not stored or not await runtime.should_reply_now(current_client, turn["event"]):
         return
     current_timer = debounce_timers.pop(chat_key, None)
     if current_timer is not None:

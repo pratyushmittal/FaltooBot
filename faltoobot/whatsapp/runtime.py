@@ -506,20 +506,32 @@ async def _bot_identity_ids(client: NewAClient) -> set[str]:
     return normalized
 
 
-async def is_unmentioned_group_message(
+async def should_reply_now(
     client: NewAClient,
     event: MessageEv | None,
 ) -> bool:
-    """Return whether the event is a group message that neither mentions nor quotes the bot."""
+    """Return True when this event should trigger a reply now."""
     if event is None or not event.Info.MessageSource.IsGroup:
-        return False
+        # comment: direct chats and notification turns should always be processed.
+        return True
+    try:
+        group_info = await client.get_group_info(event.Info.MessageSource.Chat)
+        is_two_people_group = len(group_info.Participants) in (1, 2)
+    except Exception:
+        # comment: if group metadata is unavailable, keep the safer mention-only behavior.
+        logger.debug("Failed to inspect WhatsApp group size", exc_info=True)
+        is_two_people_group = False
+    # comment: a 1:1 WhatsApp group is effectively a direct chat with the bot.
+    if is_two_people_group:
+        return True
     addressed_ids = _mentioned_chat_ids(event.Message) | _quoted_participant_ids(
         event.Message
     )
     if not addressed_ids:
-        return True
+        # comment: larger groups need an explicit mention or reply to the bot.
+        return False
     bot_ids = await _bot_identity_ids(client)
-    return addressed_ids.isdisjoint(bot_ids)
+    return not addressed_ids.isdisjoint(bot_ids)
 
 
 def _quoted_reply_text(text: str, *, max_chars: int = 500) -> str:

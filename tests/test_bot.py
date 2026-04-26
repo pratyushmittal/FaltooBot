@@ -259,8 +259,9 @@ def fake_album_child_event(
 
 
 class FakePresenceClient:
-    def __init__(self, audio_bytes: bytes = b"voice-note") -> None:
+    def __init__(self, audio_bytes: bytes = b"voice-note", group_size: int = 3) -> None:
         self.audio_bytes = audio_bytes
+        self.group_size = group_size
         self.calls: list[tuple[str, str]] = []
         self.replies: list[str] = []
         self.reply_ids: list[str] = []
@@ -276,6 +277,16 @@ class FakePresenceClient:
             JID=jid("15555550999", "s.whatsapp.net"),
             LID=jid("15555550999", "lid"),
         )
+
+    async def get_group_info(self, group: Neonize_pb2.JID) -> Neonize_pb2.GroupInfo:
+        info = Neonize_pb2.GroupInfo(JID=group)
+        for index in range(self.group_size):
+            info.Participants.append(
+                Neonize_pb2.GroupParticipant(
+                    JID=jid(f"1555555000{index}", "s.whatsapp.net")
+                )
+            )
+        return info
 
     async def send_chat_presence(
         self,
@@ -364,9 +375,7 @@ async def handle_message(
                 attachments=turn["attachments"] or None,
                 message_ids=turn["message_ids"],
             )
-        if stored and not await runtime.is_unmentioned_group_message(
-            client, turn["event"]
-        ):
+        if stored and await runtime.should_reply_now(client, turn["event"]):
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
 
 
@@ -571,6 +580,34 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
 
     assert turn is not None
     assert turn["prompt"] == "[from 15555555555555] hi @faltoo"
+
+
+@pytest.mark.anyio
+async def test_two_person_group_messages_auto_trigger_without_mention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    client = FakePresenceClient(group_size=2)
+
+    async def fake_get_answer(session, **_: object) -> str:
+        messages = get_messages(session)["messages"]
+        assert messages[-1]["content"] == "[from 15555555555555] hello bot"
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_group_event(sender_phone="15555550123", text="hello bot"),
+        config=config,
+    )
+
+    assert client.replies == ["Done"]
 
 
 @pytest.mark.anyio
@@ -1674,17 +1711,13 @@ async def test_handle_message_stores_turn_without_reply_when_not_addressed(
     async def fake_process_turn_locked(*args: object, **kwargs: object) -> None:
         calls.append("process")
 
-    async def fake_is_unmentioned_group_message(
-        *args: object, **kwargs: object
-    ) -> bool:
-        return True
+    async def fake_should_reply_now(*args: object, **kwargs: object) -> bool:
+        return False
 
     monkeypatch.setattr(runtime, "get_turn_locked", fake_get_turn_locked)
     monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
     monkeypatch.setattr(runtime, "process_turn_locked", fake_process_turn_locked)
-    monkeypatch.setattr(
-        runtime, "is_unmentioned_group_message", fake_is_unmentioned_group_message
-    )
+    monkeypatch.setattr(runtime, "should_reply_now", fake_should_reply_now)
 
     await whatsapp_app._handle_message(cast(NewAClient, FakePresenceClient()), event)
 
