@@ -260,7 +260,7 @@ def test_review_diff_registers_typescript_languages() -> None:
     assert "tsx" in viewer.available_languages
 
 
-def test_review_cycle_mode_hides_deleted_lines_in_add_mode() -> None:
+def test_review_cycle_mode_hides_deleted_lines_in_add_mode(monkeypatch) -> None:
     viewer = ReviewDiffView(
         [
             {"is_staged": False, "type": "", "text": "a = 1"},
@@ -271,9 +271,17 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode() -> None:
         file_path=Path("alpha.py"),
         review_view=cast(Any, review_view_stub()),
     )
+    centers: list[bool] = []
+
+    def move_cursor(location, *, center=False, record_width=True):
+        centers.append(center)
+
+    monkeypatch.setattr(ReviewDiffView, "is_mounted", property(lambda self: True))
+    monkeypatch.setattr(viewer, "move_cursor", move_cursor)
 
     viewer.action_review_cycle_mode()
 
+    assert centers[-1] is True
     assert viewer.mode == "add"
     assert viewer.border_subtitle == "add"
     assert viewer.text == "a = 1\nb = 20\nc = 3"
@@ -281,6 +289,7 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode() -> None:
 
     viewer.action_review_cycle_mode()
 
+    assert centers[-1] is True
     assert viewer.mode == "diff"
     assert viewer.border_subtitle == ""
     assert viewer.text == "a = 1\nb = 2\nb = 20\nc = 3"

@@ -392,7 +392,7 @@ class ReviewDiffView(TextArea):
                 return line_index
         return len(self.visible_diff_lines) - 1
 
-    def _load_diff_text(self) -> None:
+    def _load_diff_text(self, *, center: bool = False) -> None:
         diff_line = (
             self._visible_diff_line(self.cursor_location[0])
             if self.visible_diff_lines
@@ -403,11 +403,15 @@ class ReviewDiffView(TextArea):
         self.load_text(_diff_text(self.diff, self.visible_diff_lines))
         if self.document.line_count == 0:
             return
-        self.move_cursor((self._display_line(diff_line), 0), record_width=False)
+        self.move_cursor(
+            (self._display_line(diff_line), 0),
+            center=center and self.is_mounted,
+            record_width=False,
+        )
 
     def action_review_cycle_mode(self) -> None:
         self.mode = ADD_MODE if self.mode == DIFF_MODE else DIFF_MODE
-        self._load_diff_text()
+        self._load_diff_text(center=True)
 
     def action_review_toggle_line_highlights(self) -> None:
         self.review_view.set_display_preferences(
