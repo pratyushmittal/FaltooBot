@@ -571,6 +571,117 @@ async def test_minchat_ctrl_r_toggles_back_to_chat_tab(
 
 
 @pytest.mark.anyio
+async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript")
+        composer = app.query_one("#composer", Composer)
+        await transcript.remove_children()
+        await transcript.mount(
+            *(Markdown(f"filler before {index}\n\nmore") for index in range(20)),
+            Markdown("first user\n\nmore", classes="user"),
+            Markdown("tool output\n\nmore", classes="tool"),
+            Markdown("first answer\n\nmore", classes="answer"),
+            Markdown("another tool\n\nmore", classes="tool"),
+            Markdown("second user\n\nmore", classes="user"),
+            Markdown("second answer\n\nmore", classes="answer"),
+            *(Markdown(f"filler after {index}\n\nmore") for index in range(20)),
+        )
+        await pilot.pause(0)
+        composer.focus()
+        transcript.scroll_end(animate=False, immediate=True)
+        await pilot.pause(0)
+
+        original_scroll_to = transcript.scroll_to
+        jumps: list[float] = []
+
+        def scroll_to(
+            *args: Any, y: float | None = None, animate: bool = True, **kwargs: Any
+        ):
+            if y is not None:
+                jumps.append(y)
+            return original_scroll_to(*args, y=y, animate=animate, **kwargs)
+
+        monkeypatch.setattr(transcript, "scroll_to", scroll_to)
+
+        composer.action_transcript_previous_message()
+        composer.action_transcript_previous_message()
+
+        assert jumps == [
+            transcript.children[25].virtual_region.y,
+            transcript.children[24].virtual_region.y,
+        ]
+
+        jumps.clear()
+        transcript.scroll_to(
+            y=transcript.children[23].virtual_region.y, animate=False, immediate=True
+        )
+        await pilot.pause(0)
+        jumps.clear()
+
+        composer.action_transcript_previous_message()
+
+        assert jumps == [transcript.children[22].virtual_region.y]
+
+        transcript.scroll_end(animate=False, immediate=True)
+        await pilot.pause(0)
+        jumps.clear()
+
+        composer.action_transcript_previous_message()
+
+        assert jumps == [transcript.children[25].virtual_region.y]
+
+
+@pytest.mark.anyio
+async def test_composer_alt_up_skips_visible_clamped_last_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript")
+        composer = app.query_one("#composer", Composer)
+        await transcript.remove_children()
+        await transcript.mount(
+            *(Markdown(f"filler before {index}\n\nmore") for index in range(30)),
+            Markdown("older answer\n\nmore", classes="answer"),
+            *(Markdown(f"filler middle {index}\n\nmore") for index in range(10)),
+            Markdown("latest short answer", classes="answer"),
+        )
+        await pilot.pause(0)
+        transcript.scroll_end(animate=False, immediate=True)
+        await pilot.pause(0)
+
+        older_answer_y = transcript.children[30].virtual_region.y
+        latest_answer_y = transcript.children[-1].virtual_region.y
+        assert latest_answer_y > transcript.max_scroll_y
+
+        original_scroll_to = transcript.scroll_to
+        jumps: list[float] = []
+
+        def scroll_to(
+            *args: Any, y: float | None = None, animate: bool = True, **kwargs: Any
+        ):
+            if y is not None:
+                jumps.append(y)
+            return original_scroll_to(*args, y=y, animate=animate, **kwargs)
+
+        monkeypatch.setattr(transcript, "scroll_to", scroll_to)
+
+        composer.action_transcript_previous_message()
+
+        assert jumps == [older_answer_y]
+        assert jumps != [latest_answer_y]
+
+
+@pytest.mark.anyio
 async def test_minchat_returning_to_chat_scrolls_transcript_to_bottom(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -909,6 +1020,41 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
         assert answer
         assert "Final answer" not in thinking[-1]._markdown
         assert answer[-1]._markdown == "Final answer"
+
+
+@pytest.mark.anyio
+async def test_minchat_bells_when_answer_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    release = asyncio.Event()
+    bells: list[bool] = []
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
+        await release.wait()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+    monkeypatch.setattr(app, "bell", lambda: bells.append(True))
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: app.is_answering)
+        assert bells == []
+
+        release.set()
+        await asyncio.wait_for(
+            wait_for_condition(lambda: not app.is_answering), timeout=3
+        )
+        await pilot.pause(0)
+        assert bells == [True]
 
 
 @pytest.mark.anyio

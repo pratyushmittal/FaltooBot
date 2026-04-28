@@ -62,7 +62,6 @@ class QueueWidget(Vertical):
         layout: vertical;
         background: $background;
         border: round $panel;
-        border-bottom: none;
         border-title-align: left;
         border-title-color: $panel;
         border-title-background: $background;

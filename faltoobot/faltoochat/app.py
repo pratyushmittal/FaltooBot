@@ -9,6 +9,7 @@ from textual import events, getters
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import (
     Footer,
     Markdown,
@@ -512,6 +513,7 @@ class FaltooChatApp(App[None]):
 
     async def submit_message(self, message_item: MessageItem) -> None:
         composer = self.query_one("#composer", Composer)
+        completed = False
         try:
             # render user message
             transcript = self.query_one("#transcript", VerticalScroll)
@@ -528,8 +530,11 @@ class FaltooChatApp(App[None]):
                 transcript,
                 *decompose_local_message_item(message_item),
             )
+            completed = True
         finally:
             self.is_answering = False
+            if completed:
+                self.bell()
             composer.border_subtitle = ""
             # comment: finishing a reply while Review is active should not steal focus from that tab.
             if self.tabs().active == "chat-tab":
@@ -541,6 +546,10 @@ class Composer(TextArea):
     BINDINGS = [
         Binding("enter", "composer_enter", "Submit", priority=True),
         Binding("shift+enter", "newline", "New line", priority=True),
+        Binding(
+            "alt+up", "transcript_previous_message", "Previous Message", priority=True
+        ),
+        Binding("alt+down", "transcript_next_message", "Next Message", priority=True),
         Binding("@", "mention_file", "Mention File", priority=True, show=False),
     ]
     BINDING_GROUP_TITLE = "Chat"
@@ -551,6 +560,7 @@ class Composer(TextArea):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.attachments: list[sessions.Attachment] = []
+        self._selected_transcript_message_id: int | None = None
 
     def attach_image(self, path: sessions.Attachment) -> None:
         self.attachments.append(path)
@@ -626,6 +636,62 @@ class Composer(TextArea):
         self.load_text("")
         message_item = get_local_user_message_item(question, attachments)
         await self.app.handle_message(message_item)
+
+    def _selected_transcript_message_y(
+        self,
+        transcript: VerticalScroll,
+        messages: list[Widget],
+    ) -> int | float | None:
+        """Return selected message y if current scroll still matches it."""
+        for message in messages:
+            if id(message) != self._selected_transcript_message_id:
+                continue
+            selected_scroll_y = min(message.virtual_region.y, transcript.max_scroll_y)
+            if transcript.scroll_y == selected_scroll_y:
+                # comment: use the real message top when Textual had to clamp the scroll.
+                return message.virtual_region.y
+            break
+        return None
+
+    def _scroll_transcript_message(self, delta: int) -> None:
+        transcript = self.app.query_one("#transcript", VerticalScroll)
+        messages = [
+            message
+            for message in transcript.children
+            if message.has_class("user") or message.has_class("answer")
+        ]
+        if not messages:
+            return
+
+        current_y = self._selected_transcript_message_y(transcript, messages)
+        if current_y is None:
+            current_y = transcript.scroll_y
+        if delta < 0:
+            target = next(
+                (
+                    message
+                    for message in reversed(messages)
+                    if message.virtual_region.y < current_y
+                ),
+                messages[0],
+            )
+        else:
+            target = next(
+                (
+                    message
+                    for message in messages
+                    if message.virtual_region.y > current_y
+                ),
+                messages[-1],
+            )
+        self._selected_transcript_message_id = id(target)
+        transcript.scroll_to(y=target.virtual_region.y, animate=False, immediate=True)
+
+    def action_transcript_previous_message(self) -> None:
+        self._scroll_transcript_message(-1)
+
+    def action_transcript_next_message(self) -> None:
+        self._scroll_transcript_message(1)
 
     def action_newline(self) -> None:
         self.insert("\n")
