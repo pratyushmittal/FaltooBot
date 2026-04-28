@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.4.0 — 2026-04-28
+
+### Added
+- Faltoochat composer now supports `Alt+Up` and `Alt+Down` to jump between user and assistant messages in the transcript.
+- Faltoochat now rings the terminal bell when an answer finishes.
+
+### Fixed
+- Review diff mode switching keeps the current cursor line centered.
+- Queue and composer borders now render cleanly together.
+
 ## 3.3.1 — 2026-04-25
 
 ### Changed
