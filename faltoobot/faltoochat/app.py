@@ -361,7 +361,7 @@ class FaltooChatApp(App[None]):
 
     async def on_mount(self) -> None:
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
-        await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
+        await self.load_recent_messages()
         await self.queue().refresh_queue()
         if self._binding_errors:
             self.push_screen(BindingsErrorModal(self._binding_errors))
@@ -404,6 +404,9 @@ class FaltooChatApp(App[None]):
         composer.border_subtitle = "answering"
         # exclusive=True tells Textual to cancel all previous workers before starting the new one
         self.run_worker(self.submit_message(message_item), exclusive=True)
+
+    async def load_recent_messages(self) -> None:
+        await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
 
     async def load_messages(
         self,

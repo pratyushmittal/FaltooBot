@@ -124,6 +124,8 @@ class SlashCommandsOptionList(OptionList):
                     if result is None:
                         app.focus_composer()
                         return
+                    transcript = app.query_one("#transcript")
+                    transcript.loading = True
                     app.session = sessions.get_session(
                         chat_key=app.session.chat_key,
                         session_id=result["id"],
@@ -131,8 +133,9 @@ class SlashCommandsOptionList(OptionList):
                     app.workspace = Path(
                         sessions.get_messages(app.session)["workspace"]
                     )
-                    await app.load_messages()
+                    await app.load_recent_messages()
                     await app.queue().refresh_queue()
+                    transcript.loading = False
 
                 app.push_screen(
                     SessionPicker(chat_key=app.session.chat_key),

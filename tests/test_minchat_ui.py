@@ -296,6 +296,7 @@ async def test_minchat_resume_command_opens_picker_and_switches_session(
 
         transcript = app.query_one("#transcript")
         assert app.session.session_id == target.session_id
+        assert transcript.loading is False
         assert [block._markdown for block in transcript.query(Markdown)] == [
             "resume target"
         ]
