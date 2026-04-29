@@ -226,6 +226,21 @@ def test_review_diff_highlights_keep_using_stored_diff_line_ranges(monkeypatch) 
     assert later_deleted.bgcolor == base.blend(colors["error_light"], 0.25).rich_color
 
 
+@pytest.mark.anyio
+async def test_review_diff_render_line_draws_indent_guides(monkeypatch) -> None:
+    viewer = ReviewDiffView(
+        [{"is_staged": False, "type": "", "text": "        value = 1"}],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+        show_line_numbers=False,
+        read_only=True,
+    )
+    monkeypatch.setattr(ReviewDiffView, "on_focus", lambda self, event: None)
+
+    async with ReviewDiffApp(viewer).run_test():
+        assert viewer.render_line(0).text.startswith("│   │   value = 1")
+
+
 def test_review_diff_gutter_width_reserves_space_for_diff_symbol() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(105)],

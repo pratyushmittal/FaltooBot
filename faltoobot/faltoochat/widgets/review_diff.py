@@ -142,6 +142,7 @@ class ReviewDiffView(TextArea):
     ) -> None:
         requested_language = kwargs.pop("language", None)
         line_highlights = kwargs.pop("line_highlights", True)
+        indent_guides = kwargs.pop("indent_guides", True)
         self.file_path = file_path
         self.review_view = review_view
         self.diff = diff
@@ -149,6 +150,7 @@ class ReviewDiffView(TextArea):
         self.visible_diff_lines: list[int] = []
         self.last_tab_switch_at = 0.0
         self.line_highlights = line_highlights
+        self.indent_guides = indent_guides
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
         self.previous_cursor_locations: list[tuple[int, int]] = []
@@ -226,6 +228,14 @@ class ReviewDiffView(TextArea):
             highlight,
             base_background=_style_background(base_style),
         )
+        line_info = self._display_line_info(absolute_y)
+        if self.indent_guides and line_info is not None and line_info[1] == 0:
+            strip = _apply_indent_guides(
+                strip,
+                self.diff[context["diff_line"]]["text"],
+                indent_width=self.indent_width,
+                scroll_x=0 if self.soft_wrap else int(self.scroll_offset[0]),
+            )
         if self.show_line_numbers:
             gutter_style = _gutter_base_style(self, context["document_line"])
             gutter = _apply_line_highlight(
@@ -731,6 +741,59 @@ def _visible_diff_lines(diff: Diff, mode: str) -> list[int]:
 
 def _diff_text(diff: Diff, visible_diff_lines: list[int]) -> str:
     return "\n".join(diff[index]["text"] for index in visible_diff_lines)
+
+
+def _apply_indent_guides(
+    strip: Strip,
+    text: str,
+    *,
+    indent_width: int,
+    scroll_x: int = 0,
+) -> Strip:
+    """Overlay Rich-style indent guides without mutating TextArea text.
+
+    The source text is expanded only to measure leading indentation. Every
+    indent-width column inside that leading whitespace becomes a visible guide
+    in the rendered strip, adjusted for horizontal scroll. Only existing blank
+    cells are replaced, so cursor/search/staging positions still refer to the
+    original document text.
+    """
+    if indent_width <= 0:
+        return strip
+    expanded = text.expandtabs(indent_width)
+    leading_spaces = len(expanded) - len(expanded.lstrip(" "))
+    if leading_spaces < indent_width:
+        return strip
+    # comment: find guide positions in the visible part of the rendered line.
+    guide_columns = {
+        column - scroll_x for column in range(0, leading_spaces, indent_width)
+    }
+    guide_columns = {
+        column for column in guide_columns if 0 <= column < strip.cell_length
+    }
+    if not guide_columns:
+        return strip
+
+    guide_style = Style(dim=True)
+    segments: list[Segment] = []
+    cell = 0
+    # comment: walk the rendered segments cell-by-cell, preserving existing styles and
+    # replacing only blank cells that line up with an indent guide column.
+    for segment in strip._segments:
+        if segment.control:
+            segments.append(segment)
+            continue
+        style = segment.style
+        chars: list[Segment] = []
+        for char in segment.text:
+            next_style = style
+            if cell in guide_columns and char == " ":
+                char = "│"
+                next_style = (Style() if style is None else style) + guide_style
+            chars.append(Segment(char, next_style))
+            cell += 1
+        segments.extend(chars)
+    return Strip(segments, strip.cell_length)
 
 
 def _apply_line_highlight(
