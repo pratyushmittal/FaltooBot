@@ -14,7 +14,8 @@ Use these runtime values when opening or reusing the browser:
 
 Preferred pattern:
 - if a persistent browser is already running on `{cdp_url}`, connect to it with `connect_over_cdp(...)`
-- otherwise launch a new persistent browser with the same binary, profile, and CDP port
+- if no browser is running, prefer asking the user to run `faltoobot browser` (or launch a visible/headful persistent browser with the configured profile and CDP port)
+- do not launch a headless browser against the shared profile for login-sensitive sites; headless/background launches can create confusing session state and make it look like saved logins disappeared
 - the same profile folder can reuse saved login sessions across browser restarts, but do not launch a second persistent browser against that profile while another one is already open
 
 Example:

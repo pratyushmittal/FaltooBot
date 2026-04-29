@@ -61,16 +61,51 @@ def test_open_browser_reuses_existing_cdp_browser(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     calls: list[object] = []
+    opened: list[str] = []
 
     monkeypatch.setattr(browser, "_cdp_is_running", lambda: True)
+    monkeypatch.setattr(browser, "_cdp_profile_matches", lambda profile: True)
+    monkeypatch.setattr(browser, "_open_url_in_existing_cdp", lambda url: opened.append(url))
     monkeypatch.setattr(
         browser.subprocess,
         "Popen",
         lambda args: calls.append(args),
     )
 
-    browser.open_browser(root=tmp_path, binary="/tmp/chrome", url=None)
+    browser.open_browser(root=tmp_path, binary="/tmp/chrome", url="https://example.com")
 
     assert browser.browser_profile_dir(tmp_path).is_dir()
     assert calls == []
-    assert "Browser already running." in capsys.readouterr().out
+    assert opened == ["https://example.com"]
+    output = capsys.readouterr().out
+    assert "Browser already running." in output
+    assert "Opened URL: https://example.com" in output
+
+
+def test_open_browser_rejects_cdp_for_wrong_profile(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(browser, "_cdp_is_running", lambda: True)
+    monkeypatch.setattr(browser, "_cdp_profile_matches", lambda profile: False)
+    monkeypatch.setattr(
+        browser,
+        "_running_cdp_commands",
+        lambda: ["/tmp/chrome --remote-debugging-port=9222 --user-data-dir=/tmp/other"],
+    )
+
+    try:
+        browser.open_browser(root=tmp_path, binary="/tmp/chrome", url=None)
+    except SystemExit as exc:
+        message = str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected SystemExit")
+
+    assert "does not appear to be using the FaltooBot profile" in message
+    assert str(browser.browser_profile_dir(tmp_path)) in message
+
+
+def test_command_uses_profile_matches_resolved_path(tmp_path: Path) -> None:
+    profile = browser.browser_profile_dir(tmp_path)
+    profile.mkdir(parents=True)
+    command = f"/tmp/chrome --remote-debugging-port=9222 --user-data-dir={profile}"
+    assert browser._command_uses_profile(command, profile)
