@@ -2,6 +2,19 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 3.5.0 — 2026-04-30
+
+### Added
+- Faltoochat now shows inline errors with a Retry action when answer streaming fails.
+- Review diffs now show subtle indent guides for easier code review.
+
+### Changed
+- Faltoochat starts by loading recent session history and can load the full history on demand.
+- Browser automation is safer when reusing an existing debugging browser profile.
+
+### Fixed
+- Session resume now clears its loading state if loading fails.
+
 ## 3.4.0 — 2026-04-28
 
 ### Added
