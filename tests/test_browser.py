@@ -65,7 +65,9 @@ def test_open_browser_reuses_existing_cdp_browser(
 
     monkeypatch.setattr(browser, "_cdp_is_running", lambda: True)
     monkeypatch.setattr(browser, "_cdp_profile_matches", lambda profile: True)
-    monkeypatch.setattr(browser, "_open_url_in_existing_cdp", lambda url: opened.append(url))
+    monkeypatch.setattr(
+        browser, "_open_url_in_existing_cdp", lambda url: opened.append(url)
+    )
     monkeypatch.setattr(
         browser.subprocess,
         "Popen",
@@ -109,3 +111,40 @@ def test_command_uses_profile_matches_resolved_path(tmp_path: Path) -> None:
     profile.mkdir(parents=True)
     command = f"/tmp/chrome --remote-debugging-port=9222 --user-data-dir={profile}"
     assert browser._command_uses_profile(command, profile)
+
+
+def test_command_uses_profile_matches_quoted_path_with_spaces(tmp_path: Path) -> None:
+    profile = browser.browser_profile_dir(tmp_path / "root with spaces")
+    profile.mkdir(parents=True)
+    command = f'/tmp/chrome --remote-debugging-port=9222 --user-data-dir="{profile}"'
+    assert browser._command_uses_profile(command, profile)
+
+
+def test_command_uses_profile_matches_separate_profile_arg(tmp_path: Path) -> None:
+    profile = browser.browser_profile_dir(tmp_path)
+    profile.mkdir(parents=True)
+    command = f"/tmp/chrome --remote-debugging-port=9222 --user-data-dir {profile}"
+    assert browser._command_uses_profile(command, profile)
+
+
+def test_open_url_in_existing_cdp_encodes_full_url(monkeypatch) -> None:
+    seen: list[str] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+    def fake_urlopen(request, timeout: int):
+        seen.append(request.full_url)
+        return Response()
+
+    monkeypatch.setattr(browser, "urlopen", fake_urlopen)
+
+    browser._open_url_in_existing_cdp("https://example.com/a b?x=1#part")
+
+    assert seen == [
+        f"{browser.cdp_url()}/json/new?https%3A%2F%2Fexample.com%2Fa%20b%3Fx%3D1%23part"
+    ]

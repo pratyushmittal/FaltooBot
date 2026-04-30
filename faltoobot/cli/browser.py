@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,10 +49,18 @@ def _running_cdp_commands() -> list[str]:
 def _command_uses_profile(command: str, profile_dir: Path) -> bool:
     expected = str(profile_dir.expanduser().resolve())
     prefix = "--user-data-dir="
-    for part in command.split():
-        if not part.startswith(prefix):
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+    for index, part in enumerate(parts):
+        if part == "--user-data-dir" and index + 1 < len(parts):
+            raw = parts[index + 1]
+        elif part.startswith(prefix):
+            raw = part[len(prefix) :]
+        else:
             continue
-        raw = part[len(prefix) :].strip('"\'')
+        raw = raw.strip("\"'")
         try:
             actual = str(Path(raw).expanduser().resolve())
         except OSError:
@@ -61,6 +70,7 @@ def _command_uses_profile(command: str, profile_dir: Path) -> bool:
 
 
 def _cdp_profile_matches(profile_dir: Path) -> bool:
+    """Return whether the running CDP browser uses FaltooBot's profile."""
     commands = _running_cdp_commands()
     if not commands:
         # If CDP answers but we cannot inspect the process table, avoid claiming a
@@ -71,7 +81,7 @@ def _cdp_profile_matches(profile_dir: Path) -> bool:
 
 
 def _open_url_in_existing_cdp(url: str) -> None:
-    encoded = quote(url, safe=":/?&=%#")
+    encoded = quote(url, safe="")
     request = Request(f"{cdp_url()}/json/new?{encoded}", method="PUT")
     try:
         with urlopen(request, timeout=2):
@@ -126,7 +136,9 @@ def open_browser(*, root: Path, binary: str, url: str | None = None) -> None:
     profile_dir.mkdir(parents=True, exist_ok=True)
     if _cdp_is_running():
         if not _cdp_profile_matches(profile_dir):
-            commands = "\n".join(_running_cdp_commands()) or "(unable to inspect process)"
+            commands = (
+                "\n".join(_running_cdp_commands()) or "(unable to inspect process)"
+            )
             raise SystemExit(
                 "A browser is already listening on FaltooBot's CDP port, but it "
                 "does not appear to be using the FaltooBot profile. Close that "

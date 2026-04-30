@@ -400,10 +400,25 @@ class FaltooChatApp(App[None]):
             await self.queue().add_to_queue(message_item)
             return
         self.is_answering = True
+        transcript = self.query_one("#transcript", VerticalScroll)
+        try:
+            stored = await self._add_user_turn(transcript, message_item)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            # comment: retrying after a failed upload/store would replay against stale session history.
+            await self._show_retry_error(error, retry=False)
+            stored = False
+        if stored:
+            # exclusive=True tells Textual to cancel all previous workers before starting the new one
+            self.run_worker(self._start_streaming(transcript), exclusive=True)
+            return
+        # comment: duplicate notification ids can skip storing and therefore skip streaming.
+        self.is_answering = False
         composer = self.query_one("#composer", Composer)
-        composer.border_subtitle = "answering"
-        # exclusive=True tells Textual to cancel all previous workers before starting the new one
-        self.run_worker(self.submit_message(message_item), exclusive=True)
+        composer.border_subtitle = ""
+        if self.tabs().active == "chat-tab":
+            composer.focus()
 
     async def load_recent_messages(self) -> None:
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
@@ -455,24 +470,12 @@ class FaltooChatApp(App[None]):
         await transcript.mount(Markdown(text, classes="answer"))
         transcript.anchor()
 
-    async def stream_reply(
-        self,
-        transcript: VerticalScroll,
-        question: str,
-        attachments: list[sessions.Attachment] | None = None,
-    ) -> None:
+    async def _stream_events(self, transcript: VerticalScroll) -> None:
         block: Markdown | None = None
         answer_stream: Any | None = None
         raw_text = ""
         transcript.anchor()
 
-        stored = await sessions.append_user_turn(
-            self.session,
-            question=question,
-            attachments=attachments,
-        )
-        if not stored:
-            return
         async for event in sessions.get_answer_streaming(self.session):
             is_new, classes, text = get_event_text(event)
             if not text:
@@ -514,25 +517,36 @@ class FaltooChatApp(App[None]):
 
         await _stop_answer_stream(answer_stream)
 
-    async def submit_message(self, message_item: MessageItem) -> None:
-        composer = self.query_one("#composer", Composer)
-        completed = False
-        try:
-            # render user message
-            transcript = self.query_one("#transcript", VerticalScroll)
-            preview_text, preview_classes = get_item_text(message_item)  # type: ignore
-            await transcript.mount(*_render_blocks(preview_text, preview_classes))
-            self.call_after_refresh(
-                transcript.scroll_end,
-                animate=False,
-                immediate=True,
-            )
+    async def _add_user_turn(
+        self,
+        transcript: VerticalScroll,
+        message_item: MessageItem,
+    ) -> bool:
+        preview_text, preview_classes = get_item_text(message_item)  # type: ignore
+        await transcript.mount(*_render_blocks(preview_text, preview_classes))
+        self.call_after_refresh(
+            transcript.scroll_end,
+            animate=False,
+            immediate=True,
+        )
+        question, attachments = decompose_local_message_item(message_item)
+        return await sessions.append_user_turn(
+            self.session,
+            question=question,
+            attachments=attachments,
+        )
 
-            # stream reply
-            await self.stream_reply(
-                transcript,
-                *decompose_local_message_item(message_item),
-            )
+    async def _start_streaming(self, transcript: VerticalScroll) -> None:
+        completed = False
+        composer = self.query_one("#composer", Composer)
+        composer.border_subtitle = "answering"
+        try:
+            await self._stream_events(transcript)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            await self._show_retry_error(error)
+        else:
             completed = True
         finally:
             self.is_answering = False
@@ -542,7 +556,30 @@ class FaltooChatApp(App[None]):
             # comment: finishing a reply while Review is active should not steal focus from that tab.
             if self.tabs().active == "chat-tab":
                 composer.focus()
-        await self.queue().submit_next_message()
+        if completed:
+            await self.queue().submit_next_message()
+
+    async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
+        message = str(error).strip() or repr(error)
+        content = f"{type(error).__name__}: {message}"
+        # comment: add/store failures are not retryable because no assistant turn was started.
+        if retry:
+            content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(Static(content, classes="unknown"))
+        transcript.anchor()
+
+    async def action_retry_failed_message(self) -> None:
+        if self.is_answering:
+            # comment: retry clicks can arrive while another answer is already running.
+            self.notify(
+                "Wait for the current answer to finish before retrying.",
+                severity="warning",
+            )
+            return
+        self.is_answering = True
+        transcript = self.query_one("#transcript", VerticalScroll)
+        self.run_worker(self._start_streaming(transcript), exclusive=True)
 
 
 class Composer(TextArea):

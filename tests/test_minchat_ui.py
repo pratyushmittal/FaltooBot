@@ -20,7 +20,7 @@ from faltoobot.faltoochat.widgets import (
     TextInputModal,
 )
 from faltoobot.faltoochat.widgets.search_file import SearchFile
-from textual.widgets import Input, Markdown, OptionList, TabbedContent
+from textual.widgets import Input, Markdown, OptionList, Static, TabbedContent
 
 
 def _listed_name(session: sessions.Session, name: str) -> str:
@@ -1056,6 +1056,66 @@ async def test_minchat_bells_when_answer_finishes(
         )
         await pilot.pause(0)
         assert bells == [True]
+
+
+@pytest.mark.anyio
+async def test_minchat_shows_retry_when_answer_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    attempts = 0
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("server overloaded")
+        yield type(
+            "Event", (), {"type": "response.output_text.delta", "delta": "Recovered"}
+        )()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(
+            lambda: (
+                not app.is_answering
+                and any(
+                    "server overloaded" in str(block.render())
+                    for block in app.query_one("#transcript")
+                    .query(Static)
+                    .filter(".unknown")
+                )
+            )
+        )
+
+        await app.action_retry_failed_message()
+        await wait_for_condition(
+            lambda: (
+                not app.is_answering
+                and any(
+                    block._markdown == "Recovered"
+                    for block in app.query_one("#transcript").query(Markdown)
+                )
+            )
+        )
+        await pilot.pause(0)
+
+    messages = sessions.get_messages(app.session)["messages"]
+    user_messages = [
+        message
+        for message in messages
+        if message.get("type") == "message" and message.get("role") == "user"
+    ]
+    assert len(user_messages) == 1
 
 
 @pytest.mark.anyio

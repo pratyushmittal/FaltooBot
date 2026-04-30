@@ -241,6 +241,21 @@ async def test_review_diff_render_line_draws_indent_guides(monkeypatch) -> None:
         assert viewer.render_line(0).text.startswith("│   │   value = 1")
 
 
+@pytest.mark.anyio
+async def test_review_diff_indent_guides_skip_small_indents(monkeypatch) -> None:
+    viewer = ReviewDiffView(
+        [{"is_staged": False, "type": "", "text": "  value = 1"}],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+        show_line_numbers=False,
+        read_only=True,
+    )
+    monkeypatch.setattr(ReviewDiffView, "on_focus", lambda self, event: None)
+
+    async with ReviewDiffApp(viewer).run_test():
+        assert viewer.render_line(0).text.startswith("  value = 1")
+
+
 def test_review_diff_gutter_width_reserves_space_for_diff_symbol() -> None:
     viewer = ReviewDiffView(
         [{"is_staged": False, "type": "", "text": str(index)} for index in range(105)],
