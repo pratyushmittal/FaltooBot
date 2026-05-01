@@ -289,3 +289,33 @@ def test_get_load_skill_tool_hides_subagent_disallowed_skills(
         "Local skill not found: 'notification-listener'.\n\nAvailable skills:\n"
         "- pytest-helper: allowed helper"
     )
+
+
+def test_bundled_browser_skill_uses_cdp_not_persistent_context() -> None:
+    text = (Path(__file__).parents[1] / "faltoobot/skills/browser-use.md").read_text(
+        encoding="utf-8"
+    )
+    example = text.split("```bash", 1)[1].split("```", 1)[0]
+
+    assert "connect_over_cdp" in example
+    assert '[faltoobot, "browser"]' in example
+    assert '[faltoobot, "browser", url]' not in example
+    assert "launch_persistent_context(" not in example
+    assert "browser.new_context(" not in example
+    assert "headless=" not in example
+    assert "{browser_binary}" not in text
+    assert "{browser_profile}" not in text
+    assert "Prefer `run_shell_call`" in text
+    assert "headless browser against the shared profile" in text
+    assert "browser.new_context()" in text
+    assert "Connected browser has no reusable login context" in example
+
+
+def test_bundled_skills_do_not_reference_removed_python_shell_tool() -> None:
+    skills_dir = Path(__file__).parents[1] / "faltoobot/skills"
+    text = "\n".join(
+        path.read_text(encoding="utf-8") for path in skills_dir.glob("*.md")
+    )
+
+    assert "run_in_python_shell" not in text
+    assert "uv run --with" in text

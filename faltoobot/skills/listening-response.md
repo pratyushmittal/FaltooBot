@@ -57,9 +57,10 @@ nohup sh -c 'faltoochat "Review this PR: https://github.com/some-org/some-repo/p
 
 ## Python API Example
 
-If you are using `run_in_python_shell`, `faltoobot` is already available there:
+For Python scripts, use `uv run --with faltoobot` so the script has the package available without adding project dependencies:
 
-```python
+```bash
+uv run --with faltoobot python - <<'PY'
 from faltoobot import notify_queue
 
 notify_queue.enqueue_notification(
@@ -67,6 +68,7 @@ notify_queue.enqueue_notification(
     "Maintenance job finished successfully.",
     source="script:maintenance",
 )
+PY
 ```
 
 ## Practical Reminders

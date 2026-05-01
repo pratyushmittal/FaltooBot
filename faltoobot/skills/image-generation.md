@@ -2,13 +2,14 @@
 description: Use latest image generation models to create pictures or edit existing photos and creatives. Use this when the user asks for image generation, image editing, retouching, background changes, or any other visual modifications.
 ---
 
-`openai` is already installed in `run_in_python_shell`. Prefer `run_in_python_shell` for image jobs.
+Use `run_shell_call` with `uv run --with openai python` for image jobs.
 
 ## Normal Image Generation
 
 Use this when the user wants a brand new image from text only.
 
-```python
+```bash
+uv run --with openai python - <<'PY'
 from pathlib import Path
 import base64
 from openai import OpenAI
@@ -28,13 +29,15 @@ image_base64 = result.data[0].b64_json
 path = Path("otter.png")
 path.write_bytes(base64.b64decode(image_base64))
 print(path)
+PY
 ```
 
 ## Image Editing
 
 Use this when the user gives an existing image and wants to make edits. You can also use multiple images as input.
 
-```python
+```bash
+uv run --with openai python - <<'PY'
 from pathlib import Path
 import base64
 from openai import OpenAI
@@ -62,6 +65,7 @@ image_base64 = result.data[0].b64_json
 path = Path("gift-basket.png")
 path.write_bytes(base64.b64decode(image_base64))
 print(path)
+PY
 ```
 
 ## Important

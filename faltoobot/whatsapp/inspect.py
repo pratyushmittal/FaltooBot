@@ -29,8 +29,6 @@ def _tool_summary(name: str, arguments: dict[str, Any]) -> str:
         summary = _inspect_text(arguments.get(key))
         if summary:
             return summary
-    if name == "run_in_python_shell":
-        return _inspect_text(arguments.get("script"))
     return ""
 
 

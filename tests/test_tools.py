@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,7 +10,6 @@ from faltoobot import images, tools
 from faltoobot.gpt_utils import get_tools_definition
 from faltoobot.tools import (
     get_load_image_tool,
-    get_run_in_python_shell_tool,
     get_run_shell_call_tool,
     load_image_in_workspace,
     run_shell_call_in_workspace,
@@ -101,156 +99,6 @@ PY""",
     assert result["timed_out"] is False
     assert "openai-key" in result["stdout"]
     assert "gemini-key" in result["stdout"]
-
-
-def test_get_run_in_python_shell_tool_builds_valid_tool_definition(
-    tmp_path: Path,
-) -> None:
-    tool = get_run_in_python_shell_tool(tmp_path, session_key="chat-a")
-    definition = get_tools_definition(tool)
-
-    description = cast(str, definition["description"])
-    parameters = cast(dict[str, Any], definition["parameters"])
-
-    assert definition["type"] == "function"
-    assert definition["name"] == "run_in_python_shell"
-    assert definition["strict"] is True
-    assert description.startswith(
-        "Run Python code in a persistent interpreter session."
-    )
-    assert "multi-turn" in description
-    assert "a separate Python environment" in description
-    assert "Code runs from" in description
-    assert parameters == {
-        "type": "object",
-        "properties": {
-            "script": {
-                "type": "string",
-                "description": "Python code to execute. Use `print(...)` to inspect values.",
-            },
-            "continue_session": {
-                "type": "boolean",
-                "description": "Whether to reuse the previous Python session for this workspace.",
-            },
-        },
-        "required": ["script", "continue_session"],
-        "additionalProperties": False,
-    }
-
-
-def test_run_in_python_shell_tool_persists_state_by_workspace(tmp_path: Path) -> None:
-    tool = get_run_in_python_shell_tool(tmp_path)
-
-    first = json.loads(tool("x = 41", False))
-    second = json.loads(tool("print(x + 1)", True))
-    third = json.loads(tool("print('x' in globals())", False))
-
-    assert first == {"stdout": "", "stderr": "", "raised": False}
-    assert second == {"stdout": "42\n", "stderr": "", "raised": False}
-    assert third == {"stdout": "False\n", "stderr": "", "raised": False}
-
-
-def test_run_in_python_shell_tool_keeps_sessions_separate(tmp_path: Path) -> None:
-    first_tool = get_run_in_python_shell_tool(tmp_path, session_key="chat-a")
-    second_tool = get_run_in_python_shell_tool(tmp_path, session_key="chat-b")
-
-    json.loads(first_tool("x = 41", False))
-    result = json.loads(second_tool("print('x' in globals())", True))
-
-    assert result == {"stdout": "False\n", "stderr": "", "raised": False}
-
-
-def test_run_in_python_shell_tool_uses_workspace_cwd(tmp_path: Path) -> None:
-    tool = get_run_in_python_shell_tool(tmp_path)
-    result = json.loads(
-        tool(
-            "from pathlib import Path\nPath('note.txt').write_text('hello', encoding='utf-8')\nprint(Path('note.txt').read_text(encoding='utf-8'))",
-            False,
-        )
-    )
-
-    assert result == {"stdout": "hello\n", "stderr": "", "raised": False}
-    assert (tmp_path / "note.txt").read_text(encoding="utf-8") == "hello"
-
-
-def test_run_in_python_shell_tool_sets_api_keys_from_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setattr(
-        tools,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_api_key="openai-key",
-            gemini_api_key="gemini-key",
-        ),
-        raising=False,
-    )
-    tool = get_run_in_python_shell_tool(tmp_path, session_key="env-test")
-
-    result = json.loads(
-        tool(
-            "import os\nprint(os.environ.get('OPENAI_API_KEY', ''))\nprint(os.environ.get('GEMINI_API_KEY', ''))",
-            False,
-        )
-    )
-
-    assert result == {
-        "stdout": "openai-key\ngemini-key\n",
-        "stderr": "",
-        "raised": False,
-    }
-    assert "OPENAI_API_KEY" not in os.environ
-    assert "GEMINI_API_KEY" not in os.environ
-
-
-def test_run_in_python_shell_tool_restores_existing_env_after_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "old-openai")
-    monkeypatch.setenv("GEMINI_API_KEY", "old-gemini")
-    monkeypatch.setattr(
-        tools,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_api_key="new-openai",
-            gemini_api_key="new-gemini",
-        ),
-        raising=False,
-    )
-    tool = get_run_in_python_shell_tool(tmp_path, session_key="env-error-test")
-
-    result = json.loads(
-        tool(
-            "import os\nprint(os.environ['OPENAI_API_KEY'])\nraise RuntimeError('boom')",
-            False,
-        )
-    )
-
-    assert result["stdout"] == "new-openai\n"
-    assert "RuntimeError: boom" in result["stderr"]
-    assert result["raised"] is True
-    assert os.environ["OPENAI_API_KEY"] == "old-openai"
-    assert os.environ["GEMINI_API_KEY"] == "old-gemini"
-
-
-def test_run_in_python_shell_tool_captures_traceback(tmp_path: Path) -> None:
-    tool = get_run_in_python_shell_tool(tmp_path)
-    result = json.loads(tool("raise ValueError('boom')", False))
-
-    assert result["stdout"] == ""
-    assert "ValueError: boom" in result["stderr"]
-    assert result["raised"] is True
-
-
-def test_run_in_python_shell_tool_captures_system_exit(tmp_path: Path) -> None:
-    tool = get_run_in_python_shell_tool(tmp_path)
-    result = json.loads(tool("raise SystemExit(2)", False))
-
-    assert result["stdout"] == ""
-    assert "SystemExit: 2" in result["stderr"]
-    assert result["raised"] is True
 
 
 def test_get_load_image_tool_builds_valid_tool_definition(tmp_path: Path) -> None:
