@@ -301,7 +301,13 @@ class FaltooChatApp(App[None]):
     def focus_composer(self) -> None:
         self.set_focus(self.query_one("#composer", Composer), scroll_visible=False)
 
+    def refresh_composer_title(self) -> None:
+        self.query_one("#composer", Composer).set_repo_title(
+            get_workspace_label(self.workspace)
+        )
+
     def action_show_chat_tab(self) -> None:
+        self.refresh_composer_title()
         self.tabs().active = "chat-tab"
         transcript = self.query_one("#transcript", VerticalScroll)
         self.call_after_refresh(transcript.scroll_end, animate=False)
@@ -325,6 +331,7 @@ class FaltooChatApp(App[None]):
     ) -> None:
         if event.tabbed_content.id != "tabs":
             return
+        self.refresh_composer_title()
         if event.pane.id != "review-tab":
             return
         review = self.query_one(ReviewView)
@@ -361,9 +368,7 @@ class FaltooChatApp(App[None]):
             yield Footer()
 
     async def on_mount(self) -> None:
-        self.query_one("#composer", Composer).set_repo_title(
-            get_workspace_label(self.workspace)
-        )
+        self.refresh_composer_title()
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
         await self.queue().refresh_queue()
