@@ -98,6 +98,28 @@ def is_git_workspace(workspace: Path) -> bool:
     return result.returncode == 0
 
 
+def get_workspace_label(workspace: Path) -> str:
+    root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if root.returncode != 0:
+        return ""
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if branch.returncode != 0 or not branch.stdout.strip():
+        return Path(root.stdout.strip()).name
+    return f"{Path(root.stdout.strip()).name} •  {branch.stdout.strip()}"
+
+
 def _git_paths(workspace: Path, *args: str) -> list[Path]:
     result = subprocess.run(
         ["git", *args],

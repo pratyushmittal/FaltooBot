@@ -192,15 +192,7 @@ class QueueWidget(Vertical):
         composer.load_text(question)
         last_row = composer.document.line_count - 1
         composer.move_cursor((last_row, len(composer.document.get_line(last_row))))
-        composer.attachments = list(attachments)
-        count = len(attachments)
-        composer.border_title = (
-            f"{count} attachment"
-            if count == 1
-            else f"{count} attachments"
-            if count
-            else ""
-        )
+        composer.set_attachments(list(attachments))
         self.app.focus_composer()
 
     async def action_move_selected_up(self) -> None:

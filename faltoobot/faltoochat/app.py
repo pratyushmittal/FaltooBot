@@ -21,6 +21,7 @@ from textual.widgets import (
 
 from faltoobot import notify_queue, sessions
 from faltoobot.config import load_textual_theme, save_textual_theme
+from faltoobot.faltoochat.git import get_workspace_label
 from faltoobot.faltoochat.terminal import textual_theme_from_terminal
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
@@ -360,6 +361,9 @@ class FaltooChatApp(App[None]):
             yield Footer()
 
     async def on_mount(self) -> None:
+        self.query_one("#composer", Composer).set_repo_title(
+            get_workspace_label(self.workspace)
+        )
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
         await self.queue().refresh_queue()
@@ -600,20 +604,39 @@ class Composer(TextArea):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.attachments: list[sessions.Attachment] = []
+        self._repo_title = ""
         self._selected_transcript_message_id: int | None = None
+
+    def set_repo_title(self, title: str) -> None:
+        self._repo_title = title
+        self._refresh_border_title()
+
+    def set_attachments(self, attachments: list[sessions.Attachment]) -> None:
+        self.attachments = list(attachments)
+        self._refresh_border_title()
+
+    def _refresh_border_title(self) -> None:
+        count = len(self.attachments)
+        attachments = (
+            f"{count} attachment"
+            if count == 1
+            else f"{count} attachments"
+            if count
+            else ""
+        )
+        self.border_title = " · ".join(
+            part for part in [self._repo_title, attachments] if part
+        )
 
     def attach_image(self, path: sessions.Attachment) -> None:
         self.attachments.append(path)
-        count = len(self.attachments)
-        self.border_title = (
-            f"{count} attachment" if count == 1 else f"{count} attachments"
-        )
+        self._refresh_border_title()
         self.focus()
 
     def take_attachments(self) -> list[sessions.Attachment]:
         attachments = list(self.attachments)
         self.attachments.clear()
-        self.border_title = ""
+        self._refresh_border_title()
         return attachments
 
     async def on_paste(self, event: events.Paste) -> None:
