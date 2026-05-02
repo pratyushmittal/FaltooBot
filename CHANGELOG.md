@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 4.0.0 — 2026-05-01
+
+### Changed
+- Removed the persistent Python shell tool. Use `run_shell_call` with `uv run --with ... python` for ad-hoc Python packages in skills and scripts.
+- Bundled browser and image-generation skills now use `uv run --with ...` examples.
+
+### Fixed
+- Browser skill guidance now avoids Playwright persistent-context launches that can hide saved website logins.
+
 ## 3.5.0 — 2026-04-30
 
 ### Added
