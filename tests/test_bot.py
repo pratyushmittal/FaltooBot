@@ -1396,6 +1396,9 @@ async def test_run_bot_allows_oauth_without_api_key(
     config.openai_oauth = "auth.json"
 
     monkeypatch.setattr(whatsapp_app.login, "configure_logging", lambda path: None)
+    monkeypatch.setattr(
+        whatsapp_app.binaries, "ensure_document_binaries", lambda config: None
+    )
     monkeypatch.setattr(whatsapp_app, "client", _DummyClient())
 
     class _DummyLoop:

@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.text import Text
 
-from faltoobot import notify_queue
+from faltoobot import binaries, notify_queue
 from faltoobot.cli import browser as browser_runtime
 from faltoobot.config import (
     APP_LABEL,
@@ -508,6 +508,29 @@ def run_browser_command(args: argparse.Namespace, config: Config | None = None) 
     browser_runtime.open_browser(root=config.root, binary=binary, url=args.url)
 
 
+def _configure_document(config: Config) -> None:
+    console.print()
+    console.rule("[bold cyan]Document binaries[/]", style="dim")
+    if Confirm.ask(
+        "[bold]Auto install/check document binaries[/]",
+        console=console,
+        default=True,
+        show_default=False,
+    ):
+        binaries.ensure_document_binaries(config)
+    else:
+        data = merge_config(load_toml(config.config_file))
+        document = data["document"]
+        data["document"]["pandoc_binary"] = _prompt_text(
+            "Pandoc binary", str(document.get("pandoc_binary") or "")
+        )
+        data["document"]["mutool_binary"] = _prompt_text(
+            "MuPDF mutool binary", str(document.get("mutool_binary") or "")
+        )
+        _write_config(data, config.config_file)
+    console.print(f"[green]✓ Saved[/] [cyan]{config.config_file}[/]")
+
+
 def _configure_openai(config: Config) -> None:
     console.print()
     console.rule("[bold cyan]OpenAI[/]", style="dim")
@@ -698,22 +721,37 @@ def run_configure_command(
     if mode is None:
         choice = _prompt_menu(
             "Configure",
-            ["Wizard", "WhatsApp", "Codex / OpenAI", "Gemini", "Browser"],
+            [
+                "Wizard",
+                "WhatsApp",
+                "Codex / OpenAI",
+                "Gemini",
+                "Browser",
+                "Document binaries",
+            ],
             default=1,
         )
-        mode = {1: "wizard", 2: "whatsapp", 3: "openai", 4: "gemini", 5: "browser"}[
-            choice
-        ]
+        mode = {
+            1: "wizard",
+            2: "whatsapp",
+            3: "openai",
+            4: "gemini",
+            5: "browser",
+            6: "document",
+        }[choice]
 
     if mode == "wizard":
         _configure_openai(config)
         _configure_gemini(build_config())
         _configure_whatsapp(build_config())
         _configure_browser(build_config())
+        _configure_document(build_config())
     elif mode == "whatsapp":
         _configure_whatsapp(config)
     elif mode == "browser":
         _configure_browser(config)
+    elif mode == "document":
+        _configure_document(config)
     elif mode == "openai":
         _configure_openai(config)
     elif mode == "gemini":
