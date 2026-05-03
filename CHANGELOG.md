@@ -2,6 +2,20 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 4.1.0 — 2026-05-03
+
+### Added
+- Faltoochat composer now shows the current git repository and branch, plus removable attachment checkboxes below the composer.
+- WhatsApp documents are saved into the workspace and summarized in chat history with filename, size, and page count when available.
+- Added a `read-document` skill for extracting PDFs and other documents from files or links.
+
+### Changed
+- Background notifications now use clearer WhatsApp instructions so useful updates are surfaced naturally and `[noreply]` is reserved for noisy updates.
+- Review file titles now include staged hunk counts.
+
+### Fixed
+- Faltoochat retry errors now escape Rich markup in exception text and render with normal transcript spacing.
+
 ## 4.0.0 — 2026-05-01
 
 ### Changed
