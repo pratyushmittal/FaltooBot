@@ -132,12 +132,7 @@ def requeue_notification(path: Path) -> None:
 
 
 def format_notification_message(notification: Notification) -> str:
-    lines = [
-        "# Notification (not visible to user)",
-        "",
-        "Reply with [noreply] if no user-facing reply is needed.",
-        "",
-    ]
+    lines = ["# Background update", ""]
     source = notification.get("source")
     if source:
         lines.extend([f"source: {source}", ""])

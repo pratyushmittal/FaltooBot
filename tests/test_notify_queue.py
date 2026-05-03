@@ -56,8 +56,8 @@ def test_format_notification_message_uses_expected_layout() -> None:
         }
     )
 
-    assert "# Notification" in message
-    assert "Reply with [noreply]" in message
+    assert "# Background update" in message
+    assert "[noreply]" not in message
     assert "source: cron:daily-ops" in message
     assert "## message" in message
     assert "Check backups." in message
@@ -73,7 +73,7 @@ def test_format_notification_message_without_source_still_wraps_message() -> Non
         }
     )
 
-    assert "# Notification" in message
-    assert "Reply with [noreply]" in message
+    assert "# Background update" in message
+    assert "[noreply]" not in message
     assert "## message" in message
     assert "hello" in message

@@ -1396,9 +1396,6 @@ async def test_run_bot_allows_oauth_without_api_key(
     config.openai_oauth = "auth.json"
 
     monkeypatch.setattr(whatsapp_app.login, "configure_logging", lambda path: None)
-    monkeypatch.setattr(
-        whatsapp_app.binaries, "ensure_document_binaries", lambda config: None
-    )
     monkeypatch.setattr(whatsapp_app, "client", _DummyClient())
 
     class _DummyLoop:
@@ -1830,9 +1827,7 @@ async def test_start_polling_notifications_claims_and_acks(
     await whatsapp_app._start_polling_notifications()
 
     assert calls == [
-        "# Notification (not visible to user)\n\n"
-        "Reply with [noreply] if no user-facing reply is needed.\n\n"
-        "## message\nqueued user message",
+        "# Background update\n\n## message\nqueued user message",
         "ack",
     ]
 

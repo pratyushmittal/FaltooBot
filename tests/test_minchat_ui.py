@@ -7,7 +7,7 @@ from textual import events
 
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
-from faltoobot.faltoochat.app import Composer, FaltooChatApp
+from faltoobot.faltoochat.app import AttachmentCheckbox, Composer, FaltooChatApp
 from faltoobot.session_utils import (
     decompose_local_message_item,
     get_local_user_message_item,
@@ -735,8 +735,18 @@ async def test_minchat_paste_attaches_local_image_paths(
         await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         await composer.on_paste(events.Paste(str(image)))
+        await pilot.pause(0)
+
         assert composer.attachments == [image.resolve()]
-        assert str(composer.border_title) == "1 attachment"
+        checkbox = app.query_one(AttachmentCheckbox)
+        assert checkbox.attachment == image.resolve()
+        assert str(checkbox.label) == "cat.png"
+
+        checkbox.value = False
+        await pilot.pause(0)
+
+        assert composer.attachments == []
+        assert list(app.query(AttachmentCheckbox)) == []
 
 
 @pytest.mark.anyio
@@ -757,7 +767,7 @@ async def test_minchat_ctrl_v_attaches_clipboard_image(
         await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         assert composer.attachments == [image]
-        assert str(composer.border_title) == "1 attachment"
+        assert app.query_one(AttachmentCheckbox).attachment == image
 
 
 @pytest.mark.anyio
@@ -964,7 +974,7 @@ async def test_minchat_queue_enter_loads_selected_message_back_into_composer(
         composer = app.query_one("#composer", Composer)
         assert composer.text == "draft this again"
         assert composer.attachments == [Path("/tmp/cat.png")]
-        assert composer.border_title == "1 attachment"
+        assert app.query_one(AttachmentCheckbox).attachment == Path("/tmp/cat.png")
         assert submit_queue.get_queue(app.session) == []
 
 

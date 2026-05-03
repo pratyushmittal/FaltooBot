@@ -972,7 +972,31 @@ def _comment_title(view: ReviewDiffView) -> str:
     count = sum(
         1 for review in view.review_view.reviews if review["filename"] == view.file_path
     )
-    return f"{count} comment" if count == 1 else f"{count} comments"
+    comments = f"{count} comment" if count == 1 else f"{count} comments"
+    staged, total = _hunk_counts(view.diff)
+    hunks = f"{staged}/{total} hunks staged"
+    return f"{comments} · {hunks}"
+
+
+def _hunk_counts(diff: Diff) -> tuple[int, int]:
+    total = 0
+    staged = 0
+    in_hunk = False
+    hunk_staged = False
+    for line in diff:
+        if line["type"] not in {"+", "-"}:
+            if in_hunk:
+                staged += int(hunk_staged)
+            in_hunk = False
+            hunk_staged = False
+            continue
+        if not in_hunk:
+            total += 1
+            in_hunk = True
+        hunk_staged = hunk_staged or line["is_staged"]
+    if in_hunk:
+        staged += int(hunk_staged)
+    return staged, total
 
 
 def _commented_lines(view: ReviewDiffView) -> set[int]:

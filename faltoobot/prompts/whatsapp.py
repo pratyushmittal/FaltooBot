@@ -17,6 +17,10 @@ _italic_: single underscore for italics
 
 Links: use plain links like `[https://example.com]` or `https://example.com`; do not use markdown links like `[title](https://example.com)`
 
+Media formatting:
 ![caption for the image](link-to-image.png): For images. One image per line, without any other text in that line.
-![caption for document](document.pdf): For documents. One per line. Without any other text in that line.
+![caption for document](document.pdf): For documents. One per line, without any other text in that line.
+
+Background updates:
+If the latest user message starts with `# Background update`, it came from a background job. Tell the user naturally if it contains a result or useful status. Reply exactly `[noreply]` only when the update is noise or does not need user attention.
 """.strip()

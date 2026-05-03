@@ -11,6 +11,7 @@ from neonize.aioze.events import MessageEv
 from neonize.proto import Neonize_pb2
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
     ContextInfo,
+    DocumentMessage,
     Message,
     MessageAssociation,
 )
@@ -37,7 +38,7 @@ MIN_ALLOWLIST_DIGITS = 8
 TYPING_REFRESH_SECONDS = 4.0
 MESSAGE_CHUNK_LIMIT = 3500
 WHATSAPP_MEDIA_DIR = ".whatsapp"
-DOCUMENTS_DIR = "documents"
+MIN_SIZE_MB_LABEL = 0.1
 IMAGE_SUFFIXES = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
@@ -280,7 +281,7 @@ async def save_image_attachment(
     )
 
 
-def _document_message(message: Any) -> Any | None:
+def _document_message(message: Message) -> DocumentMessage | None:
     if message.HasField("documentMessage"):
         return message.documentMessage
     wrapped = (
@@ -295,35 +296,39 @@ def _document_message(message: Any) -> Any | None:
     )
 
 
-def _safe_filename(name: str, fallback: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name or fallback).name).strip(".-_")
-    return safe or fallback
-
-
-async def save_document_attachment(
+async def save_document_attachment(  # noqa: PLR0913
     client: NewAClient,
-    message: Any,
+    message: Message,
     *,
+    document: DocumentMessage,
     workspace: Path,
     message_id: str,
-) -> Path:
-    doc = _document_message(message)
-    if doc is None:
-        raise ValueError("No WhatsApp document message found")
-    filename = str(getattr(doc, "fileName", "") or getattr(doc, "title", ""))
+    user_text: str = "",
+) -> str:
+    filename = Path(
+        str(getattr(document, "fileName", "") or getattr(document, "title", ""))
+    ).name.replace(" ", "-")
     suffix = (
         Path(filename).suffix
-        or mimetypes.guess_extension(str(getattr(doc, "mimetype", "") or ""))
+        or mimetypes.guess_extension(str(getattr(document, "mimetype", "") or ""))
         or ".bin"
     )
-    return await save_attachment_file(
+    path = await save_attachment_file(
         client,
         message,
-        workspace
-        / DOCUMENTS_DIR
-        / _safe_filename(filename, f"{message_id.replace('/', '_')}{suffix}"),
+        workspace / (filename or f"{message_id.replace('/', '_')}{suffix}"),
         missing_message="WhatsApp document download returned no data",
     )
+    relative_path = path.relative_to(workspace).as_posix()
+    size_bytes = int(getattr(document, "fileLength", 0) or path.stat().st_size)
+    size_mb = size_bytes / (1024 * 1024)
+    page_count = int(getattr(document, "pageCount", 0) or 0)
+    page_text = f" ({page_count} pages)" if page_count else ""
+    size_text = (
+        f"{size_mb:.1f}mb" if size_mb >= MIN_SIZE_MB_LABEL else f"{size_bytes} bytes"
+    )
+    note = f"User has sent a file named {relative_path} of {size_text}{page_text}."
+    return f"{user_text}\n\n{note}" if user_text else note
 
 
 class Turn(TypedDict):
@@ -439,13 +444,6 @@ def _message_text(message: Any) -> str:
     return text.strip()
 
 
-def _field_context_info(field: Any) -> ContextInfo | None:
-    fields = getattr(getattr(field, "DESCRIPTOR", None), "fields_by_name", {})
-    if fields and "contextInfo" not in fields:
-        return None
-    return field.contextInfo if field.HasField("contextInfo") else None
-
-
 def _message_context_info(message: Message) -> ContextInfo | None:
     for field_name in (
         "extendedTextMessage",
@@ -453,14 +451,16 @@ def _message_context_info(message: Message) -> ContextInfo | None:
         "audioMessage",
         "albumMessage",
         "documentMessage",
-        "documentWithCaptionMessage",
     ):
         if not message.HasField(field_name):
             continue
-        if context_info := _field_context_info(getattr(message, field_name)):
-            return context_info
+        field = getattr(message, field_name)
+        if field.HasField("contextInfo"):
+            return field.contextInfo
     document = _document_message(message)
-    return _field_context_info(document) if document is not None else None
+    if document is not None and document.HasField("contextInfo"):
+        return document.contextInfo
+    return None
 
 
 def _quoted_message_text(message: Message) -> str:
@@ -894,26 +894,14 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
             return None
 
     if document is not None:
-        path = await save_document_attachment(
-            client, message, workspace=workspace, message_id=message_id
+        user_text = await save_document_attachment(
+            client,
+            message,
+            document=document,
+            workspace=workspace,
+            message_id=message_id,
+            user_text=user_text,
         )
-        note = "\n".join(
-            [
-                "Document saved in workspace.",
-                f"Path: `{path.relative_to(workspace).as_posix()}`",
-                f"Name: {path.name}",
-                f"Type: {getattr(document, 'mimetype', '') or mimetypes.guess_type(path.name)[0] or 'unknown'}",
-                f"Size bytes: {int(getattr(document, 'fileLength', 0) or path.stat().st_size)}",
-                f"Pages: {int(getattr(document, 'pageCount', 0) or 0) or 'unknown'}",
-            ]
-        )
-        messages_json = get_messages(session)
-        messages_json["messages"].append(
-            {"type": "message", "role": "assistant", "content": note}
-        )
-        set_messages(session, messages_json)
-        if not user_text:
-            user_text = f"Uploaded a document:\n{note}"
 
     prompt = _turn_prompt(user_text, event)
     album_turn, handled_album = await _handle_album_event(

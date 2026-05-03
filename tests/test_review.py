@@ -1853,7 +1853,7 @@ async def test_review_add_prefills_existing_comment_and_overwrites_it(
 
         assert app.query_one(ReviewView).reviews[-1]["comment"] == "First"
         assert viewer.render_line(1).crop(0, viewer.gutter_width).text.strip() == "*"
-        assert viewer.border_title == "1 comment"
+        assert viewer.border_title == "1 comment · 0/2 hunks staged"
 
         await pilot.press("a")
         await pilot.pause(0)
@@ -1909,7 +1909,7 @@ async def test_review_blank_comment_deletes_existing_review(
         await pilot.pause(0)
 
         assert len(app.query_one(ReviewView).reviews) == 1
-        assert viewer.border_title == "1 comment"
+        assert viewer.border_title == "1 comment · 0/2 hunks staged"
 
         await pilot.press("a")
         await pilot.pause(0)
@@ -1924,7 +1924,7 @@ async def test_review_blank_comment_deletes_existing_review(
 
         assert app.query_one(ReviewView).reviews == []
         assert viewer.render_line(1).crop(0, viewer.gutter_width).text.strip() != "*"
-        assert viewer.border_title == "0 comments"
+        assert viewer.border_title == "0 comments · 0/2 hunks staged"
 
 
 @pytest.mark.anyio

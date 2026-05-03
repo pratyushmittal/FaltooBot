@@ -1,77 +1,52 @@
 ---
-description: Read saved documents and answer questions from the selected file.
+description: Read PDFs, DOCX, and other documents from saved files or websites when the user asks to summarize, inspect, extract, or answer questions from a file or link.
 ---
 
 Use this when the user asks about a saved document, names a document, or asks a follow-up about a document.
 
+Documents sent on WhatsApp are saved in the workspace. The chat history includes a message like: `User has sent a file named report.pdf of 3.2mb (32 pages).`
+
 ## Workflow
 
 1. Pick the source document from chat history or from the file name mentioned by the user.
-2. Use the saved metadata to decide read mode. Do not recompute pages/size unless metadata is missing.
-3. Set paths:
+2. Extract the document to markdown/text next to the source file.
+3. Reuse the extracted markdown/text if it already exists.
+4. Answer only from the extracted content, or spawn a sub-agent for large whole-document work.
+
+## Read PDFs with PyMuPDF
+
+Use PyMuPDF's CLI in blocks mode. It sorts text blocks by position, which usually gives a better reading order for normal PDFs.
 
 ```bash
-doc='documents/file.pdf'
-txt="${doc%.*}.txt"
-mutool='{document_mutool_binary}'
-pandoc='{document_pandoc_binary}'
+uv run --with pymupdf python -m pymupdf gettext \
+  -mode blocks \
+  -noformfeed \
+  -output report.txt \
+  report.pdf
 ```
 
-4. Reuse `$txt` if it exists. Otherwise extract text with the correct binary.
-5. Answer only from `$txt` or spawn a sub-agent for large whole-document work.
+## Read other documents with MarkItDown
 
-## Extract PDF with MuPDF
-
-For normal PDFs with selectable text:
+Use MarkItDown for DOCX, PPTX, XLSX, HTML, CSV, JSON, XML, EPUB, and similar files. It converts many file formats to Markdown for LLM-friendly reading.
 
 ```bash
-"$mutool" convert -F text -o "$txt" "$doc"
+uv run --with 'markitdown[all]' markitdown report.docx -o report.md
 ```
-
-OCR example for scanned/mixed PDF pages:
-
-```bash
-"$mutool" draw -F ocr.txt -o "${doc%.*}.ocr.txt" -r 300 -t eng "$doc"
-```
-
-## Extract office documents with Pandoc
-
-```bash
-"$pandoc" "$doc" -t plain --wrap=none -o "$txt"
-```
-
-Examples:
-
-```bash
-"$pandoc" "documents/report.docx" -t plain --wrap=none -o "documents/report.txt"
-"$pandoc" "documents/slides.pptx" -t plain --wrap=none -o "documents/slides.txt"
-"$pandoc" "documents/sheet.xlsx" -t plain --wrap=none -o "documents/sheet.txt"
-```
-
-If a configured binary path fails, say which binary failed and ask the user to run `faltoobot configure` → `Document binaries`.
 
 ## Direct read vs spawn
 
-Use direct read only when the task is narrow and the needed text is small enough to inspect safely.
-
-Spawn a sub-agent when any of these are true:
-
-- metadata says `Pages` is more than 30 and the user asks summary, inspect, analysis, risks, financials, comparison, action items, or any broad question
-- extracted `.txt` is large enough to risk context exhaustion
-- answering requires reading the whole document
-
-For large documents, do not paste/read the whole `$txt` in the main session. Spawn instead.
+Use direct read when the task is narrow and the needed text is small enough to inspect safely. For large documents or broad questions, spawn a sub-agent instead of pasting the whole extracted file into the main session.
 
 ## Spawn command
 
-Replace `{chat_key}`, `$txt`, and the query text before running:
+Replace the file path and query text before running:
 
 ```bash
 query_file="$(mktemp)"
 cat > "$query_file" <<'QUERY'
 paste the user query here
 QUERY
-nohup sh -c 'faltoochat "Read documents/file.txt and answer the user query from this file only. User query: $(cat "$1")" --workspace=. --new-session 2>&1 | faltoobot notify "{chat_key}" --source="document-reader:documents/file.txt"' sh "$query_file" &
+nohup sh -c 'faltoochat "Read report.md and answer the user query from this file only. User query: $(cat "$1")" --workspace=. --new-session 2>&1 | faltoobot notify "{chat_key}" --source="document-reader:report.md"' sh "$query_file" &
 ```
 
 Tell the user that the document is large and a document-reader session has been started.

@@ -132,8 +132,6 @@ def _skill_context(chat_key: str) -> dict[str, str]:
     return {
         "chat_key": chat_key,
         "browser_binary": config.browser_binary,
-        "document_pandoc_binary": config.document_pandoc_binary or "pandoc",
-        "document_mutool_binary": config.document_mutool_binary or "mutool",
         "browser_profile": str(browser_runtime.browser_profile_dir(config.root)),
         "cdp_url": f"http://127.0.0.1:{browser_runtime.CDP_PORT}",
         "cdp_port": str(browser_runtime.CDP_PORT),

@@ -20,6 +20,7 @@ from faltoobot.faltoochat.editor_utils import (
 )
 from faltoobot.faltoochat.widgets.review_diff import (
     ReviewDiffView,
+    _comment_title,
     _line_highlight_style,
     _review_range,
 )
@@ -82,6 +83,25 @@ class ReviewViewStub:
 
 def review_view_stub() -> ReviewViewStub:
     return ReviewViewStub()
+
+
+def test_comment_title_includes_staged_hunk_count() -> None:
+    review_view = review_view_stub()
+    review_view.reviews = [{"filename": Path("alpha.py")}]
+    viewer = ReviewDiffView(
+        [
+            {"is_staged": True, "type": "-", "text": "old"},
+            {"is_staged": True, "type": "+", "text": "new"},
+            {"is_staged": False, "type": "", "text": "context"},
+            {"is_staged": False, "type": "+", "text": "added"},
+            {"is_staged": False, "type": "", "text": "context"},
+            {"is_staged": True, "type": "-", "text": "removed"},
+        ],
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view),
+    )
+
+    assert _comment_title(viewer) == "1 comment · 2/3 hunks staged"
 
 
 def git(workspace: Path, *args: str, input_text: str | None = None) -> str:

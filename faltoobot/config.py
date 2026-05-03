@@ -34,8 +34,6 @@ class Config:
     allowed_chats: set[str]
     bot_name: str
     browser_binary: str
-    document_pandoc_binary: str = ""
-    document_mutool_binary: str = ""
     gemini_api_key: str = ""
     gemini_model: str = GEMINI_MODEL
 
@@ -57,7 +55,6 @@ def default_config() -> dict[str, dict[str, Any]]:
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
         "ui": {"theme": ""},
         "browser": {"binary": None},
-        "document": {"pandoc_binary": "", "mutool_binary": ""},
         "bot": {
             "allow_group_chats": [],
             "allowed_chats": [],
@@ -73,7 +70,6 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     ui = as_dict(data.get("ui"))
     browser = as_dict(data.get("browser"))
     bot = as_dict(data.get("bot"))
-    document = as_dict(data.get("document"))
     return {
         "openai": {
             "api_key": as_str(openai.get("api_key"), defaults["openai"]["api_key"]),
@@ -96,10 +92,6 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
         "browser": {
             "binary": as_str(browser.get("binary"), ""),
-        },
-        "document": {
-            "pandoc_binary": as_str(document.get("pandoc_binary"), ""),
-            "mutool_binary": as_str(document.get("mutool_binary"), ""),
         },
         "bot": {
             "allow_group_chats": sorted(as_chat_set(bot.get("allow_group_chats"))),
@@ -140,7 +132,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     gemini = data["gemini"]
     ui = data["ui"]
     browser = data["browser"]
-    document = data["document"]
     allow_group_chats = (
         bot["allow_group_chats"] if isinstance(bot["allow_group_chats"], list) else []
     )
@@ -172,10 +163,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "",
             "[browser]",
             f"binary = {quote(str(browser['binary']))}",
-            "",
-            "[document]",
-            f"pandoc_binary = {quote(str(document['pandoc_binary']))}",
-            f"mutool_binary = {quote(str(document['mutool_binary']))}",
             "",
             "[bot]",
             f"allow_group_chats = [{allowed_group}]",
@@ -254,7 +241,6 @@ def build_config() -> Config:
     openai = data["openai"]
     bot = data["bot"]
     browser = data["browser"]
-    document = data["document"]
     gemini = data["gemini"]
     return Config(
         home=Path.home(),
@@ -275,8 +261,6 @@ def build_config() -> Config:
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
         bot_name=str(bot["bot_name"]),
         browser_binary=str(browser["binary"]),
-        document_pandoc_binary=str(document["pandoc_binary"]),
-        document_mutool_binary=str(document["mutool_binary"]),
         gemini_api_key=str(gemini["gemini_api_key"])
         or os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=str(gemini["model"]),
@@ -326,8 +310,6 @@ def config_status_text(
             for child_key, child_value in value.items():
                 next_prefix = f"{prefix}_{child_key}" if prefix else child_key
                 add_entries(next_prefix, child_value)
-            return
-        if prefix.startswith("document_") and not value:
             return
         entries.append((prefix, value))
 

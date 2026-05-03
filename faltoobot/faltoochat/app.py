@@ -15,6 +15,7 @@ from textual.widget import Widget
 from textual.widgets import (
     Footer,
     Markdown,
+    Checkbox,
     Static,
     TabbedContent,
     TabPane,
@@ -188,6 +189,25 @@ class FaltooChatApp(App[None]):
         border: round $primary;
     }
 
+    AttachmentList {
+        width: 1fr;
+        height: auto;
+        margin: -1 0 1 0;
+        display: none;
+    }
+
+    AttachmentCheckbox {
+        width: 1fr;
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    AttachmentCheckbox:focus {
+        background: $primary 18%;
+        color: $text;
+    }
+
     Markdown {
         width: 1fr;
         max-width: 80;
@@ -308,8 +328,8 @@ class FaltooChatApp(App[None]):
         self.set_focus(self.query_one("#composer", Composer), scroll_visible=False)
 
     def refresh_composer_title(self) -> None:
-        self.query_one("#composer", Composer).set_repo_title(
-            get_workspace_label(self.workspace)
+        self.query_one("#composer", Composer).border_title = get_workspace_label(
+            self.workspace
         )
 
     def action_show_chat_tab(self) -> None:
@@ -370,6 +390,7 @@ class FaltooChatApp(App[None]):
                                     highlight_cursor_line=False,
                                     placeholder=get_random_placeholder(),
                                 )
+                                yield AttachmentList()
                 yield ReviewView()
             yield Footer()
 
@@ -598,6 +619,41 @@ class FaltooChatApp(App[None]):
         self.run_worker(self._start_streaming(transcript), exclusive=True)
 
 
+class AttachmentCheckbox(Checkbox):
+    def __init__(self, index: int, attachment: sessions.Attachment) -> None:
+        self.index = index
+        self.attachment = attachment
+        label = Path(attachment).name or str(attachment)
+        super().__init__(label, value=True, compact=True)
+
+
+class AttachmentList(Vertical):
+    app = getters.app(FaltooChatApp)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attachments: list[sessions.Attachment] = []
+        self.display = False
+
+    def compose(self) -> ComposeResult:
+        for index, path in enumerate(self.attachments):
+            yield AttachmentCheckbox(index, path)
+
+    def set_attachments(self, attachments: list[sessions.Attachment]) -> None:
+        self.attachments = list(attachments)
+        self.display = bool(attachments)
+        self.refresh(recompose=True)
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.value:
+            return
+        if isinstance(event.checkbox, AttachmentCheckbox):
+            event.stop()
+            self.app.query_one("#composer", Composer).remove_attachment_at(
+                event.checkbox.index
+            )
+
+
 class Composer(TextArea):
     BINDINGS = [
         Binding("enter", "composer_enter", "Submit", priority=True),
@@ -616,39 +672,32 @@ class Composer(TextArea):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.attachments: list[sessions.Attachment] = []
-        self._repo_title = ""
         self._selected_transcript_message_id: int | None = None
-
-    def set_repo_title(self, title: str) -> None:
-        self._repo_title = title
-        self._refresh_border_title()
 
     def set_attachments(self, attachments: list[sessions.Attachment]) -> None:
         self.attachments = list(attachments)
-        self._refresh_border_title()
+        self._refresh_attachments()
 
-    def _refresh_border_title(self) -> None:
-        count = len(self.attachments)
-        attachments = (
-            f"{count} attachment"
-            if count == 1
-            else f"{count} attachments"
-            if count
-            else ""
-        )
-        self.border_title = " · ".join(
-            part for part in [self._repo_title, attachments] if part
-        )
+    def _refresh_attachments(self) -> None:
+        self.app.query_one(AttachmentList).set_attachments(list(self.attachments))
 
     def attach_image(self, path: sessions.Attachment) -> None:
         self.attachments.append(path)
-        self._refresh_border_title()
+        self._refresh_attachments()
+        self.focus()
+
+    def remove_attachment_at(self, index: int) -> None:
+        if not 0 <= index < len(self.attachments):
+            # comment: stale checkbox events can arrive after the attachment list refreshed.
+            return
+        del self.attachments[index]
+        self._refresh_attachments()
         self.focus()
 
     def take_attachments(self) -> list[sessions.Attachment]:
         attachments = list(self.attachments)
         self.attachments.clear()
-        self._refresh_border_title()
+        self._refresh_attachments()
         return attachments
 
     async def on_paste(self, event: events.Paste) -> None:

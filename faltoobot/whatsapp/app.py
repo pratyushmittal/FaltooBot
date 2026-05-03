@@ -8,7 +8,7 @@ from neonize.aioze.client import NewAClient
 from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.jid import Jid2String, build_jid
 
-from faltoobot import binaries, notify_queue
+from faltoobot import notify_queue
 from faltoobot.config import Config, build_config, normalize_chat
 from faltoobot.sessions import append_user_turn, get_session
 
@@ -182,10 +182,6 @@ async def main(this_config: Config | None = None) -> None:
 
     config = this_config or build_config()
     login.configure_logging(config.log_file)
-    try:
-        binaries.ensure_document_binaries(config)
-    except Exception:
-        logger.warning("Failed to prepare document binaries", exc_info=True)
     tasks = set()
     chat_locks = defaultdict(asyncio.Lock)
     debounce_timers = {}
