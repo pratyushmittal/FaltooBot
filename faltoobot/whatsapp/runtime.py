@@ -375,6 +375,22 @@ async def _handle_slash_command(
         await client.reply_message("Memory cleared for this chat.", event)
 
 
+async def _get_answer_with_retry(session: Session) -> str:
+    try:
+        return await get_answer(session)
+    except Exception as exc:
+        message = str(exc).lower()
+        if (
+            "peer closed connection" not in message
+            and "incomplete chunked read" not in message
+        ):
+            # comment: non-network failures should use the normal user-visible error path.
+            raise
+        logger.warning("Retrying after transient answer stream error: %s", exc)
+        await asyncio.sleep(1.0)
+        return await get_answer(session)
+
+
 async def process_turn_locked(
     client: NewAClient,
     session: Session,
@@ -402,7 +418,7 @@ async def process_turn_locked(
     typing_stop = asyncio.Event()
     typing_task = asyncio.create_task(keep_chat_typing(client, chat, typing_stop))
     try:
-        answer = await get_answer(session)
+        answer = await _get_answer_with_retry(session)
         if answer and answer.strip() != "[noreply]":
             await send_text(
                 client, chat=chat, text=answer, event=event, workspace=workspace

@@ -1726,6 +1726,53 @@ async def test_handle_message_stores_turn_without_reply_when_not_addressed(
 
 
 @pytest.mark.anyio
+async def test_process_turn_locked_retries_incomplete_chunked_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(runtime.asyncio, "sleep", fake_sleep)
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient()
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    expected_attempts = 2
+    attempts = 0
+
+    async def fake_get_answer(session: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError(
+                "peer closed connection without sending complete message body "
+                "(incomplete chunked read)"
+            )
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn={
+            "event": None,
+            "chat": jid("15555550123", "s.whatsapp.net"),
+            "message_ids": ["msg-1"],
+            "prompt": "hello",
+            "quoted_message_text": "",
+            "attachments": [],
+            "audio": None,
+        },
+    )
+
+    assert attempts == expected_attempts
+    assert client.sent_messages == ["Done"]
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("answer", "expected_messages"),
     [("queued reply", ["queued reply"]), ("[noreply]", [])],
