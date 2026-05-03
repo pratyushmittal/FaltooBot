@@ -1070,7 +1070,7 @@ async def test_minchat_shows_retry_when_answer_fails(
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise RuntimeError("server overloaded")
+            raise RuntimeError("server [overloaded]")
         yield type(
             "Event", (), {"type": "response.output_text.delta", "delta": "Recovered"}
         )()
@@ -1089,13 +1089,20 @@ async def test_minchat_shows_retry_when_answer_fails(
             lambda: (
                 not app.is_answering
                 and any(
-                    "server overloaded" in str(block.render())
+                    "server [overloaded]" in cast(Any, block.render()).plain
                     for block in app.query_one("#transcript")
                     .query(Static)
                     .filter(".unknown")
                 )
             )
         )
+        error_block = next(
+            iter(app.query_one("#transcript").query(Static).filter(".unknown"))
+        )
+        assert str(error_block.styles.max_width) == "80"
+        assert error_block.styles.padding.left == 1
+        assert error_block.styles.margin.bottom == 1
+        assert "\\[overloaded]" in cast(str, error_block.content)
 
         await app.action_retry_failed_message()
         await wait_for_condition(

@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from rich.markup import escape
+
 from textual import events, getters
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
@@ -247,6 +249,10 @@ class FaltooChatApp(App[None]):
     }
 
     .unknown {
+        width: 1fr;
+        max-width: 80;
+        margin: 0 0 1 0;
+        padding: 0 1;
         background: $error 12%;
         border-left: wide $error;
         color: $text;
@@ -570,7 +576,8 @@ class FaltooChatApp(App[None]):
 
     async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
         message = str(error).strip() or repr(error)
-        content = f"{type(error).__name__}: {message}"
+        # comment: Static parses Rich markup, so escape untrusted exception text before appending our Retry link.
+        content = escape(f"{type(error).__name__}: {message}")
         # comment: add/store failures are not retryable because no assistant turn was started.
         if retry:
             content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
