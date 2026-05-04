@@ -305,6 +305,9 @@ class FaltooChatApp(App[None]):
         self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.is_answering = False
         self._is_polling_notifications = False
+        self.transcript: VerticalScroll
+        self.composer: Composer
+        self.chat_shell: ChatShell
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         """Return commands shown in Textual's command palette (Ctrl+P) for the active screen."""
@@ -317,18 +320,6 @@ class FaltooChatApp(App[None]):
 
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)
-
-    @property
-    def transcript(self) -> VerticalScroll:
-        return self.query_one("#transcript", VerticalScroll)
-
-    @property
-    def composer(self) -> "Composer":
-        return self.query_one("#composer", Composer)
-
-    @property
-    def chat_shell(self) -> "ChatShell":
-        return self.query_one("#chat-shell", ChatShell)
 
     def _watch_theme(self, theme_name: str) -> None:
         super()._watch_theme(theme_name)
@@ -410,6 +401,9 @@ class FaltooChatApp(App[None]):
             yield Footer()
 
     async def on_mount(self) -> None:
+        self.transcript = self.query_one("#transcript", VerticalScroll)
+        self.composer = self.query_one("#composer", Composer)
+        self.chat_shell = self.query_one("#chat-shell", ChatShell)
         self.refresh_composer_title()
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
