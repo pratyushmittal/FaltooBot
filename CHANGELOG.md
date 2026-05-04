@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 4.1.1 — 2026-05-04
+
+### Fixed
+- WhatsApp answer streaming now retries once after transient incomplete chunked-read connection failures.
+- WhatsApp `/reset` now preserves `AGENTS.md` in the new workspace so chat instructions and memory survive.
+- Review diff colors now stay readable across light and dark themes without forcing the wrong content background.
+- Browser automation now has a bounded shared-CDP connector with clearer errors when the FaltooBot browser is missing or using the wrong profile.
+
 ## 4.1.0 — 2026-05-03
 
 ### Added
