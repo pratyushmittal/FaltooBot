@@ -206,13 +206,18 @@ class ReviewView(TabPane):
         app = cast("FaltooChatApp", self.app)
         app.action_show_chat_tab()
         message_item = review_to_message_item(self.reviews)
+        self.reviews.clear()
         if app.is_answering:
             await app.queue().add_to_queue(message_item)
             app.focus_composer()
-            self.reviews.clear()
             return
-        await app.handle_message(message_item)
-        self.reviews.clear()
+        app.call_after_refresh(
+            lambda: app.run_worker(
+                app.handle_message(message_item),
+                group="review-submit",
+                exclusive=True,
+            )
+        )
 
     def action_review_refresh_files(self) -> None:
         self.app.run_worker(

@@ -206,7 +206,7 @@ class FaltooChatApp(App[None]):
             return
         save_textual_theme(theme_name)
         if hasattr(self, "transcript"):
-            self.transcript.refresh_theme()
+            self.call_next(self.transcript.refresh_theme)
         for viewer in self.query(ReviewDiffView):
             viewer.refresh_review_theme()
 

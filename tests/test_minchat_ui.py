@@ -568,6 +568,52 @@ async def test_minchat_ctrl_r_toggles_back_to_chat_tab(
 
 
 @pytest.mark.anyio
+async def test_minchat_review_submit_scrolls_transcript_to_bottom(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async def fake_append_user_turn(
+        session: sessions.Session,
+        *,
+        question: str,
+        attachments: list[sessions.Attachment],
+    ) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.append_user_turn",
+        fake_append_user_turn,
+    )
+
+    async with app.run_test(size=(80, 18)) as pilot:
+        await pilot.pause(0)
+        tabs = app.query_one(TabbedContent)
+        review = app.query_one(ReviewView)
+        review.reviews = [
+            {
+                "filename": Path("alpha.py"),
+                "line_number_start": 1,
+                "line_number_end": 40,
+                "code": "\n".join(f"line {index}" for index in range(40)),
+                "comment": "Scroll to the submitted review.",
+            }
+        ]
+        tabs.active = "review-tab"
+        await pilot.pause(0)
+
+        await review.submit_reviews()
+        await wait_for_condition(lambda: bool(app.transcript.messages))
+        await wait_for_condition(
+            lambda: app.transcript.scroll_y == app.transcript.max_scroll_y
+        )
+
+        assert tabs.active == "chat-tab"
+        assert app.transcript.scroll_y == app.transcript.max_scroll_y
+
+
+@pytest.mark.anyio
 async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

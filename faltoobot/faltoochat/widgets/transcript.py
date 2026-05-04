@@ -15,6 +15,7 @@ from rich.theme import Theme as RichTheme
 from textual import events
 from textual.color import Color
 from textual.events import Resize
+from textual.highlight import guess_language
 from textual.geometry import Offset, Size
 from textual.selection import Selection
 from textual.strip import Strip
@@ -91,9 +92,10 @@ class _CodeBlock(CodeBlock):
     def __rich_console__(
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
+        code = str(self.text).rstrip()
         yield Syntax(
-            str(self.text).rstrip(),
-            self.lexer_name,
+            code,
+            self.lexer_name or guess_language(code, None),
             theme=self.theme,
             word_wrap=True,
             padding=(1, 3),
@@ -107,10 +109,13 @@ class _Table(TableElement):
         table = Table(
             box=box.SQUARE,
             padding=(0, 1),
-            style="markdown.table.border",
+            style="markdown.table",
             header_style="markdown.table.header",
             border_style="markdown.table.border",
+            row_styles=["markdown.table"],
             show_edge=True,
+            show_lines=True,
+            expand=True,
         )
         if self.header is not None and self.header.row is not None:
             for column in self.header.row.cells:
@@ -241,8 +246,11 @@ class _TranscriptBlock:
                         for level in range(1, 7)
                     },
                     "markdown.link": Style(color=color("text-accent"), underline=True),
-                    "markdown.table.border": Style(color=color("foreground")),
-                    "markdown.table.header": Style(color=color("primary"), bold=True),
+                    "markdown.table": code_block,
+                    "markdown.table.border": code_block
+                    + Style(color=color("foreground")),
+                    "markdown.table.header": code_block
+                    + Style(color=color("primary"), bold=True),
                 }
             )
         ):
@@ -274,7 +282,6 @@ class _TranscriptBlock:
 
 class TranscriptLog(RichLog):
     ALLOW_SELECT = True
-    auto_links = False
     can_focus = False
     FOCUS_ON_CLICK = False
 
