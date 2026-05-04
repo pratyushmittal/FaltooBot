@@ -318,6 +318,18 @@ class FaltooChatApp(App[None]):
     def queue(self) -> QueueWidget:
         return self.query_one(QueueWidget)
 
+    @property
+    def transcript(self) -> VerticalScroll:
+        return self.query_one("#transcript", VerticalScroll)
+
+    @property
+    def composer(self) -> "Composer":
+        return self.query_one("#composer", Composer)
+
+    @property
+    def chat_shell(self) -> "ChatShell":
+        return self.query_one("#chat-shell", ChatShell)
+
     def _watch_theme(self, theme_name: str) -> None:
         super()._watch_theme(theme_name)
         if not self._persist_theme_changes:
@@ -330,17 +342,15 @@ class FaltooChatApp(App[None]):
         return self.query_one("#tabs", TabbedContent)
 
     def focus_composer(self) -> None:
-        self.set_focus(self.query_one("#composer", Composer), scroll_visible=False)
+        self.set_focus(self.composer, scroll_visible=False)
 
     def refresh_composer_title(self) -> None:
-        self.query_one("#composer", Composer).border_title = get_workspace_label(
-            self.workspace
-        )
+        self.composer.border_title = get_workspace_label(self.workspace)
 
     def action_show_chat_tab(self) -> None:
         self.refresh_composer_title()
         self.tabs().active = "chat-tab"
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         self.call_after_refresh(transcript.scroll_end, animate=False)
         if self.screen.is_modal:
             # comment: focus inside the active modal instead of closing it.
@@ -441,7 +451,7 @@ class FaltooChatApp(App[None]):
             await self.queue().add_to_queue(message_item)
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         try:
             stored = await self._add_user_turn(transcript, message_item)
         except asyncio.CancelledError:
@@ -456,7 +466,7 @@ class FaltooChatApp(App[None]):
             return
         # comment: duplicate notification ids can skip storing and therefore skip streaming.
         self.is_answering = False
-        composer = self.query_one("#composer", Composer)
+        composer = self.composer
         composer.border_subtitle = ""
         if self.tabs().active == "chat-tab":
             composer.focus()
@@ -470,7 +480,7 @@ class FaltooChatApp(App[None]):
         recent_limit: int | None = None,
     ) -> None:
         messages_json = sessions.get_messages(self.session)
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         blocks = []
         messages = messages_json["messages"]
         if recent_limit is not None and len(messages) > recent_limit:
@@ -500,14 +510,14 @@ class FaltooChatApp(App[None]):
             immediate=True,
         )
 
-        composer = self.query_one("#composer", Composer)
+        composer = self.composer
         composer.focus()
 
     async def action_load_all_messages(self) -> None:
         await self.load_messages()
 
     async def show_local_answer(self, text: str) -> None:
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         await transcript.mount(Markdown(text, classes="answer"))
         transcript.anchor()
 
@@ -579,7 +589,7 @@ class FaltooChatApp(App[None]):
 
     async def _start_streaming(self, transcript: VerticalScroll) -> None:
         completed = False
-        composer = self.query_one("#composer", Composer)
+        composer = self.composer
         composer.border_subtitle = "answering"
         try:
             await self._stream_events(transcript)
@@ -607,7 +617,7 @@ class FaltooChatApp(App[None]):
         # comment: add/store failures are not retryable because no assistant turn was started.
         if retry:
             content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         await transcript.mount(Static(content, classes="unknown"))
         transcript.anchor()
 
@@ -620,7 +630,7 @@ class FaltooChatApp(App[None]):
             )
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         self.run_worker(self._start_streaming(transcript), exclusive=True)
 
 
@@ -654,9 +664,7 @@ class AttachmentList(Vertical):
             return
         if isinstance(event.checkbox, AttachmentCheckbox):
             event.stop()
-            self.app.query_one("#composer", Composer).remove_attachment_at(
-                event.checkbox.index
-            )
+            self.app.composer.remove_attachment_at(event.checkbox.index)
 
 
 class ChatShell(Vertical):
@@ -691,7 +699,7 @@ class ChatShell(Vertical):
         return None
 
     def _scroll_transcript_message(self, delta: int) -> None:
-        transcript = self.app.query_one("#transcript", VerticalScroll)
+        transcript = self.app.transcript
         messages = [
             message
             for message in transcript.children
