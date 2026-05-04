@@ -1312,8 +1312,9 @@ async def test_process_message_reset_creates_new_session_for_chat(
     original = get_messages(first)
     original["messages"].append({"type": "message", "role": "user", "content": "hi"})
     original["message_ids"] = ["msg-1"]
-    from faltoobot.sessions import set_messages
-
+    (Path(original["workspace"]) / "AGENTS.md").write_text(
+        "remember this", encoding="utf-8"
+    )
     set_messages(first, original)
 
     source = Neonize_pb2.MessageSource(
@@ -1343,6 +1344,9 @@ async def test_process_message_reset_creates_new_session_for_chat(
     ]
     assert get_messages(second)["messages"] == []
     assert get_messages(second)["message_ids"] == ["msg-1"]
+    assert (Path(get_messages(second)["workspace"]) / "AGENTS.md").read_text(
+        encoding="utf-8"
+    ) == "remember this"
 
 
 class _DummyClient:

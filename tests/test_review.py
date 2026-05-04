@@ -13,11 +13,7 @@ from textual.widgets.option_list import Option
 from faltoobot import sessions
 from faltoobot.faltoochat.app import FaltooChatApp
 from faltoobot.faltoochat.diff import get_diff
-from faltoobot.faltoochat.review import (
-    ReviewView,
-    _review_tab_titles,
-    _syntax_highlight_theme,
-)
+from faltoobot.faltoochat.review import ReviewView, _review_tab_titles
 from faltoobot.faltoochat.widgets import (
     ReviewCommentModal,
     ReviewDiffView,
@@ -82,11 +78,6 @@ def test_project_search_stops_after_max_results(
 
 def review_file_panes(tabs: TabbedContent) -> list[TabPane]:
     return [pane for pane in tabs.query(TabPane) if pane.id != "no-changes"]
-
-
-def test_syntax_highlight_theme_matches_app_theme() -> None:
-    assert _syntax_highlight_theme("textual-dark") == "vscode_dark"
-    assert _syntax_highlight_theme("textual-light") == "github_light"
 
 
 async def wait_for_condition(check) -> None:
@@ -471,7 +462,6 @@ async def test_review_diff_updates_theme_colors_when_app_theme_changes(
         viewer.focus()
         await pilot.pause(0)
 
-        before_theme = viewer.theme
         before_color = (
             viewer._theme.base_style.color
             if viewer._theme and viewer._theme.base_style
@@ -481,11 +471,10 @@ async def test_review_diff_updates_theme_colors_when_app_theme_changes(
         app.theme = "textual-light"
         await pilot.pause(0)
 
-        assert viewer.theme == "github_light"
+        assert viewer.theme == "faltoobot_review_light"
         assert viewer._theme is not None
         assert viewer._theme.base_style is not None
         assert viewer._theme.base_style.color != before_color
-        assert before_theme != viewer.theme
 
 
 @pytest.mark.anyio

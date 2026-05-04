@@ -14,6 +14,7 @@ from textual.binding import Binding
 from textual.color import Color
 from textual.strip import Strip
 from textual.widgets import TabbedContent, TabPane, TextArea
+from textual.widgets.text_area import TextAreaTheme
 
 
 from ..diff import Diff, get_diff
@@ -156,6 +157,7 @@ class ReviewDiffView(TextArea):
         self.missing_language_package: str | None = None
         kwargs.setdefault("soft_wrap", True)
         super().__init__("", language=None, **kwargs)
+        _use_review_theme(self, dark=False)
         self._load_diff_text()
         _register_extra_languages(self)
         if requested_language in self.available_languages:
@@ -164,20 +166,27 @@ class ReviewDiffView(TextArea):
             self.missing_language_package = _language_package(requested_language)
         self.border_title = "0 comments"
 
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.refresh_review_theme()
+        if self.missing_language_package is None:
+            # comment: all requested syntax highlighting support is already available.
+            return
+        self.app.notify(
+            f"Install `{self.missing_language_package}` for {self.file_path.suffix} syntax highlighting.",
+            severity="warning",
+        )
+
+    def refresh_review_theme(self) -> None:
+        _use_review_theme(self, dark=self.app.current_theme.dark)
+        self.refresh()
+
     @property
     def gutter_width(self) -> int:
         """Return the TextArea gutter width plus one column for the diff marker."""
         if not self.show_line_numbers:
             return 0
         return super().gutter_width + 1
-
-    def on_mount(self) -> None:
-        if self.missing_language_package is None:
-            return
-        self.app.notify(
-            f"Install `{self.missing_language_package}` for {self.file_path.suffix} syntax highlighting.",
-            severity="warning",
-        )
 
     def on_show(self, _event: events.Show) -> None:
         self.focus()
@@ -700,6 +709,23 @@ class ReviewDiffView(TextArea):
 
     async def action_review_submit_reviews(self) -> None:
         await self.review_view.submit_reviews()
+
+
+def _use_review_theme(view: ReviewDiffView, *, dark: bool) -> None:
+    """Use syntax colors for the app theme without forcing TextArea's background."""
+    theme_name = "vscode_dark" if dark else "github_light"
+    review_theme_name = f"faltoobot_review_{'dark' if dark else 'light'}"
+    theme = TextAreaTheme.get_builtin_theme(theme_name)
+    if theme is None:
+        # comment: fall back to TextArea's default theme if Textual changes built-in names.
+        return
+    view.register_theme(
+        TextAreaTheme(
+            name=review_theme_name,
+            syntax_styles=theme.syntax_styles,
+        )
+    )
+    view.theme = review_theme_name
 
 
 def _register_extra_languages(view: ReviewDiffView) -> None:
