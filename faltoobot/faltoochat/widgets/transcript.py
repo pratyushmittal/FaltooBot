@@ -274,6 +274,7 @@ class _TranscriptBlock:
 
 class TranscriptLog(RichLog):
     ALLOW_SELECT = True
+    auto_links = False
     can_focus = False
     FOCUS_ON_CLICK = False
 
@@ -282,17 +283,18 @@ class TranscriptLog(RichLog):
         self.message_ranges: list[tuple[str, int, int]] = []
         self.selection_ranges: list[tuple[str, int, int]] = []
         self._last_click_line: int | None = None
+        self._render_width = 0
         super().__init__(wrap=True, markup=False, **kwargs)
 
-    def notify_style_update(self) -> None:
-        super().notify_style_update()
-        if self._size_known:
+    def on_resize(self, event: Resize) -> None:
+        old_render_width = self._render_width
+        super().on_resize(event)
+        render_width = min(MAX_BLOCK_WIDTH, self.scrollable_content_region.width)
+        if event.size.width and self.messages and render_width != old_render_width:
             self._render_messages()
 
-    def on_resize(self, event: Resize) -> None:
-        was_size_known = self._size_known
-        super().on_resize(event)
-        if event.size.width and not was_size_known:
+    def refresh_theme(self) -> None:
+        if self._size_known:
             self._render_messages()
 
     def write_entry(self, text: str, classes: str, *, scroll_end: bool = True) -> int:
@@ -316,9 +318,12 @@ class TranscriptLog(RichLog):
         parts = _selection_parts(text, classes)
         for index, part in enumerate(parts):
             part_start = len(self.lines)
+            self._render_width = min(
+                MAX_BLOCK_WIDTH, self.scrollable_content_region.width
+            )
             self.write(
                 _TranscriptBlock(part, classes, self),
-                width=min(MAX_BLOCK_WIDTH, self.scrollable_content_region.width),
+                width=self._render_width,
                 scroll_end=scroll_end and index == len(parts) - 1,
             )
             self.selection_ranges.append((classes, part_start, len(self.lines)))
@@ -352,7 +357,12 @@ class TranscriptLog(RichLog):
         self.clear()
 
     def _clear_selection(self) -> None:
-        self.screen.selections.pop(self, None)
+        if self in self.screen.selections:
+            self.screen.selections = {
+                widget: selection
+                for widget, selection in self.screen.selections.items()
+                if widget is not self
+            }
 
     def _render_messages(self) -> None:
         messages = self.messages
@@ -381,7 +391,6 @@ class TranscriptLog(RichLog):
                 self.text_select_all()
                 event.stop()
                 return
-        await self.broker_event("click", event)
 
     def _select_block_at_line(self, line_index: int) -> None:
         for _classes, start, end in self.selection_ranges:

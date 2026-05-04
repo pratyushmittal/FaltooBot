@@ -185,6 +185,8 @@ class FaltooChatApp(App[None]):
         self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.is_answering = False
         self._is_polling_notifications = False
+        self.transcript: TranscriptLog
+        self.composer: Composer
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         """Return commands shown in Textual's command palette (Ctrl+P) for the active screen."""
@@ -203,6 +205,8 @@ class FaltooChatApp(App[None]):
         if not self._persist_theme_changes:
             return
         save_textual_theme(theme_name)
+        if hasattr(self, "transcript"):
+            self.transcript.refresh_theme()
         for viewer in self.query(ReviewDiffView):
             viewer.refresh_review_theme()
 
@@ -210,12 +214,10 @@ class FaltooChatApp(App[None]):
         return self.query_one("#tabs", TabbedContent)
 
     def focus_composer(self) -> None:
-        self.set_focus(self.query_one("#composer", Composer), scroll_visible=False)
+        self.set_focus(self.composer, scroll_visible=False)
 
     def refresh_composer_title(self) -> None:
-        self.query_one("#composer", Composer).border_title = get_workspace_label(
-            self.workspace
-        )
+        self.composer.border_title = get_workspace_label(self.workspace)
 
     def action_show_chat_tab(self) -> None:
         self.refresh_composer_title()
@@ -278,6 +280,8 @@ class FaltooChatApp(App[None]):
             yield Footer()
 
     async def on_mount(self) -> None:
+        self.transcript = self.query_one("#transcript", TranscriptLog)
+        self.composer = self.query_one("#composer", Composer)
         self.refresh_composer_title()
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
@@ -319,7 +323,7 @@ class FaltooChatApp(App[None]):
             await self.queue().add_to_queue(message_item)
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript = self.transcript
         try:
             stored = await self._add_user_turn(transcript, message_item)
         except asyncio.CancelledError:
@@ -334,23 +338,21 @@ class FaltooChatApp(App[None]):
             return
         # comment: duplicate notification ids can skip storing and therefore skip streaming.
         self.is_answering = False
-        composer = self.query_one("#composer", Composer)
-        composer.border_subtitle = ""
+        self.composer.border_subtitle = ""
         if self.tabs().active == "chat-tab":
-            composer.focus()
+            self.composer.focus()
 
     async def load_recent_messages(self) -> None:
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
-        self.query_one("#transcript", TranscriptLog).scroll_end(
+        self.transcript.scroll_end(
             animate=False,
             immediate=False,
             x_axis=False,
         )
 
     async def load_more_messages(self) -> None:
-        transcript = self.query_one("#transcript", TranscriptLog)
-        loaded = len(
-            [item for item in transcript.messages if item[1] != "history-summary"]
+        loaded = sum(
+            classes != "history-summary" for _text, classes in self.transcript.messages
         )
         await self.load_messages(
             recent_limit=loaded + STARTUP_MESSAGES_LIMIT,
@@ -362,10 +364,11 @@ class FaltooChatApp(App[None]):
         *,
         recent_limit: int | None = None,
         preserve_scroll: bool = False,
+        chunk_size: int | None = None,
     ) -> None:
         messages_json = sessions.get_messages(self.session)
         messages = messages_json["messages"]
-        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript = self.transcript
         scroll_y = transcript.scroll_y if preserve_scroll else None
         transcript.clear_messages()
         if recent_limit is not None and len(messages) > recent_limit:
@@ -377,9 +380,18 @@ class FaltooChatApp(App[None]):
                 scroll_end=False,
             )
             messages = messages[-recent_limit:]
-        for message in messages:
-            if rendering := get_item_text(message):
-                transcript.write_entry(*rendering, scroll_end=False)
+        original_subtitle = self.composer.border_subtitle
+        try:
+            for index, message in enumerate(messages, start=1):
+                if rendering := get_item_text(message):
+                    transcript.write_entry(*rendering, scroll_end=False)
+                if chunk_size and index % chunk_size == 0:
+                    self.composer.border_subtitle = (
+                        f"loading {index}/{len(messages)} messages"
+                    )
+                    await asyncio.sleep(0)
+        finally:
+            self.composer.border_subtitle = original_subtitle
         if not transcript.messages:
             transcript.write_message(
                 "_No messages yet. The void is waiting._",
@@ -393,17 +405,19 @@ class FaltooChatApp(App[None]):
                 animate=False,
                 immediate=True,
             )
-        composer = self.query_one("#composer", Composer)
-        composer.focus()
+        self.composer.focus()
 
     async def action_load_more_messages(self) -> None:
         await self.load_more_messages()
 
     async def action_load_all_messages(self) -> None:
-        await self.load_messages(preserve_scroll=True)
+        await self.load_messages(
+            preserve_scroll=True,
+            chunk_size=STARTUP_MESSAGES_LIMIT // 4,
+        )
 
     async def show_local_answer(self, text: str) -> None:
-        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript = self.transcript
         transcript.write_message(text, "answer")
         transcript.scroll_end(animate=False, immediate=True)
 
@@ -464,7 +478,7 @@ class FaltooChatApp(App[None]):
 
     async def _start_streaming(self, transcript: TranscriptLog) -> None:
         completed = False
-        composer = self.query_one("#composer", Composer)
+        composer = self.composer
         composer.border_subtitle = "answering"
         try:
             await self._stream_events(transcript)
@@ -492,7 +506,7 @@ class FaltooChatApp(App[None]):
         # comment: add/store failures are not retryable because no assistant turn was started.
         if retry:
             content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
-        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript = self.transcript
         transcript.write_message(content, "unknown")
         transcript.scroll_end(animate=False, immediate=True)
 
@@ -505,7 +519,7 @@ class FaltooChatApp(App[None]):
             )
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript = self.transcript
         self.run_worker(self._start_streaming(transcript), exclusive=True)
 
 
@@ -539,9 +553,7 @@ class AttachmentList(Vertical):
             return
         if isinstance(event.checkbox, AttachmentCheckbox):
             event.stop()
-            self.app.query_one("#composer", Composer).remove_attachment_at(
-                event.checkbox.index
-            )
+            self.app.composer.remove_attachment_at(event.checkbox.index)
 
 
 class Composer(TextArea):
@@ -668,7 +680,7 @@ class Composer(TextArea):
         return None
 
     def _scroll_transcript_message(self, delta: int) -> None:
-        transcript = self.app.query_one("#transcript", TranscriptLog)
+        transcript = self.app.transcript
         messages = [
             (index, start)
             for index, (classes, start, _end) in enumerate(transcript.message_ranges)

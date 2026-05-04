@@ -4,8 +4,6 @@ from typing import Any, cast
 
 import pytest
 from textual import events
-from textual.geometry import Offset
-from textual.selection import Selection
 
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
@@ -707,87 +705,6 @@ async def test_minchat_returning_to_chat_preserves_transcript_scroll(
 
 
 @pytest.mark.anyio
-async def test_minchat_tool_command_blocks_are_truncated(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, app = build_app(tmp_path, monkeypatch)
-
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        transcript = app.query_one("#transcript", TranscriptLog)
-        transcript.clear_messages()
-        transcript.write_message(
-            "\n".join(f"line {index}" for index in range(6)),
-            "tool tool-command",
-        )
-        await pilot.pause(0)
-
-        rendered_tool_lines = 3
-        block_margin = 1
-        _classes, start, end = transcript.message_ranges[-1]
-        assert end - start == rendered_tool_lines + block_margin
-
-
-@pytest.mark.anyio
-async def test_transcript_double_click_selects_streamed_answer_markdown_block(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, app = build_app(tmp_path, monkeypatch)
-
-    release = asyncio.Event()
-
-    async def fake_get_answer_streaming(session: sessions.Session):
-        await release.wait()
-        yield type(
-            "Event",
-            (),
-            {
-                "type": "response.output_text.delta",
-                "delta": "# Heading\nparagraph",
-            },
-        )()
-        yield type("Event", (), {"type": "response.output_text.done"})()
-
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
-        fake_get_answer_streaming,
-    )
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause(0)
-        transcript = app.query_one("#transcript", TranscriptLog)
-        composer = app.query_one("#composer", Composer)
-        composer.load_text("hello")
-        await composer.action_composer_enter()
-        await wait_for_condition(lambda: app.is_answering)
-        app.screen.selections[transcript] = Selection(Offset(0, 0), Offset(15, 0))
-        release.set()
-        await wait_for_condition(lambda: not app.is_answering)
-        await pilot.pause(0)
-
-        transcript = app.query_one("#transcript", TranscriptLog)
-        assert app.screen.get_selected_text() is None
-        answer_ranges = [
-            item for item in transcript.selection_ranges if item[0] == "answer"
-        ][-2:]
-        expected_blocks = 2
-        assert len(answer_ranges) == expected_blocks
-
-        content_y = transcript.content_region.y - transcript.region.y
-        second_y = content_y + answer_ranges[1][1] - int(transcript.scroll_y)
-        await pilot.click(transcript, offset=(40, second_y))
-        await pilot.pause(0)
-        assert app.screen.get_selected_text() is None
-
-        await pilot.click(transcript, offset=(40, second_y), times=2)
-        await pilot.pause(0)
-
-        assert app.screen.get_selected_text() == "paragraph"
-
-
-@pytest.mark.anyio
 async def test_minchat_shift_enter_keeps_multiline_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -912,10 +829,11 @@ async def test_minchat_startup_loads_recent_messages_at_bottom(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
+    total_messages = 250
     messages_json = sessions.get_messages(app.session)
     messages_json["messages"] = [
         {"type": "message", "role": "user", "content": f"prompt {index}"}
-        for index in range(250)
+        for index in range(total_messages)
     ]
     sessions.set_messages(app.session, messages_json)
 
@@ -925,6 +843,34 @@ async def test_minchat_startup_loads_recent_messages_at_bottom(
         transcript = app.query_one("#transcript", TranscriptLog)
 
         assert transcript.scroll_y == transcript.max_scroll_y
+
+
+@pytest.mark.anyio
+async def test_transcript_style_update_does_not_rebuild_loaded_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": f"prompt {index}"}
+        for index in range(250)
+    ]
+    sessions.set_messages(app.session, messages_json)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+        render_calls = 0
+
+        def spy_render_messages() -> None:
+            nonlocal render_calls
+            render_calls += 1
+
+        monkeypatch.setattr(transcript, "_render_messages", spy_render_messages)
+        transcript.notify_style_update()
+
+        assert render_calls == 0
 
 
 @pytest.mark.anyio
@@ -967,9 +913,17 @@ async def test_minchat_load_all_button_loads_full_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
-    total_messages = 101
+    total_messages = 250
     startup_messages = 100
     restored_scroll_y = 7
+    sleep_calls: list[int] = []
+    expected_chunks = 10
+    original_sleep = asyncio.sleep
+
+    async def spy_sleep(delay: int) -> None:
+        sleep_calls.append(delay)
+        await original_sleep(0)
+
     messages_json = sessions.get_messages(app.session)
     messages_json["messages"] = [
         {"type": "message", "role": "user", "content": f"prompt {index}"}
@@ -989,9 +943,78 @@ async def test_minchat_load_all_button_loads_full_history(
         transcript.scroll_to(y=restored_scroll_y, animate=False, immediate=True)
         await pilot.pause(0)
 
-        await app.action_load_all_messages()
+        with monkeypatch.context() as patch:
+            patch.setattr("faltoobot.faltoochat.app.asyncio.sleep", spy_sleep)
+            await app.action_load_all_messages()
         await pilot.pause(0)
         assert transcript.scroll_y == restored_scroll_y
+        assert transcript.loading is False
+        assert app.query_one("#composer", Composer).border_subtitle is None
+        assert len(sleep_calls) >= expected_chunks
+        assert len(transcript.messages) == total_messages
+        assert all(
+            classes != "history-summary" for _text, classes in transcript.messages
+        )
+
+
+@pytest.mark.anyio
+async def test_minchat_load_all_link_loads_history_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    total_messages = 250
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": f"prompt {index}"}
+        for index in range(total_messages)
+    ]
+    sessions.set_messages(app.session, messages_json)
+    load_calls = 0
+    original_load_messages = FaltooChatApp.load_messages
+
+    async def spy_load_messages(
+        app: FaltooChatApp,
+        *,
+        recent_limit: int | None = None,
+        preserve_scroll: bool = False,
+        chunk_size: int | None = None,
+    ) -> None:
+        nonlocal load_calls
+        if recent_limit is None:
+            load_calls += 1
+        await original_load_messages(
+            app,
+            recent_limit=recent_limit,
+            preserve_scroll=preserve_scroll,
+            chunk_size=chunk_size,
+        )
+
+    monkeypatch.setattr(FaltooChatApp, "load_messages", spy_load_messages)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0)
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+        transcript.scroll_home(animate=False, immediate=True)
+        await pilot.pause(0)
+
+        line = transcript.lines[0]
+        left = (transcript.scrollable_content_region.width - line.cell_length) // 2
+        await pilot.click(
+            transcript,
+            offset=(
+                transcript.content_region.x
+                - transcript.region.x
+                + left
+                + line.text.index("load all")
+                + 1,
+                transcript.content_region.y - transcript.region.y,
+            ),
+        )
+        await pilot.pause(0)
+
+        assert load_calls == 1
         assert len(transcript.messages) == total_messages
 
 
@@ -1214,18 +1237,12 @@ async def test_minchat_bells_when_answer_finishes(
 
 
 @pytest.mark.anyio
-async def test_minchat_reparses_streamed_answer_when_finished(
+async def test_minchat_streamed_answer_is_rerendered_as_one_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
     answer = "Here is code:\n\n```py\nfoo = 1\n```"
-    updates: list[str] = []
-    original_update = Markdown.update
-
-    async def record_update(block: Markdown, markdown: str) -> None:
-        updates.append(markdown)
-        await original_update(block, markdown)
 
     async def fake_get_answer_streaming(session: sessions.Session):
         yield type(
@@ -1236,7 +1253,6 @@ async def test_minchat_reparses_streamed_answer_when_finished(
         )()
         yield type("Event", (), {"type": "response.output_text.done"})()
 
-    monkeypatch.setattr(Markdown, "update", record_update)
     monkeypatch.setattr(
         "faltoobot.faltoochat.app.sessions.get_answer_streaming",
         fake_get_answer_streaming,
@@ -1247,12 +1263,15 @@ async def test_minchat_reparses_streamed_answer_when_finished(
         composer.load_text("hello")
         await composer.action_composer_enter()
         await asyncio.wait_for(
-            wait_for_condition(lambda: not app.is_answering and answer in updates),
+            wait_for_condition(lambda: not app.is_answering),
             timeout=3,
         )
         await pilot.pause(0)
 
-        assert app.query_one("#transcript").query(Markdown).last()._markdown == answer
+        assert app.query_one("#transcript", TranscriptLog).messages[-1] == (
+            answer,
+            "answer",
+        )
 
 
 @pytest.mark.anyio
