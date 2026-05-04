@@ -7,7 +7,12 @@ from textual import events
 
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
-from faltoobot.faltoochat.app import AttachmentCheckbox, Composer, FaltooChatApp
+from faltoobot.faltoochat.app import (
+    AttachmentCheckbox,
+    ChatShell,
+    Composer,
+    FaltooChatApp,
+)
 from faltoobot.session_utils import (
     decompose_local_message_item,
     get_local_user_message_item,
@@ -581,6 +586,7 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
         transcript = app.query_one("#transcript")
+        chat_shell = app.query_one("#chat-shell", ChatShell)
         composer = app.query_one("#composer", Composer)
         await transcript.remove_children()
         await transcript.mount(
@@ -610,8 +616,8 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
 
         monkeypatch.setattr(transcript, "scroll_to", scroll_to)
 
-        composer.action_transcript_previous_message()
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [
             transcript.children[25].virtual_region.y,
@@ -625,7 +631,7 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
         await pilot.pause(0)
         jumps.clear()
 
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [transcript.children[22].virtual_region.y]
 
@@ -633,9 +639,16 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
         await pilot.pause(0)
         jumps.clear()
 
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [transcript.children[25].virtual_region.y]
+
+        transcript.focus()
+        await pilot.pause(0)
+        jumps.clear()
+        await pilot.press("alt+up")
+
+        assert jumps == [transcript.children[24].virtual_region.y]
 
 
 @pytest.mark.anyio
@@ -648,7 +661,7 @@ async def test_composer_alt_up_skips_visible_clamped_last_message(
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
         transcript = app.query_one("#transcript")
-        composer = app.query_one("#composer", Composer)
+        chat_shell = app.query_one("#chat-shell", ChatShell)
         await transcript.remove_children()
         await transcript.mount(
             *(Markdown(f"filler before {index}\n\nmore") for index in range(30)),
@@ -676,7 +689,7 @@ async def test_composer_alt_up_skips_visible_clamped_last_message(
 
         monkeypatch.setattr(transcript, "scroll_to", scroll_to)
 
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [older_answer_y]
         assert jumps != [latest_answer_y]
