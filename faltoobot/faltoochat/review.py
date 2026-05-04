@@ -53,10 +53,6 @@ LANGUAGES_BY_SUFFIX = {
 NO_CHANGES_PANE_ID = "no-changes"
 
 
-def _syntax_highlight_theme(app_theme: str) -> str:
-    return "github_light" if "light" in app_theme else "vscode_dark"
-
-
 def _get_tab_id(path: Path) -> str:
     # comment: file paths can contain characters that are awkward in Textual ids, so hash them
     # into a short stable tab id that still maps one-to-one with the file path.
@@ -163,7 +159,6 @@ class ReviewView(TabPane):
                     file_path=path,
                     review_view=self,
                     language=LANGUAGES_BY_SUFFIX.get(path.suffix.lower()),
-                    theme=_syntax_highlight_theme(self.app.theme),
                     soft_wrap=self.soft_wrap_enabled,
                     line_highlights=self.line_highlights,
                     read_only=True,

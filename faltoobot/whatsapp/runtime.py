@@ -370,6 +370,13 @@ async def _handle_slash_command(
     elif prompt == "/reset":
         reset_session = get_session(chat_key=session.chat_key, session_id=str(uuid4()))
         reset_messages_json = get_messages(reset_session)
+        old_agents = Path(messages_json["workspace"]) / "AGENTS.md"
+        new_agents = Path(reset_messages_json["workspace"]) / "AGENTS.md"
+        if old_agents.is_file():
+            # comment: /reset creates a fresh workspace, but long-term chat memory should survive.
+            new_agents.write_text(
+                old_agents.read_text(encoding="utf-8"), encoding="utf-8"
+            )
         reset_messages_json["message_ids"] = list(messages_json["message_ids"])
         set_messages(reset_session, reset_messages_json)
         await client.reply_message("Memory cleared for this chat.", event)
