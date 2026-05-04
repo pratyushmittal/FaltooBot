@@ -148,3 +148,56 @@ def test_open_url_in_existing_cdp_encodes_full_url(monkeypatch) -> None:
     assert seen == [
         f"{browser.cdp_url()}/json/new?https%3A%2F%2Fexample.com%2Fa%20b%3Fx%3D1%23part"
     ]
+
+
+def test_connect_existing_browser_context_uses_bounded_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    class FakeBrowser:
+        contexts = ["ctx"]
+
+    class FakeChromium:
+        def connect_over_cdp(self, url: str, timeout: int):
+            calls.append((url, timeout))
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    monkeypatch.setattr(browser, "_cdp_is_running", lambda: True)
+    monkeypatch.setattr(browser, "_cdp_profile_matches", lambda profile: True)
+
+    connected, context = browser.connect_existing_browser_context(
+        FakePlaywright(), root=tmp_path, timeout_ms=1234
+    )
+
+    assert isinstance(connected, FakeBrowser)
+    assert context == "ctx"
+    assert calls == [(browser.cdp_url(), 1234)]
+
+
+def test_connect_existing_browser_context_rejects_wrong_profile(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(browser, "_cdp_is_running", lambda: True)
+    monkeypatch.setattr(browser, "_cdp_profile_matches", lambda profile: False)
+    monkeypatch.setattr(
+        browser,
+        "_running_cdp_commands",
+        lambda: ["/tmp/chrome --remote-debugging-port=9222 --user-data-dir=/tmp/other"],
+    )
+
+    class FakePlaywright:
+        chromium = object()
+
+    try:
+        browser.connect_existing_browser_context(FakePlaywright(), root=tmp_path)
+    except RuntimeError as exc:
+        message = str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected RuntimeError")
+
+    assert "does not appear to be using the FaltooBot profile" in message
+    assert str(browser.browser_profile_dir(tmp_path)) in message

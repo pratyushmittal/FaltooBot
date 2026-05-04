@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import sync_playwright
 
 CDP_PORT = 9222
+CDP_CONNECT_TIMEOUT_MS = 15_000
 PROFILE_DIR_NAME = "faltoobot"
 
 
@@ -90,6 +91,39 @@ def _open_url_in_existing_cdp(url: str) -> None:
         # Opening a new tab is a convenience only; the persistent browser is still
         # reusable even if this endpoint is unavailable on a Chromium build.
         return
+
+
+def connect_existing_browser_context(
+    playwright, *, root: Path, timeout_ms: int = CDP_CONNECT_TIMEOUT_MS
+):
+    """Connect to FaltooBot's shared CDP browser and return its first context.
+
+    Background jobs use this instead of calling Playwright's default
+    connect_over_cdp directly because the default timeout can be several
+    minutes when Chrome's CDP socket is half-alive. A bounded timeout lets
+    cron jobs fail fast and surface a clear health-check error.
+    """
+    profile_dir = browser_profile_dir(root)
+    if not _cdp_is_running():
+        raise RuntimeError(
+            f"FaltooBot browser is not running on {cdp_url()}. Run `faltoobot browser`."
+        )
+    if not _cdp_profile_matches(profile_dir):
+        commands = "\n".join(_running_cdp_commands()) or "(unable to inspect process)"
+        raise RuntimeError(
+            "A browser is listening on FaltooBot's CDP port, but it does not "
+            "appear to be using the FaltooBot profile. "
+            f"Expected profile: {profile_dir}\nDetected CDP process(es):\n{commands}"
+        )
+
+    try:
+        browser = playwright.chromium.connect_over_cdp(cdp_url(), timeout=timeout_ms)
+    except TypeError:
+        # Backward compatibility for older Playwright versions.
+        browser = playwright.chromium.connect_over_cdp(cdp_url())
+    if not browser.contexts:
+        raise RuntimeError("Connected browser has no reusable login context")
+    return browser, browser.contexts[0]
 
 
 def playwright_chromium_binary() -> str:
