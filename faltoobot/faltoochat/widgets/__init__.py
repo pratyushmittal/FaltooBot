@@ -8,6 +8,7 @@ from .session_picker import SessionPicker
 from .slash_commands import SlashCommandsOptionList
 from .text_input_modal import TextInputModal
 from .telescope import Telescope
+from .transcript import TranscriptLog
 
 __all__ = [
     "BindingsErrorModal",
@@ -21,4 +22,5 @@ __all__ = [
     "SlashCommandsOptionList",
     "TextInputModal",
     "Telescope",
+    "TranscriptLog",
 ]

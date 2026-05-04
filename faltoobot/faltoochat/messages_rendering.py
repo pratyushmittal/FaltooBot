@@ -210,7 +210,12 @@ def get_item_text(item: MessageItem) -> tuple[str, str] | None:
     match item:
         case {"type": "message", "role": "user", "content": content}:
             text = _get_text(content)
-            return (text, "user") if text else None
+            classes = (
+                "user review-comments"
+                if text.startswith("# Comments in code review")
+                else "user"
+            )
+            return (text, classes) if text else None
         case {"type": "message", "content": content}:
             text = _get_text(content)
             return (text, "answer") if text else None

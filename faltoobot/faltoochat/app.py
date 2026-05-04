@@ -10,17 +10,8 @@ from rich.markup import escape
 from textual import events, getters
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.containers import Center, Vertical, VerticalScroll
-from textual.widget import Widget
-from textual.widgets import (
-    Footer,
-    Markdown,
-    Checkbox,
-    Static,
-    TabbedContent,
-    TabPane,
-    TextArea,
-)
+from textual.containers import Center, Vertical
+from textual.widgets import Checkbox, Footer, Static, TabbedContent, TabPane, TextArea
 
 from faltoobot import notify_queue, sessions
 from faltoobot.config import load_textual_theme, save_textual_theme
@@ -34,7 +25,6 @@ from faltoobot.session_utils import (
 )
 
 from .messages_rendering import (
-    SHELL_COMMAND_SEPARATOR,
     get_item_text,
     visible_thinking_text,
 )
@@ -49,43 +39,11 @@ from .widgets import (
     ReviewDiffView,
     SearchFile,
     SlashCommandsOptionList,
+    TranscriptLog,
 )
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
-
-
-def _render_blocks(text: str, classes: str) -> list[Markdown]:
-    if classes != "tool" or SHELL_COMMAND_SEPARATOR not in text:
-        return [Markdown(text, classes=classes)]
-    summary, command = text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)
-    blocks = [Markdown(summary, classes="tool tool-summary")]
-    if command.strip():
-        blocks.append(Markdown(command.strip(), classes="tool tool-command"))
-    return blocks
-
-
-async def _stop_answer_stream(answer_stream: Any | None) -> None:
-    if answer_stream is not None:
-        await answer_stream.stop()
-
-
-async def _write_stream_chunk(
-    block: Markdown,
-    classes: str,
-    text: str,
-    block_raw_text: str,
-    answer_stream: Any | None,
-) -> str:
-    if classes == "thinking":
-        block_raw_text += text
-        await block.update(visible_thinking_text(block_raw_text))
-        return block_raw_text
-    if classes == "answer" and answer_stream is not None:
-        await answer_stream.write(text)
-        return block_raw_text
-    await block.append(text)
-    return block_raw_text
 
 
 class FaltooChatApp(App[None]):
@@ -149,14 +107,10 @@ class FaltooChatApp(App[None]):
     #transcript {
         width: 1fr;
         height: 1fr;
-        align-horizontal: center;
         overflow-y: auto;
         padding: 1 2 0 2;
-        border: round transparent;
-    }
-
-    #transcript:focus {
-        border: round $primary;
+        background: transparent;
+        border: none;
     }
 
     #footer {
@@ -208,75 +162,6 @@ class FaltooChatApp(App[None]):
         color: $text;
     }
 
-    Markdown {
-        width: 1fr;
-        max-width: 80;
-        margin: 0 0 1 0;
-        padding: 0 1;
-        border-left: wide $panel;
-        color: $text;
-    }
-
-    .history-summary {
-        width: 1fr;
-        max-width: 80;
-        margin: 0 0 1 0;
-        padding: 0 1;
-        color: $text-muted;
-    }
-
-    /* Textual adds bottom margin to every paragraph. Remove it for the last
-       paragraph so message blocks keep their external gap without looking taller
-       than the content inside them. */
-    Markdown > MarkdownParagraph:last-child {
-        margin: 0;
-    }
-
-    .user {
-        background: $primary 15%;
-        border-left: wide $primary;
-        color: $text;
-    }
-
-    .thinking {
-        border-left: none;
-        color: $text-muted;
-    }
-
-    .tool {
-        background: $warning 8%;
-        border-left: none;
-        color: $text-muted;
-    }
-
-    .tool-summary {
-        background: $warning 32%;
-        color: $text;
-        margin: 0 0 0 0;
-        padding: 0 1;
-    }
-
-    .tool-command {
-        max-height: 4;
-        overflow-y: hidden;
-        margin: 0 0 1 0;
-        padding: 1 2 0 2;
-    }
-
-    .answer {
-        border-left: none;
-        color: $text;
-    }
-
-    .unknown {
-        width: 1fr;
-        max-width: 80;
-        margin: 0 0 1 0;
-        padding: 0 1;
-        background: $error 12%;
-        border-left: wide $error;
-        color: $text;
-    }
     """
 
     def __init__(
@@ -335,8 +220,6 @@ class FaltooChatApp(App[None]):
     def action_show_chat_tab(self) -> None:
         self.refresh_composer_title()
         self.tabs().active = "chat-tab"
-        transcript = self.query_one("#transcript", VerticalScroll)
-        self.call_after_refresh(transcript.scroll_end, animate=False)
         if self.screen.is_modal:
             # comment: focus inside the active modal instead of closing it.
             return
@@ -375,7 +258,7 @@ class FaltooChatApp(App[None]):
             with TabbedContent(initial="chat-tab", id="tabs"):
                 with TabPane("Chat", id="chat-tab"):
                     with Vertical(id="chat-shell"):
-                        yield VerticalScroll(id="transcript")
+                        yield TranscriptLog(id="transcript")
                         with Center():
                             with Vertical(id="footer"):
                                 yield QueueWidget()
@@ -436,7 +319,7 @@ class FaltooChatApp(App[None]):
             await self.queue().add_to_queue(message_item)
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.query_one("#transcript", TranscriptLog)
         try:
             stored = await self._add_user_turn(transcript, message_item)
         except asyncio.CancelledError:
@@ -458,108 +341,115 @@ class FaltooChatApp(App[None]):
 
     async def load_recent_messages(self) -> None:
         await self.load_messages(recent_limit=STARTUP_MESSAGES_LIMIT)
+        self.query_one("#transcript", TranscriptLog).scroll_end(
+            animate=False,
+            immediate=False,
+            x_axis=False,
+        )
+
+    async def load_more_messages(self) -> None:
+        transcript = self.query_one("#transcript", TranscriptLog)
+        loaded = len(
+            [item for item in transcript.messages if item[1] != "history-summary"]
+        )
+        await self.load_messages(
+            recent_limit=loaded + STARTUP_MESSAGES_LIMIT,
+            preserve_scroll=True,
+        )
 
     async def load_messages(
         self,
         *,
         recent_limit: int | None = None,
+        preserve_scroll: bool = False,
     ) -> None:
         messages_json = sessions.get_messages(self.session)
-        transcript = self.query_one("#transcript", VerticalScroll)
-        blocks = []
         messages = messages_json["messages"]
+        transcript = self.query_one("#transcript", TranscriptLog)
+        scroll_y = transcript.scroll_y if preserve_scroll else None
+        transcript.clear_messages()
         if recent_limit is not None and len(messages) > recent_limit:
-            blocks.append(
-                Static(
-                    f"Showing last {recent_limit} of {len(messages)} messages. [@click=app.load_all_messages()]load all[/]",
-                    classes="history-summary",
-                )
+            transcript.write_message(
+                f"Showing last {recent_limit} of {len(messages)} messages. "
+                "[@click=app.load_more_messages()]load previous[/] · "
+                "[@click=app.load_all_messages()]load all[/]",
+                "history-summary",
+                scroll_end=False,
             )
             messages = messages[-recent_limit:]
         for message in messages:
             if rendering := get_item_text(message):
-                text, classes = rendering
-                blocks.extend(_render_blocks(text, classes))
-        if not blocks:
-            blocks = [
-                Markdown(
-                    "_No messages yet. The void is waiting._",
-                    classes="thinking",
-                )
-            ]
-        await transcript.remove_children()
-        await transcript.mount(*blocks)
-        self.call_after_refresh(
-            transcript.scroll_end,
-            animate=False,
-            immediate=True,
-        )
-
+                transcript.write_entry(*rendering, scroll_end=False)
+        if not transcript.messages:
+            transcript.write_message(
+                "_No messages yet. The void is waiting._",
+                "thinking",
+                scroll_end=False,
+            )
+        if scroll_y is not None:
+            self.call_later(
+                transcript.scroll_to,
+                y=scroll_y,
+                animate=False,
+                immediate=True,
+            )
         composer = self.query_one("#composer", Composer)
         composer.focus()
 
+    async def action_load_more_messages(self) -> None:
+        await self.load_more_messages()
+
     async def action_load_all_messages(self) -> None:
-        await self.load_messages()
+        await self.load_messages(preserve_scroll=True)
 
     async def show_local_answer(self, text: str) -> None:
-        transcript = self.query_one("#transcript", VerticalScroll)
-        await transcript.mount(Markdown(text, classes="answer"))
-        transcript.anchor()
+        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript.write_message(text, "answer")
+        transcript.scroll_end(animate=False, immediate=True)
 
-    async def _stream_events(self, transcript: VerticalScroll) -> None:
-        block: Markdown | None = None
-        answer_stream: Any | None = None
+    async def _stream_events(self, transcript: TranscriptLog) -> None:
         raw_text = ""
-        transcript.anchor()
+        current_classes = ""
+        active_blocks = 0
+        transcript.scroll_end(animate=False, immediate=True)
 
         async for event in sessions.get_answer_streaming(self.session):
             is_new, classes, text = get_event_text(event)
+            if is_new:
+                raw_text = ""
+                current_classes = classes
+                active_blocks = 0
             if not text:
-                if is_new:
-                    await _stop_answer_stream(answer_stream)
-                    answer_stream, block, raw_text = None, None, ""
                 continue
 
             follow = (
                 transcript.max_scroll_y - transcript.scroll_y
                 <= AUTO_SCROLL_RESUME_LINES
             )
-
-            if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
-                await _stop_answer_stream(answer_stream)
-                answer_stream, block, raw_text = None, None, ""
-                await transcript.mount(*_render_blocks(text, classes))
-                if follow:
-                    transcript.anchor()
-                continue
-
-            if block is None or is_new:
-                await _stop_answer_stream(answer_stream)
-                answer_stream, raw_text = None, ""
-                block = Markdown("", classes=classes)
-                await transcript.mount(block)
-                if classes == "answer":
-                    answer_stream = Markdown.get_stream(block)
-
-            raw_text = await _write_stream_chunk(
-                block,
-                classes,
-                text,
-                raw_text,
-                answer_stream,
+            current_classes = current_classes or classes
+            raw_text += text
+            rendered_text = (
+                visible_thinking_text(raw_text)
+                if current_classes == "thinking"
+                else raw_text
+            )
+            for _ in range(active_blocks):
+                transcript.pop_message()
+            active_blocks = transcript.write_entry(
+                rendered_text,
+                current_classes,
+                scroll_end=False,
             )
             if follow:
-                transcript.anchor()
-
-        await _stop_answer_stream(answer_stream)
+                transcript.scroll_end(animate=False, immediate=True)
 
     async def _add_user_turn(
         self,
-        transcript: VerticalScroll,
+        transcript: TranscriptLog,
         message_item: MessageItem,
     ) -> bool:
-        preview_text, preview_classes = get_item_text(message_item)  # type: ignore
-        await transcript.mount(*_render_blocks(preview_text, preview_classes))
+        if rendering := get_item_text(message_item):
+            transcript.write_entry(*rendering)
         self.call_after_refresh(
             transcript.scroll_end,
             animate=False,
@@ -572,7 +462,7 @@ class FaltooChatApp(App[None]):
             attachments=attachments,
         )
 
-    async def _start_streaming(self, transcript: VerticalScroll) -> None:
+    async def _start_streaming(self, transcript: TranscriptLog) -> None:
         completed = False
         composer = self.query_one("#composer", Composer)
         composer.border_subtitle = "answering"
@@ -602,9 +492,9 @@ class FaltooChatApp(App[None]):
         # comment: add/store failures are not retryable because no assistant turn was started.
         if retry:
             content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
-        transcript = self.query_one("#transcript", VerticalScroll)
-        await transcript.mount(Static(content, classes="unknown"))
-        transcript.anchor()
+        transcript = self.query_one("#transcript", TranscriptLog)
+        transcript.write_message(content, "unknown")
+        transcript.scroll_end(animate=False, immediate=True)
 
     async def action_retry_failed_message(self) -> None:
         if self.is_answering:
@@ -615,7 +505,7 @@ class FaltooChatApp(App[None]):
             )
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.query_one("#transcript", TranscriptLog)
         self.run_worker(self._start_streaming(transcript), exclusive=True)
 
 
@@ -763,26 +653,26 @@ class Composer(TextArea):
 
     def _selected_transcript_message_y(
         self,
-        transcript: VerticalScroll,
-        messages: list[Widget],
+        transcript: TranscriptLog,
+        messages: list[tuple[int, int]],
     ) -> int | float | None:
         """Return selected message y if current scroll still matches it."""
-        for message in messages:
-            if id(message) != self._selected_transcript_message_id:
+        for index, start_y in messages:
+            if index != self._selected_transcript_message_id:
                 continue
-            selected_scroll_y = min(message.virtual_region.y, transcript.max_scroll_y)
+            selected_scroll_y = min(start_y, transcript.max_scroll_y)
             if transcript.scroll_y == selected_scroll_y:
                 # comment: use the real message top when Textual had to clamp the scroll.
-                return message.virtual_region.y
+                return start_y
             break
         return None
 
     def _scroll_transcript_message(self, delta: int) -> None:
-        transcript = self.app.query_one("#transcript", VerticalScroll)
+        transcript = self.app.query_one("#transcript", TranscriptLog)
         messages = [
-            message
-            for message in transcript.children
-            if message.has_class("user") or message.has_class("answer")
+            (index, start)
+            for index, (classes, start, _end) in enumerate(transcript.message_ranges)
+            if "user" in classes.split() or "answer" in classes.split()
         ]
         if not messages:
             return
@@ -792,24 +682,16 @@ class Composer(TextArea):
             current_y = transcript.scroll_y
         if delta < 0:
             target = next(
-                (
-                    message
-                    for message in reversed(messages)
-                    if message.virtual_region.y < current_y
-                ),
+                ((index, y) for index, y in reversed(messages) if y < current_y),
                 messages[0],
             )
         else:
             target = next(
-                (
-                    message
-                    for message in messages
-                    if message.virtual_region.y > current_y
-                ),
+                ((index, y) for index, y in messages if y > current_y),
                 messages[-1],
             )
-        self._selected_transcript_message_id = id(target)
-        transcript.scroll_to(y=target.virtual_region.y, animate=False, immediate=True)
+        self._selected_transcript_message_id = target[0]
+        transcript.scroll_to(y=target[1], animate=False, immediate=True)
 
     def action_transcript_previous_message(self) -> None:
         self._scroll_transcript_message(-1)

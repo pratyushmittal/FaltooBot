@@ -4,6 +4,8 @@ from typing import Any, cast
 
 import pytest
 from textual import events
+from textual.geometry import Offset
+from textual.selection import Selection
 
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
@@ -18,9 +20,10 @@ from faltoobot.faltoochat.widgets import (
     SessionPicker,
     SlashCommandsOptionList,
     TextInputModal,
+    TranscriptLog,
 )
 from faltoobot.faltoochat.widgets.search_file import SearchFile
-from textual.widgets import Input, Markdown, OptionList, Static, TabbedContent
+from textual.widgets import Input, OptionList, TabbedContent
 
 
 def _listed_name(session: sessions.Session, name: str) -> str:
@@ -198,10 +201,10 @@ async def test_minchat_name_command_opens_modal_and_saves_session_name(
                 "name": _listed_name(app.session, "Fix flaky tests"),
             }
         ]
-        transcript = app.query_one("#transcript")
+        transcript = app.query_one("#transcript", TranscriptLog)
         assert any(
-            "Saved session name: Fix flaky tests" in block._markdown
-            for block in transcript.query(Markdown)
+            "Saved session name: Fix flaky tests" in text
+            for text, _classes in transcript.messages
         )
 
 
@@ -294,12 +297,10 @@ async def test_minchat_resume_command_opens_picker_and_switches_session(
         await pilot.press("enter")
         await wait_for_condition(lambda: app.session.session_id == target.session_id)
 
-        transcript = app.query_one("#transcript")
+        transcript = app.query_one("#transcript", TranscriptLog)
         assert app.session.session_id == target.session_id
         assert transcript.loading is False
-        assert [block._markdown for block in transcript.query(Markdown)] == [
-            "resume target"
-        ]
+        assert [text for text, _classes in transcript.messages] == ["resume target"]
 
 
 @pytest.mark.anyio
@@ -483,20 +484,17 @@ async def test_minchat_status_command_shows_config_status_and_last_usage(
         await composer.action_composer_enter()
         await pilot.pause(0)
 
-        transcript = app.query_one("#transcript")
-        blocks = [block for block in transcript.query(Markdown)]
-        assert any("Faltoobot status" in block._markdown for block in blocks)
-        assert any("openai_model" in block._markdown for block in blocks)
-        assert any("Session" in block._markdown for block in blocks)
+        transcript = app.query_one("#transcript", TranscriptLog)
+        blocks = [text for text, _classes in transcript.messages]
+        assert any("Faltoobot status" in block for block in blocks)
+        assert any("openai_model" in block for block in blocks)
+        assert any("Session" in block for block in blocks)
         assert any(
-            f'session_id="{app.session.session_id}"' in block._markdown
-            for block in blocks
+            f'session_id="{app.session.session_id}"' in block for block in blocks
         )
-        assert any(
-            f'workspace="{app.workspace}"' in block._markdown for block in blocks
-        )
-        assert any("Session usage" in block._markdown for block in blocks)
-        assert any('"total_tokens": 5' in block._markdown for block in blocks)
+        assert any(f'workspace="{app.workspace}"' in block for block in blocks)
+        assert any("Session usage" in block for block in blocks)
+        assert any('"total_tokens": 5' in block for block in blocks)
 
 
 @pytest.mark.anyio
@@ -580,19 +578,19 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
-        transcript = app.query_one("#transcript")
+        transcript = app.query_one("#transcript", TranscriptLog)
         composer = app.query_one("#composer", Composer)
-        await transcript.remove_children()
-        await transcript.mount(
-            *(Markdown(f"filler before {index}\n\nmore") for index in range(20)),
-            Markdown("first user\n\nmore", classes="user"),
-            Markdown("tool output\n\nmore", classes="tool"),
-            Markdown("first answer\n\nmore", classes="answer"),
-            Markdown("another tool\n\nmore", classes="tool"),
-            Markdown("second user\n\nmore", classes="user"),
-            Markdown("second answer\n\nmore", classes="answer"),
-            *(Markdown(f"filler after {index}\n\nmore") for index in range(20)),
-        )
+        transcript.clear_messages()
+        for index in range(20):
+            transcript.write_message(f"filler before {index}\n\nmore", "")
+        transcript.write_message("first user\n\nmore", "user")
+        transcript.write_message("tool output\n\nmore", "tool")
+        transcript.write_message("first answer\n\nmore", "answer")
+        transcript.write_message("another tool\n\nmore", "tool")
+        transcript.write_message("second user\n\nmore", "user")
+        transcript.write_message("second answer\n\nmore", "answer")
+        for index in range(20):
+            transcript.write_message(f"filler after {index}\n\nmore", "")
         await pilot.pause(0)
         composer.focus()
         transcript.scroll_end(animate=False, immediate=True)
@@ -614,20 +612,20 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
         composer.action_transcript_previous_message()
 
         assert jumps == [
-            transcript.children[25].virtual_region.y,
-            transcript.children[24].virtual_region.y,
+            transcript.message_ranges[25][1],
+            transcript.message_ranges[24][1],
         ]
 
         jumps.clear()
         transcript.scroll_to(
-            y=transcript.children[23].virtual_region.y, animate=False, immediate=True
+            y=transcript.message_ranges[23][1], animate=False, immediate=True
         )
         await pilot.pause(0)
         jumps.clear()
 
         composer.action_transcript_previous_message()
 
-        assert jumps == [transcript.children[22].virtual_region.y]
+        assert jumps == [transcript.message_ranges[22][1]]
 
         transcript.scroll_end(animate=False, immediate=True)
         await pilot.pause(0)
@@ -635,7 +633,7 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
 
         composer.action_transcript_previous_message()
 
-        assert jumps == [transcript.children[25].virtual_region.y]
+        assert jumps == [transcript.message_ranges[25][1]]
 
 
 @pytest.mark.anyio
@@ -647,21 +645,21 @@ async def test_composer_alt_up_skips_visible_clamped_last_message(
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
-        transcript = app.query_one("#transcript")
+        transcript = app.query_one("#transcript", TranscriptLog)
         composer = app.query_one("#composer", Composer)
-        await transcript.remove_children()
-        await transcript.mount(
-            *(Markdown(f"filler before {index}\n\nmore") for index in range(30)),
-            Markdown("older answer\n\nmore", classes="answer"),
-            *(Markdown(f"filler middle {index}\n\nmore") for index in range(10)),
-            Markdown("latest short answer", classes="answer"),
-        )
+        transcript.clear_messages()
+        for index in range(30):
+            transcript.write_message(f"filler before {index}\n\nmore", "")
+        transcript.write_message("older answer\n\nmore", "answer")
+        for index in range(10):
+            transcript.write_message(f"filler middle {index}\n\nmore", "")
+        transcript.write_message("latest short answer", "answer")
         await pilot.pause(0)
         transcript.scroll_end(animate=False, immediate=True)
         await pilot.pause(0)
 
-        older_answer_y = transcript.children[30].virtual_region.y
-        latest_answer_y = transcript.children[-1].virtual_region.y
+        older_answer_y = transcript.message_ranges[30][1]
+        latest_answer_y = transcript.message_ranges[-1][1]
         assert latest_answer_y > transcript.max_scroll_y
 
         original_scroll_to = transcript.scroll_to
@@ -683,7 +681,7 @@ async def test_composer_alt_up_skips_visible_clamped_last_message(
 
 
 @pytest.mark.anyio
-async def test_minchat_returning_to_chat_scrolls_transcript_to_bottom(
+async def test_minchat_returning_to_chat_preserves_transcript_scroll(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -691,10 +689,9 @@ async def test_minchat_returning_to_chat_scrolls_transcript_to_bottom(
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
-        transcript = app.query_one("#transcript")
-        await transcript.mount(
-            *(Markdown(f"line {index}\n\nmore") for index in range(40))
-        )
+        transcript = app.query_one("#transcript", TranscriptLog)
+        for index in range(40):
+            transcript.write_message(f"line {index}\n\nmore", "answer")
         await pilot.pause(0)
         transcript.scroll_home(animate=False)
         await pilot.pause(0)
@@ -703,9 +700,87 @@ async def test_minchat_returning_to_chat_scrolls_transcript_to_bottom(
         await pilot.press("ctrl+2")
         await pilot.pause(0)
         await pilot.press("ctrl+1")
-        await wait_for_condition(lambda: transcript.scroll_y == transcript.max_scroll_y)
+        await pilot.pause(0)
 
+        assert transcript.scroll_y == 0
         assert app.query_one(TabbedContent).active == "chat-tab"
+
+
+@pytest.mark.anyio
+async def test_minchat_tool_command_blocks_are_truncated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+        transcript.clear_messages()
+        transcript.write_message(
+            "\n".join(f"line {index}" for index in range(6)),
+            "tool tool-command",
+        )
+        await pilot.pause(0)
+
+        rendered_tool_lines = 3
+        block_margin = 1
+        _classes, start, end = transcript.message_ranges[-1]
+        assert end - start == rendered_tool_lines + block_margin
+
+
+@pytest.mark.anyio
+async def test_transcript_double_click_selects_streamed_answer_markdown_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    release = asyncio.Event()
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        await release.wait()
+        yield type(
+            "Event",
+            (),
+            {
+                "type": "response.output_text.delta",
+                "delta": "# Heading\nparagraph",
+            },
+        )()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: app.is_answering)
+        app.screen.selections[transcript] = Selection(Offset(0, 0), Offset(15, 0))
+        release.set()
+        await wait_for_condition(lambda: not app.is_answering)
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript", TranscriptLog)
+        assert app.screen.get_selected_text() is None
+        answer_ranges = [
+            item for item in transcript.selection_ranges if item[0] == "answer"
+        ][-2:]
+        expected_blocks = 2
+        assert len(answer_ranges) == expected_blocks
+
+        content_y = transcript.content_region.y - transcript.region.y
+        second_y = content_y + answer_ranges[1][1] - int(transcript.scroll_y)
+        await pilot.click(transcript, offset=(40, second_y), times=2)
+        await pilot.pause(0)
+
+        assert app.screen.get_selected_text() == "paragraph"
 
 
 @pytest.mark.anyio
@@ -828,13 +903,35 @@ async def test_minchat_submits_composer_attachments(
 
 
 @pytest.mark.anyio
-async def test_minchat_load_all_button_loads_full_history(
+async def test_minchat_startup_loads_recent_messages_at_bottom(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
-    total_messages = 101
-    startup_messages = 100
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": f"prompt {index}"}
+        for index in range(250)
+    ]
+    sessions.set_messages(app.session, messages_json)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+
+        assert transcript.scroll_y == transcript.max_scroll_y
+
+
+@pytest.mark.anyio
+async def test_minchat_load_more_button_loads_next_history_page(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    total_messages = 250
+    next_page_messages = 200
+    restored_scroll_y = 7
     messages_json = sessions.get_messages(app.session)
     messages_json["messages"] = [
         {"type": "message", "role": "user", "content": f"prompt {index}"}
@@ -844,12 +941,54 @@ async def test_minchat_load_all_button_loads_full_history(
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
-        transcript = app.query_one("#transcript")
-        assert len(transcript.query(Markdown)) == startup_messages
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+
+        transcript.scroll_to(y=restored_scroll_y, animate=False, immediate=True)
+        await pilot.pause(0)
+
+        await app.action_load_more_messages()
+        await pilot.pause(0)
+
+        assert transcript.scroll_y == restored_scroll_y
+        loaded = [item for item in transcript.messages if item[1] != "history-summary"]
+        assert len(loaded) == next_page_messages
+        assert loaded[0][0] == "prompt 50"
+        assert "load previous" in transcript.messages[0][0]
+
+
+@pytest.mark.anyio
+async def test_minchat_load_all_button_loads_full_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    total_messages = 101
+    startup_messages = 100
+    restored_scroll_y = 7
+    messages_json = sessions.get_messages(app.session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": f"prompt {index}"}
+        for index in range(total_messages)
+    ]
+    sessions.set_messages(app.session, messages_json)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        await pilot.pause(0)
+        transcript = app.query_one("#transcript", TranscriptLog)
+        assert (
+            len([item for item in transcript.messages if item[1] != "history-summary"])
+            == startup_messages
+        )
+
+        transcript.scroll_to(y=restored_scroll_y, animate=False, immediate=True)
+        await pilot.pause(0)
 
         await app.action_load_all_messages()
         await pilot.pause(0)
-        assert len(transcript.query(Markdown)) == total_messages
+        assert transcript.scroll_y == restored_scroll_y
+        assert len(transcript.messages) == total_messages
 
 
 @pytest.mark.anyio
@@ -1019,18 +1158,20 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
         await wait_for_condition(
             lambda: (
                 not app.is_answering
-                and len(app.query_one("#transcript").children) >= expected_blocks
+                and len(app.query_one("#transcript", TranscriptLog).messages)
+                >= expected_blocks
             )
         )
         await pilot.pause(0)
-        transcript = app.query_one("#transcript")
-        blocks = [block for block in transcript.query(Markdown)]
-        thinking = [block for block in blocks if block.has_class("thinking")]
-        answer = [block for block in blocks if block.has_class("answer")]
+        transcript = app.query_one("#transcript", TranscriptLog)
+        thinking = [
+            text for text, classes in transcript.messages if classes == "thinking"
+        ]
+        answer = [text for text, classes in transcript.messages if classes == "answer"]
         assert thinking
         assert answer
-        assert "Final answer" not in thinking[-1]._markdown
-        assert answer[-1]._markdown == "Final answer"
+        assert "Final answer" not in thinking[-1]
+        assert answer[-1] == "Final answer"
 
 
 @pytest.mark.anyio
@@ -1099,28 +1240,31 @@ async def test_minchat_shows_retry_when_answer_fails(
             lambda: (
                 not app.is_answering
                 and any(
-                    "server [overloaded]" in cast(Any, block.render()).plain
-                    for block in app.query_one("#transcript")
-                    .query(Static)
-                    .filter(".unknown")
+                    "server \\[overloaded]" in text and "unknown" in classes
+                    for text, classes in app.query_one(
+                        "#transcript", TranscriptLog
+                    ).messages
                 )
             )
         )
-        error_block = next(
-            iter(app.query_one("#transcript").query(Static).filter(".unknown"))
+        transcript = app.query_one("#transcript", TranscriptLog)
+        _classes, start, end = transcript.message_ranges[-1]
+        assert any(
+            segment.style is not None
+            and segment.style.meta.get("@click") == ("app.retry_failed_message", ())
+            for line_index in range(start, end)
+            for segment in transcript.render_line(line_index)
         )
-        assert str(error_block.styles.max_width) == "80"
-        assert error_block.styles.padding.left == 1
-        assert error_block.styles.margin.bottom == 1
-        assert "\\[overloaded]" in cast(str, error_block.content)
 
         await app.action_retry_failed_message()
         await wait_for_condition(
             lambda: (
                 not app.is_answering
                 and any(
-                    block._markdown == "Recovered"
-                    for block in app.query_one("#transcript").query(Markdown)
+                    text == "Recovered"
+                    for text, _classes in app.query_one(
+                        "#transcript", TranscriptLog
+                    ).messages
                 )
             )
         )
