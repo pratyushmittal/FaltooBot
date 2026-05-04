@@ -65,9 +65,17 @@ def _render_blocks(text: str, classes: str) -> list[Markdown]:
     return blocks
 
 
-async def _stop_answer_stream(answer_stream: Any | None) -> None:
-    if answer_stream is not None:
-        await answer_stream.stop()
+async def _stop_answer_stream(
+    answer_stream: Any | None,
+    block: Markdown | None = None,
+    block_raw_text: str = "",
+) -> None:
+    if answer_stream is None:
+        return
+    await answer_stream.stop()
+    if block is not None and block_raw_text:
+        # comment: Re-parse the finished markdown so streamed code fences do not stay stale until restart.
+        await block.update(block_raw_text)
 
 
 async def _write_stream_chunk(
@@ -82,6 +90,7 @@ async def _write_stream_chunk(
         await block.update(visible_thinking_text(block_raw_text))
         return block_raw_text
     if classes == "answer" and answer_stream is not None:
+        block_raw_text += text
         await answer_stream.write(text)
         return block_raw_text
     await block.append(text)
@@ -512,7 +521,7 @@ class FaltooChatApp(App[None]):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
-                    await _stop_answer_stream(answer_stream)
+                    await _stop_answer_stream(answer_stream, block, raw_text)
                     answer_stream, block, raw_text = None, None, ""
                 continue
 
@@ -522,7 +531,7 @@ class FaltooChatApp(App[None]):
             )
 
             if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
-                await _stop_answer_stream(answer_stream)
+                await _stop_answer_stream(answer_stream, block, raw_text)
                 answer_stream, block, raw_text = None, None, ""
                 await transcript.mount(*_render_blocks(text, classes))
                 if follow:
@@ -530,7 +539,7 @@ class FaltooChatApp(App[None]):
                 continue
 
             if block is None or is_new:
-                await _stop_answer_stream(answer_stream)
+                await _stop_answer_stream(answer_stream, block, raw_text)
                 answer_stream, raw_text = None, ""
                 block = Markdown("", classes=classes)
                 await transcript.mount(block)
@@ -547,7 +556,7 @@ class FaltooChatApp(App[None]):
             if follow:
                 transcript.anchor()
 
-        await _stop_answer_stream(answer_stream)
+        await _stop_answer_stream(answer_stream, block, raw_text)
 
     async def _add_user_turn(
         self,
