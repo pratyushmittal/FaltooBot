@@ -3,12 +3,14 @@ from typing import Any, cast
 from markdown_it import MarkdownIt
 from pygments.token import Token
 from rich.console import Console, ConsoleOptions, RenderResult
-from rich.markdown import BlockQuote, Markdown as RichMarkdown
-from rich.measure import Measurement
+from rich import box
+from rich.markdown import BlockQuote, CodeBlock, Markdown as RichMarkdown
+from rich.markdown import TableElement
 from rich.segment import Segment
 from rich.style import Style
-from rich.syntax import SyntaxTheme
+from rich.syntax import Syntax, SyntaxTheme
 from rich.text import Text
+from rich.table import Table
 from rich.theme import Theme as RichTheme
 from textual import events
 from textual.color import Color
@@ -22,7 +24,6 @@ from textual.widgets.text_area import TextAreaTheme
 from faltoobot.faltoochat.messages_rendering import SHELL_COMMAND_SEPARATOR
 
 MAX_BLOCK_WIDTH = 80
-
 _TOKEN_SCOPES = {
     Token.Comment: "comment",
     Token.Generic.Emph: "italic",
@@ -37,6 +38,7 @@ _TOKEN_SCOPES = {
     Token.Literal.String.Doc: "string.documentation",
     Token.Name.Attribute: "variable",
     Token.Name.Builtin: "type.builtin",
+    Token.Name.Builtin.Pseudo: "variable.builtin",
     Token.Name.Class: "class",
     Token.Name.Function: "function",
     Token.Name.Tag: "tag",
@@ -45,22 +47,26 @@ _TOKEN_SCOPES = {
 }
 
 
-def _text_area_theme(app_theme: str) -> TextAreaTheme:
-    name = "github_light" if "light" in app_theme else "vscode_dark"
-    return cast(TextAreaTheme, TextAreaTheme.get_builtin_theme(name))
-
-
 class _TextAreaSyntaxTheme(SyntaxTheme):
     def __init__(self, app_theme: str, background_style: Style) -> None:
-        theme = _text_area_theme(app_theme)
-        self.base_style = theme.base_style or Style()
+        name = "github_light" if "light" in app_theme else "vscode_dark"
+        theme = cast(TextAreaTheme, TextAreaTheme.get_builtin_theme(name))
+        base_style = theme.base_style or Style()
+        self.base_style = Style(color=base_style.color)
         self.syntax_styles = theme.syntax_styles
         self.background_style = background_style
 
     def get_style_for_token(self, token_type: Any) -> Style:
         while token_type is not None:
             if scope := _TOKEN_SCOPES.get(token_type):
-                return self.syntax_styles.get(scope, self.base_style)
+                if style := self.syntax_styles.get(scope):
+                    return style
+                return (
+                    self.syntax_styles.get("variable", self.base_style)
+                    + Style(italic=True)
+                    if scope == "variable.builtin"
+                    else self.base_style
+                )
             token_type = token_type.parent
         return self.base_style
 
@@ -72,64 +78,57 @@ class _BlockQuote(BlockQuote):
     def __rich_console__(
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
-        lines = console.render_lines(
+        style = console.get_style("markdown.block_quote_bar")
+        for line in console.render_lines(
             self.elements, options.update(width=options.max_width - 4), style=self.style
-        )
-        bar_style = console.get_style("markdown.block_quote_bar")
-        for line in lines:
-            yield Segment("▌ ", bar_style)
+        ):
+            yield Segment("▌ ", style)
             yield from line
             yield Segment.line()
 
 
+class _CodeBlock(CodeBlock):
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        yield Syntax(
+            str(self.text).rstrip(),
+            self.lexer_name,
+            theme=self.theme,
+            word_wrap=True,
+            padding=(1, 3),
+        )
+
+
+class _Table(TableElement):
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        table = Table(
+            box=box.SQUARE,
+            padding=(0, 1),
+            style="markdown.table.border",
+            header_style="markdown.table.header",
+            border_style="markdown.table.border",
+            show_edge=True,
+        )
+        if self.header is not None and self.header.row is not None:
+            for column in self.header.row.cells:
+                table.add_column(column.content.copy())
+        if self.body is not None:
+            for row in self.body.rows:
+                table.add_row(*(cell.content for cell in row.cells))
+        yield table
+
+
 class _Markdown(RichMarkdown):
-    elements = {**RichMarkdown.elements, "blockquote_open": _BlockQuote}
-
-
-def _theme_styles(owner: RichLog) -> dict[str, Style]:
-    colors = owner.app.current_theme.to_color_system().generate()
-    background = Color.parse(colors["background"])
-
-    def color(name: str):
-        return Color.parse(colors[name]).rich_color
-
-    def tint(name: str, amount: float):
-        return background.blend(Color.parse(colors[name]), amount).rich_color
-
-    text = Style(color=owner.styles.color.rich_color)
-    return {
-        "text": text,
-        "muted": Style(color=color("foreground-muted")),
-        "heading": Style(color=color("primary")),
-        "link": Style(color=color("text-accent"), underline=True),
-        "quote": text,
-        "quote-bar": Style(color=color("primary")),
-        "code": _text_area_theme(owner.app.theme).syntax_styles["inline_code"]
-        + Style(bgcolor=tint("warning", 0.08)),
-        "code-block": text + Style(bgcolor=tint("foreground", 0.04)),
-        "user": text + Style(bgcolor=tint("primary", 0.15)),
-        "user-border": Style(color=color("primary"), bgcolor=tint("primary", 0.15)),
-        "tool": Style(color=color("foreground-muted"), bgcolor=tint("warning", 0.08)),
-        "tool-summary": text + Style(bgcolor=tint("warning", 0.32)),
-        "unknown": text + Style(bgcolor=tint("error", 0.12)),
-        "unknown-border": Style(color=color("error"), bgcolor=tint("error", 0.12)),
+    elements = {
+        **RichMarkdown.elements,
+        "blockquote_open": _BlockQuote,
+        "fence": _CodeBlock,
+        "code_block": _CodeBlock,
+        "table_open": _Table,
     }
-
-
-def _layout(
-    classes: set[str], styles: dict[str, Style]
-) -> tuple[Style, Style, bool, int, int]:
-    if "history-summary" in classes or "thinking" in classes:
-        return styles["muted"], Style.null(), False, 1, 1
-    if "user" in classes:
-        return styles["user"], styles["user-border"], True, 1, 1
-    if "tool-summary" in classes:
-        return styles["tool-summary"], Style.null(), False, 1, 0
-    if "tool" in classes:
-        return styles["tool"], Style.null(), False, 2, 1
-    if "unknown" in classes:
-        return styles["unknown"], styles["unknown-border"], True, 1, 1
-    return styles["text"], Style.null(), False, 1, 1
 
 
 def _message_blocks(text: str, classes: str) -> list[tuple[str, str]]:
@@ -137,8 +136,8 @@ def _message_blocks(text: str, classes: str) -> list[tuple[str, str]]:
         return [(text, classes)]
     summary, command = text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)
     blocks = [(summary, "tool tool-summary")]
-    if command.strip():
-        blocks.append((command.strip(), "tool tool-command"))
+    if command := command.strip():
+        blocks.append((command, "tool tool-command"))
     return blocks
 
 
@@ -146,15 +145,14 @@ def _selection_parts(text: str, classes: str) -> list[str]:
     if classes != "answer":
         return [text]
     lines = text.splitlines()
-    parts = [
+    return [
         "\n".join(lines[start:end])
         for token in MarkdownIt().parse(text)
         if token.level == 0
         and token.map is not None
         and not token.type.endswith("_close")
         for start, end in [token.map]
-    ]
-    return parts or [text]
+    ] or [text]
 
 
 class _TranscriptBlock:
@@ -163,46 +161,88 @@ class _TranscriptBlock:
         self.classes = set(classes.split())
         self.owner = owner
 
-    def __rich_measure__(
-        self, _console: Console, options: ConsoleOptions
-    ) -> Measurement:
-        return Measurement(1, min(MAX_BLOCK_WIDTH, options.max_width))
-
-    def __rich_console__(
+    def __rich_console__(  # noqa: C901
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
-        styles = _theme_styles(self.owner)
-        block_style, border_style, has_border, padding, margin_bottom = _layout(
-            self.classes, styles
+        colors = self.owner.app.current_theme.to_color_system().generate()
+        background = Color.parse(colors["background"])
+        foreground = Color.parse(colors["foreground"])
+        is_light = "light" in self.owner.app.theme
+
+        def color(name: str):
+            return Color.parse(colors[name]).rich_color
+
+        def tint(name: str, amount: float):
+            return background.blend(Color.parse(colors[name]), amount).rich_color
+
+        text = Style(color=self.owner.styles.color.rich_color)
+        muted = Style(color=foreground.blend(background, 0.4).rich_color)
+        quote_bar = Style(color=color("text-secondary" if is_light else "text-primary"))
+        inline_code = (
+            Style(color=color("text-error"), bgcolor=tint("error", 0.05))
+            if is_light
+            else Style(color=color("text-warning"), bgcolor=tint("warning", 0.10))
         )
-        content_width = max(
-            1, min(MAX_BLOCK_WIDTH, options.max_width) - int(has_border) - padding * 2
+        code_block = text + Style(
+            bgcolor=(
+                background.blend(Color(255, 255, 255), 0.30).rich_color
+                if is_light
+                else tint("foreground", 0.04)
+            )
         )
+        block_style, border_style, has_border, padding, margin = (
+            text,
+            Style.null(),
+            False,
+            1,
+            1,
+        )
+        if self.classes & {"history-summary", "thinking"}:
+            block_style = muted
+        elif "user" in self.classes:
+            block_style, border_style, has_border = (
+                text + Style(bgcolor=tint("primary", 0.15)),
+                quote_bar + Style(bgcolor=tint("primary", 0.15)),
+                True,
+            )
+        elif "tool-summary" in self.classes:
+            block_style, margin = text + Style(bgcolor=tint("warning", 0.32)), 0
+        elif "tool" in self.classes:
+            block_style, padding = muted + Style(bgcolor=tint("warning", 0.08)), 2
+        elif "unknown" in self.classes:
+            block_style, border_style, has_border = (
+                text + Style(bgcolor=tint("error", 0.12)),
+                Style(color=color("error"), bgcolor=tint("error", 0.12)),
+                True,
+            )
+
         renderable = Text(self.text)
-        if "history-summary" in self.classes or "unknown" in self.classes:
+        if self.classes & {"history-summary", "unknown"}:
             renderable = Text.from_markup(self.text)
         elif "tool-command" not in self.classes:
             renderable = _Markdown(
                 self.text,
-                code_theme=_TextAreaSyntaxTheme(
-                    self.owner.app.theme, styles["code-block"]
-                ),  # type: ignore
+                code_theme=_TextAreaSyntaxTheme(self.owner.app.theme, code_block),  # type: ignore
             )
+
+        content_width = max(
+            1, min(MAX_BLOCK_WIDTH, options.max_width) - int(has_border) - padding * 2
+        )
         with console.use_theme(
             RichTheme(
                 {
-                    "markdown.code": styles["code"],
-                    "markdown.code_inline": styles["code"],
-                    "markdown.code_block": styles["code-block"],
-                    "markdown.block_quote": styles["quote"],
-                    "markdown.block_quote_bar": styles["quote-bar"],
-                    "markdown.h1": styles["heading"],
-                    "markdown.h2": styles["heading"],
-                    "markdown.h3": styles["heading"],
-                    "markdown.h4": styles["heading"],
-                    "markdown.h5": styles["heading"],
-                    "markdown.h6": styles["heading"],
-                    "markdown.link": styles["link"],
+                    "markdown.code": inline_code,
+                    "markdown.code_inline": inline_code,
+                    "markdown.code_block": code_block,
+                    "markdown.block_quote": text,
+                    "markdown.block_quote_bar": quote_bar,
+                    **{
+                        f"markdown.h{level}": Style(color=color("primary"))
+                        for level in range(1, 7)
+                    },
+                    "markdown.link": Style(color=color("text-accent"), underline=True),
+                    "markdown.table.border": Style(color=color("foreground")),
+                    "markdown.table.header": Style(color=color("primary"), bold=True),
                 }
             )
         ):
@@ -212,8 +252,7 @@ class _TranscriptBlock:
                 )
             ) or [[]]
         if "tool-command" in self.classes:
-            tool_command_max_lines = 3
-            lines = lines[:tool_command_max_lines]
+            lines = lines[:3]
         if "review-comments" in self.classes:
             lines = [[]] + lines + [[]]
 
@@ -224,12 +263,12 @@ class _TranscriptBlock:
                 block_style,
             )
             if has_border:
-                yield Segment("┃", border_style)
+                yield Segment("▌", border_style)
             yield Segment(" " * padding, block_style)
             yield from line
             yield Segment(" " * padding, block_style)
             yield Segment.line()
-        for _ in range(margin_bottom):
+        for _ in range(margin):
             yield Segment.line()
 
 
@@ -270,35 +309,21 @@ class TranscriptLog(RichLog):
         self, text: str, classes: str, *, scroll_end: bool = True
     ) -> None:
         self.messages.append((text, classes))
-        if self._size_known:
-            self._write_message(text, classes, scroll_end=scroll_end)
-
-    def _clear_selection(self) -> None:
-        self.screen.selections.pop(self, None)
-
-    def _write_message(
-        self, text: str, classes: str, *, scroll_end: bool = True
-    ) -> None:
+        if not self._size_known:
+            return
         self._clear_selection()
         start = len(self.lines)
         parts = _selection_parts(text, classes)
-        last_index = len(parts) - 1
         for index, part in enumerate(parts):
             part_start = len(self.lines)
             self.write(
                 _TranscriptBlock(part, classes, self),
-                scroll_end=scroll_end and index == last_index,
+                width=min(MAX_BLOCK_WIDTH, self.scrollable_content_region.width),
+                scroll_end=scroll_end and index == len(parts) - 1,
             )
             self.selection_ranges.append((classes, part_start, len(self.lines)))
         self.message_ranges.append((classes, start, len(self.lines)))
         self.refresh()
-
-    def _render_messages(self) -> None:
-        messages = self.messages
-        self.messages = []
-        self.clear_messages()
-        for text, classes in messages:
-            self.write_message(text, classes, scroll_end=False)
 
     def replace_last_message(self, text: str, classes: str) -> None:
         if self.messages:
@@ -326,6 +351,16 @@ class TranscriptLog(RichLog):
         self.selection_ranges.clear()
         self.clear()
 
+    def _clear_selection(self) -> None:
+        self.screen.selections.pop(self, None)
+
+    def _render_messages(self) -> None:
+        messages = self.messages
+        self.messages = []
+        self.clear_messages()
+        for text, classes in messages:
+            self.write_message(text, classes, scroll_end=False)
+
     def on_mouse_down(self, event: events.MouseDown) -> None:
         if offset := event.get_content_offset(self):
             self._last_click_line = self.scroll_offset[1] + offset.y
@@ -334,38 +369,38 @@ class TranscriptLog(RichLog):
         if self._last_click_line is not None:
             self._select_block_at_line(self._last_click_line)
 
-    def on_click(self, event: events.Click) -> None:
-        event.prevent_default()
-        offset = event.get_content_offset(self)
-        if offset is not None:
-            self._select_block_at_line(self.scroll_offset[1] + offset.y)
-        event.stop()
+    async def _on_click(self, event: events.Click) -> None:
+        if (
+            event.widget is self
+            and self.allow_select
+            and self.screen.allow_select
+            and self.app.ALLOW_SELECT
+        ):
+            double_click = 2
+            if event.chain == double_click and not event.delta_x and not event.delta_y:
+                self.text_select_all()
+                event.stop()
+                return
+        await self.broker_event("click", event)
 
     def _select_block_at_line(self, line_index: int) -> None:
-        start = self._selection_range_for_line(line_index)
-        if start is None:
+        for _classes, start, end in self.selection_ranges:
+            if not start <= line_index < end:
+                continue
+            last_line = max(start, end - 1)
+            while last_line > start and not self.lines[last_line].text.rstrip():
+                last_line -= 1
+            start_text = self.lines[start].text
+            start_x = (
+                2
+                if start_text.startswith("▌ ")
+                else len(start_text) - len(start_text.lstrip())
+            )
+            end_x = len(self.lines[last_line].text.rstrip())
+            self.screen.selections = {  # type: ignore
+                self: Selection(Offset(start_x, start), Offset(end_x, last_line))
+            }
             return
-        _classes, start, end = self.selection_ranges[start]
-        last_line = max(start, end - 1)
-        while last_line > start and not self.lines[last_line].text.rstrip():
-            last_line -= 1
-        start_text = self.lines[start].text
-        start_x = (
-            2
-            if start_text.startswith("┃ ")
-            else len(start_text) - len(start_text.lstrip())
-        )
-        end_x = len(self.lines[last_line].text.rstrip())
-        self.screen.selections.clear()
-        self.screen.selections[self] = Selection(
-            Offset(start_x, start), Offset(end_x, last_line)
-        )
-
-    def _selection_range_for_line(self, line_index: int) -> int | None:
-        for index, (_classes, start, end) in enumerate(self.selection_ranges):
-            if start <= line_index < end:
-                return index
-        return None
 
     def render_line(self, y: int) -> Strip:
         width = self.scrollable_content_region.width
@@ -374,12 +409,18 @@ class TranscriptLog(RichLog):
             return Strip.blank(width, self.rich_style)
 
         line = self.lines[line_index]
+        shift, scroll_x = 0, 0
         if line.cell_length >= width:
             scroll_x = self.scroll_offset[0]
             line = line.crop_extend(scroll_x, scroll_x + width, self.rich_style)
-            return self._selectable_line(line, line_index, -scroll_x, scroll_x)
-
-        line = self._selectable_line(line, line_index, 0, 0)
+            shift = -scroll_x
+        if self.text_selection is not None:
+            line = self._highlight_selection(
+                line, self.text_selection, line_index, shift
+            )
+        line = line.apply_style(self.rich_style).apply_offsets(scroll_x, line_index)
+        if scroll_x:
+            return line
         left = (width - line.cell_length) // 2
         return Strip.join(
             [
@@ -388,15 +429,6 @@ class TranscriptLog(RichLog):
                 Strip.blank(width - line.cell_length - left, self.rich_style),
             ]
         )
-
-    def _selectable_line(
-        self, line: Strip, line_index: int, shift: int, offset_x: int
-    ) -> Strip:
-        if self.text_selection is not None:
-            line = self._highlight_selection(
-                line, self.text_selection, line_index, shift
-            )
-        return line.apply_style(self.rich_style).apply_offsets(offset_x, line_index)
 
     def _highlight_selection(
         self, line: Strip, selection: Selection, line_index: int, shift: int

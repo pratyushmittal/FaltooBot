@@ -110,7 +110,11 @@ class FaltooChatApp(App[None]):
         overflow-y: auto;
         padding: 1 2 0 2;
         background: transparent;
-        border: none;
+        border: round transparent;
+    }
+
+    #transcript:focus {
+        border: round $primary;
     }
 
     #footer {

@@ -777,6 +777,10 @@ async def test_transcript_double_click_selects_streamed_answer_markdown_block(
 
         content_y = transcript.content_region.y - transcript.region.y
         second_y = content_y + answer_ranges[1][1] - int(transcript.scroll_y)
+        await pilot.click(transcript, offset=(40, second_y))
+        await pilot.pause(0)
+        assert app.screen.get_selected_text() is None
+
         await pilot.click(transcript, offset=(40, second_y), times=2)
         await pilot.pause(0)
 
