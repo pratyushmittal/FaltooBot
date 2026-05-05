@@ -164,7 +164,6 @@ class ReviewDiffView(TextArea):
             self.language = requested_language
         elif requested_language is not None:
             self.missing_language_package = _language_package(requested_language)
-        self.border_title = "0 comments"
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -218,7 +217,6 @@ class ReviewDiffView(TextArea):
         self.move_cursor((target_line, target_column))
         self.selection = selection
         self.scroll_to(scroll_x, scroll_y, animate=False, immediate=True)
-        self.border_title = _comment_title(self)
 
     def render_line(self, y: int):
         strip = super().render_line(y)
@@ -420,6 +418,7 @@ class ReviewDiffView(TextArea):
         self.visible_diff_lines = _visible_diff_lines(self.diff, self.mode)
         self._update_mode_subtitle()
         self.load_text(_diff_text(self.diff, self.visible_diff_lines))
+        self.border_title = _comment_title(self)
         if self.document.line_count == 0:
             return
         self.move_cursor(

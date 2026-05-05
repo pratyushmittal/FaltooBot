@@ -1235,6 +1235,7 @@ async def test_review_stage_lines_updates_diff_and_shows_staged_prefix(
 
         viewer = alpha_pane.query_one(ReviewDiffView)
         viewer.focus()
+        assert viewer.border_title == "0 comments · 0/2 hunks staged"
         viewer.selection = type(viewer.selection)((1, 0), (3, 0))
         await viewer.action_review_stage_lines()
         await pilot.pause(0)
@@ -1249,6 +1250,7 @@ async def test_review_stage_lines_updates_diff_and_shows_staged_prefix(
         )
         assert "b = 20" in viewer.text
         assert viewer.render_line(2).crop(0, viewer.gutter_width).text.strip() == "|2"
+        assert viewer.border_title == "0 comments · 1/2 hunks staged"
         assert viewer.text.count("a = 1") == 1
         assert viewer.selection.is_empty
 
