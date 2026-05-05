@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 5.0.0 — 2026-05-05
+
+### Breaking
+- WhatsApp `allow_group_chats` now accepts group JIDs instead of participant IDs. Replace old participant phone/JID entries with the group JIDs you want the bot to keep history for and reply in.
+
+### Fixed
+- Review hunk counts now refresh when tab contents change.
+- Review line selection now stays on the selected line instead of jumping to the next line.
+
 ## 4.1.2 — 2026-05-05
 
 ### Changed
