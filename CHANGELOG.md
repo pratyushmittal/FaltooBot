@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 4.1.2 — 2026-05-05
+
+### Changed
+- Refreshed locked dependencies.
+
+### Fixed
+- Faltoochat now re-parses streamed Markdown when an answer completes, so code blocks render correctly after streaming.
+- Faltoochat transcript navigation shortcuts now work from the chat shell instead of only from the composer.
+
 ## 4.1.1 — 2026-05-04
 
 ### Fixed
