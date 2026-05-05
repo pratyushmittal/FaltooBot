@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import re
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 from uuid import uuid4
 
 from neonize.aioze.client import NewAClient
@@ -341,6 +341,7 @@ class Turn(TypedDict):
     quoted_message_text: str
     attachments: list[Path]
     audio: Any
+    should_process: NotRequired[bool]
 
 
 async def _handle_slash_command(
@@ -819,52 +820,55 @@ def _is_group_allowed(
     event: MessageEv,
     *,
     config: Config,
-    chat_jid: str,
-    sender_jid: str,
 ) -> bool:
-    source_ids = source_chat_ids(event.Info.MessageSource)
-    if not config.allow_group_chats or not _matches_allowed_chats(
-        config.allow_group_chats, source_ids
-    ):
-        logger.info(
-            "Ignoring group message from %s in %s because it is not group-allowlisted. Seen IDs: %s",
-            sender_jid,
-            chat_jid,
-            ", ".join(sorted(source_ids)) or "<none>",
+    return bool(
+        config.allow_group_chats
+        and _matches_allowed_chats(
+            config.allow_group_chats, source_chat_ids(event.Info.MessageSource)
         )
-        return False
-    return True
+    )
 
 
-async def _should_store_event(
+def _event_store_and_process(
     event: MessageEv,
     *,
     config: Config,
     chat_jid: str,
     sender_jid: str,
-) -> bool:
+) -> tuple[bool, bool]:
     source = event.Info.MessageSource
-    if source.IsFromMe:
-        return False
+    should_store = False
+    should_process = False
 
-    if source.IsGroup:
-        return _is_group_allowed(
-            event,
-            config=config,
-            chat_jid=chat_jid,
-            sender_jid=sender_jid,
-        )
+    if source.IsFromMe:
+        return should_store, should_process
 
     source_ids = source_chat_ids(source)
-    allowed = _matches_allowed_chats(config.allowed_chats, source_ids)
-    if not allowed:
+    group_allowed = source.IsGroup and _is_group_allowed(event, config=config)
+    chat_allowed = not source.IsGroup and _matches_allowed_chats(
+        config.allowed_chats, source_ids
+    )
+
+    if group_allowed or chat_allowed:
+        should_store, should_process = True, True
+    elif source.IsGroup and config.allow_group_chats:
+        should_store = True
+    elif source.IsGroup:
+        logger.info(
+            "Ignoring group message from %s in %s because group chats are not allowlisted. Seen IDs: %s",
+            sender_jid,
+            chat_jid,
+            ", ".join(sorted(source_ids)) or "<none>",
+        )
+    else:
         logger.info(
             "Ignoring message from %s in %s because it is not allowlisted. Seen IDs: %s",
             sender_jid,
             chat_jid,
             ", ".join(sorted(source_ids)) or "<none>",
         )
-    return allowed
+
+    return should_store, should_process
 
 
 async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
@@ -881,12 +885,13 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     chat_jid = Jid2String(source.Chat)
     sender_jid = Jid2String(source.Sender)
 
-    if not await _should_store_event(
+    should_store, should_process = _event_store_and_process(
         event,
         config=config,
         chat_jid=chat_jid,
         sender_jid=sender_jid,
-    ):
+    )
+    if not should_store:
         return None
 
     workspace = Path(get_messages(session)["workspace"])
@@ -940,6 +945,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     )
     if handled_album:
         if album_turn is not None:
+            album_turn["should_process"] = should_process
             logger.info(
                 "Received message from %s in %s: %s",
                 sender_jid,
@@ -974,4 +980,5 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
         "quoted_message_text": "",
         "attachments": attachments,
         "audio": None,
+        "should_process": should_process,
     }

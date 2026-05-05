@@ -375,7 +375,11 @@ async def handle_message(
                 attachments=turn["attachments"] or None,
                 message_ids=turn["message_ids"],
             )
-        if stored and await runtime.should_reply_now(client, turn["event"]):
+        if (
+            stored
+            and turn.get("should_process", True)
+            and await runtime.should_reply_now(client, turn["event"])
+        ):
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
 
 
@@ -528,7 +532,10 @@ async def test_get_turn_locked_uses_group_allowlist(
 
     assert allowed_turn is not None
     assert allowed_turn["prompt"] == "[from 15555555555555] hi"
-    assert blocked_turn is None
+    assert allowed_turn.get("should_process") is True
+    assert blocked_turn is not None
+    assert blocked_turn["prompt"] == "[from 15555555555555] hi"
+    assert blocked_turn.get("should_process") is False
 
 
 @pytest.mark.anyio
@@ -608,6 +615,59 @@ async def test_two_person_group_messages_auto_trigger_without_mention(
     )
 
     assert client.replies == ["Done"]
+
+
+@pytest.mark.anyio
+async def test_group_follow_up_mention_sees_unallowed_sender_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net"},
+    )
+    client = FakePresenceClient()
+    seen: list[list[str]] = []
+
+    async def fake_get_answer(session, **_: object) -> str:
+        messages = get_messages(session)["messages"]
+        seen.append(
+            [
+                str(message["content"])
+                for message in messages
+                if message["role"] == "user"
+            ]
+        )
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_group_event(
+            sender_phone="16666660123", text="The production deploy is stuck"
+        ),
+        config=config,
+    )
+    await handle_message(
+        cast(NewAClient, client),
+        fake_group_event(
+            message_id="group-2",
+            sender_phone="15555550123",
+            text="@faltoo what should we check?",
+            mentioned_jids=["15555550999@s.whatsapp.net"],
+        ),
+        config=config,
+    )
+
+    assert client.replies == ["Done"]
+    assert seen == [
+        [
+            "[from 15555555555555] The production deploy is stuck",
+            "[from 15555555555555] @faltoo what should we check?",
+        ]
+    ]
 
 
 @pytest.mark.anyio
