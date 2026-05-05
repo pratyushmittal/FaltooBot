@@ -375,11 +375,8 @@ async def handle_message(
                 attachments=turn["attachments"] or None,
                 message_ids=turn["message_ids"],
             )
-        if (
-            stored
-            and turn.get("should_process", True)
-            and await runtime.should_reply_now(client, turn["event"])
-        ):
+        should_process = await runtime.should_reply_now(client, turn["event"])
+        if stored and should_process:
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
 
 
@@ -510,7 +507,7 @@ async def test_get_turn_locked_uses_group_allowlist(
     config = make_config(
         tmp_path,
         allowed_chats={"19999999999@s.whatsapp.net"},
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -523,7 +520,7 @@ async def test_get_turn_locked_uses_group_allowlist(
         config=config,
         session=session,
     )
-    blocked_turn = await runtime.get_turn_locked(
+    other_sender_turn = await runtime.get_turn_locked(
         cast(NewAClient, FakePresenceClient()),
         fake_group_event(message_id="group-2", sender_phone="16666660123"),
         config=config,
@@ -532,10 +529,30 @@ async def test_get_turn_locked_uses_group_allowlist(
 
     assert allowed_turn is not None
     assert allowed_turn["prompt"] == "[from 15555555555555] hi"
-    assert allowed_turn.get("should_process") is True
-    assert blocked_turn is not None
-    assert blocked_turn["prompt"] == "[from 15555555555555] hi"
-    assert blocked_turn.get("should_process") is False
+    assert other_sender_turn is not None
+    assert other_sender_turn["prompt"] == "[from 15555555555555] hi"
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_ignores_group_when_group_jid_not_allowlisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net", "19999999999@g.us"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(sender_phone="15555550123", text="hello group"),
+        config=config,
+        session=session,
+    )
+
+    assert turn is None
 
 
 @pytest.mark.anyio
@@ -546,7 +563,7 @@ async def test_get_turn_locked_stores_group_messages_without_bot_mention(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -569,7 +586,7 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
     client = FakePresenceClient()
@@ -597,7 +614,7 @@ async def test_two_person_group_messages_auto_trigger_without_mention(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     client = FakePresenceClient(group_size=2)
 
@@ -618,14 +635,14 @@ async def test_two_person_group_messages_auto_trigger_without_mention(
 
 
 @pytest.mark.anyio
-async def test_group_follow_up_mention_sees_unallowed_sender_history(
+async def test_group_follow_up_mention_sees_other_sender_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     client = FakePresenceClient()
     seen: list[list[str]] = []
@@ -678,7 +695,7 @@ async def test_group_follow_up_mention_sees_earlier_unmentioned_history(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     client = FakePresenceClient()
     seen: list[list[str]] = []
@@ -731,7 +748,7 @@ async def test_get_turn_locked_prefers_group_push_name(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
     event = fake_group_event(sender_phone="15555550123", text="hello group")
@@ -756,7 +773,7 @@ async def test_get_turn_locked_keeps_group_slash_command_unprefixed(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -779,7 +796,7 @@ async def test_get_turn_locked_normalizes_addressed_group_slash_command(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -806,7 +823,7 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
