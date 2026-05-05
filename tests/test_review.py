@@ -887,12 +887,12 @@ async def test_review_visual_line_selection_extends_with_j_and_k(
         await pilot.press("V")
         await pilot.pause(0)
         assert viewer.selection.start == (line, 0)
-        assert viewer.selection.end == (line + 1, 0)
+        assert viewer.selection.end == (line, len(viewer.document.get_line(line)))
 
         await pilot.press("k")
         await pilot.pause(0)
         assert viewer.cursor_location == (line - 1, 0)
-        assert viewer.selection.start == (line + 1, 0)
+        assert viewer.selection.start == (line, len(viewer.document.get_line(line)))
         assert viewer.selection.end == (line - 1, 0)
 
         cursor = viewer.cursor_location
@@ -904,12 +904,20 @@ async def test_review_visual_line_selection_extends_with_j_and_k(
         await pilot.press("V")
         await pilot.pause(0)
         assert viewer.selection.start == (cursor[0], 0)
-        assert viewer.selection.end == (cursor[0] + 1, 0)
+        assert viewer.selection.end == (
+            cursor[0],
+            len(viewer.document.get_line(cursor[0])),
+        )
 
         await pilot.press("j")
         await pilot.pause(0)
+        next_line = cursor[0] + 1
         assert viewer.selection.start == (cursor[0], 0)
-        assert viewer.selection.end == (cursor[0] + 2, 0)
+        assert viewer.selection.end == (
+            next_line,
+            len(viewer.document.get_line(next_line)),
+        )
+        assert viewer.cursor_location == viewer.selection.end
 
 
 @pytest.mark.anyio
@@ -1775,10 +1783,10 @@ async def test_review_add_uses_selected_lines_and_allows_unmodified_lines(
         assert app.query_one(ReviewView).reviews[-1] == {
             "filename": Path("alpha.py"),
             "line_number_start": 2,
-            "line_number_end": 4,
+            "line_number_end": 3,
             "file_line_number_start": 2,
-            "file_line_number_end": 3,
-            "code": "-b = 2\n+b = 20\nc = 3",
+            "file_line_number_end": 2,
+            "code": "-b = 2\n+b = 20",
             "comment": "Selected",
         }
 

@@ -887,6 +887,10 @@ def _gutter_base_style(view: ReviewDiffView, document_line: int) -> Style:
     return view.rich_style
 
 
+def _line_end(view: ReviewDiffView, line: int) -> int:
+    return len(view.document.get_line(line))
+
+
 def _line_selection(
     view: ReviewDiffView,
     anchor_line: int,
@@ -894,29 +898,29 @@ def _line_selection(
 ):
     selection_type = type(view.selection)
     if current_line < anchor_line:
-        return selection_type((anchor_line + 1, 0), (current_line, 0))
-    if current_line + 1 < view.document.line_count:
-        return selection_type((anchor_line, 0), (current_line + 1, 0))
+        # comment: reverse selections must start after the anchor to cover full lines.
+        return selection_type(
+            (anchor_line, _line_end(view, anchor_line)), (current_line, 0)
+        )
     return selection_type(
-        (anchor_line, 0),
-        (current_line, len(view.document.get_line(current_line))),
+        (anchor_line, 0), (current_line, _line_end(view, current_line))
     )
 
 
 def _review_range(view: ReviewDiffView) -> tuple[int, int]:
-    start = view.selection.start[0]
-    end = view.selection.end[0]
-    if end < start:
-        start, end = end, start
-    # comment: line-mode selections use column-0 endpoints as a sentinel for the
-    # next full line, but arbitrary text selections ending at the start of a later
-    # line should still include that line in the review range.
+    """Return inclusive backing diff-line range for text or visual-line selection."""
     if (
         view.line_selection_anchor is not None
-        and view.selection.end[1] == 0
-        and end > start
+        and view.line_selection_cursor is not None
     ):
-        end -= 1
+        # comment: visual line mode tracks exact rows even when selection endpoints are line ends.
+        start = min(view.line_selection_anchor, view.line_selection_cursor)
+        end = max(view.line_selection_anchor, view.line_selection_cursor)
+    else:
+        start = view.selection.start[0]
+        end = view.selection.end[0]
+        if end < start:
+            start, end = end, start
     return (
         view._visible_diff_line(start),
         view._visible_diff_line(end),
