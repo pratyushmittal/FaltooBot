@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 5.2.0 — 2026-05-06
+
+### Added
+- Faltoochat review now supports file-level comments with `Shift+C`.
+
+### Changed
+- Faltoochat now sets the terminal tab title to the workspace folder name and shows when it is answering.
+- Faltoochat retry errors now clear when retrying and focus returns to the composer.
+
 ## 5.1.0 — 2026-05-06
 
 ### Changed

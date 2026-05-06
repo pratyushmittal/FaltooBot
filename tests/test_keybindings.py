@@ -301,6 +301,14 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
             "key_display": None,
         },
         {
+            "key": "C",
+            "action": "review_add_file",
+            "description": "Add File Review",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
             "key": "s",
             "action": "review_stage_lines",
             "description": "Stage Lines",
