@@ -926,7 +926,7 @@ async def test_minchat_queues_messages_while_streaming(
         await composer.action_composer_enter()
         await asyncio.wait_for(started.wait(), timeout=3)
         await pilot.pause(0)
-        assert str(composer.border_subtitle) == "answering"
+        assert str(composer.border_subtitle) == "answering · Ctrl+C to cancel"
 
         composer.load_text("later")
         await composer.action_composer_enter()
@@ -948,6 +948,53 @@ async def test_minchat_queues_messages_while_streaming(
         assert submit_queue.get_queue(app.session) == []
         assert seen == ["hello", "later"]
 
+
+@pytest.mark.anyio
+async def test_minchat_ctrl_c_cancels_response_and_keeps_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
+        started.set()
+        await release.wait()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await asyncio.wait_for(started.wait(), timeout=3)
+        await pilot.pause(0)
+        assert str(composer.border_subtitle) == "answering · Ctrl+C to cancel"
+
+        composer.load_text("later")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+        assert submit_queue.get_queue(app.session)
+
+        app.action_cancel_response()
+        await asyncio.wait_for(wait_for_condition(lambda: not app.is_answering), timeout=3)
+        await pilot.pause(0)
+
+        assert str(composer.border_subtitle) == ""
+        assert submit_queue.get_queue(app.session)
+        texts = [message for message in sessions.get_messages(app.session)["messages"]]
+        assert texts[-1]["role"] == "assistant"
+        assert "id" not in texts[-1]
+        assert "status" not in texts[-1]
+        assert texts[-1]["content"] == [
+            {"type": "output_text", "text": "interrupted by user"}
+        ]
 
 def test_get_local_user_message_item_keeps_local_image_paths() -> None:
     message = get_local_user_message_item(

@@ -845,3 +845,53 @@ async def test_get_answer_reuses_existing_user_turn(
             "content": [{"type": "output_text", "text": "hello"}],
         },
     ]
+
+
+def test_append_interrupted_turn_completes_dangling_function_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = sessions.get_session(chat_key="code@test", workspace=workspace)
+    messages_json = sessions.get_messages(session)
+    messages_json["messages"].append(
+        {
+            "type": "function_call",
+            "name": "tool",
+            "arguments": "{}",
+            "call_id": "call_123",
+        }
+    )
+    sessions.set_messages(session, messages_json)
+
+    sessions.append_interrupted_turn(session)
+
+    assert sessions.get_messages(session)["messages"][-1] == {
+        "type": "function_call_output",
+        "call_id": "call_123",
+        "output": "interrupted by user",
+        "status": "completed",
+    }
+
+
+def test_append_interrupted_turn_adds_assistant_marker_without_function_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = sessions.get_session(chat_key="code@test", workspace=workspace)
+
+    sessions.append_interrupted_turn(session)
+
+    message = sessions.get_messages(session)["messages"][-1]
+    assert message["type"] == "message"
+    assert message["role"] == "assistant"
+    assert "id" not in message
+    assert "status" not in message
+    assert message["content"] == [
+        {"type": "output_text", "text": "interrupted by user"}
+    ]

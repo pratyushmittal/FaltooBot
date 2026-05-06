@@ -220,6 +220,30 @@ def get_messages(session: Session) -> MessagesJson:
     )
 
 
+def append_interrupted_turn(session: Session) -> None:
+    messages_json = get_messages(session)
+    messages = messages_json["messages"]
+    last = messages[-1] if messages else {}
+    call_id = last.get("call_id") if isinstance(last, dict) else None
+
+    if isinstance(last, dict) and last.get("type") == "function_call" and isinstance(call_id, str):
+        interrupted_item = {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": "interrupted by user",
+            "status": "completed",
+        }
+    else:
+        interrupted_item = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "interrupted by user"}],
+        }
+
+    messages.append(interrupted_item)
+    set_messages(session, messages_json)
+
+
 def get_last_usage(session: Session) -> dict[str, Any] | None:
     for item in reversed(get_messages(session)["messages"]):
         if not isinstance(item, dict):

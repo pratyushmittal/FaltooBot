@@ -55,6 +55,14 @@ EXPECTED_DEFAULT_APP_BINDINGS = [
         "key_display": None,
     },
     {
+        "key": "ctrl+c",
+        "action": "cancel_response",
+        "description": "Cancel Response",
+        "show": True,
+        "priority": True,
+        "key_display": None,
+    },
+    {
         "key": "ctrl+p",
         "action": "command_palette",
         "description": "Command Palette",

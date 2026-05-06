@@ -112,6 +112,7 @@ class FaltooChatApp(App[None]):
             priority=True,
             show=False,
         ),
+        Binding("ctrl+c", "cancel_response", "Cancel Response", priority=True),
         Binding(
             "ctrl+p",
             "command_palette",
@@ -308,6 +309,8 @@ class FaltooChatApp(App[None]):
         self.session = session
         self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.is_answering = False
+        self.active_stream_worker: Any | None = None
+        self.cancel_requested = False
         self._is_polling_notifications = False
         self.transcript: VerticalScroll
         self.composer: Composer
@@ -474,7 +477,10 @@ class FaltooChatApp(App[None]):
             stored = False
         if stored:
             # exclusive=True tells Textual to cancel all previous workers before starting the new one
-            self.run_worker(self._start_streaming(transcript), exclusive=True)
+            self.active_stream_worker = self.run_worker(
+                self._start_streaming(transcript),
+                exclusive=True,
+            )
             return
         # comment: duplicate notification ids can skip storing and therefore skip streaming.
         self.is_answering = False
@@ -602,18 +608,26 @@ class FaltooChatApp(App[None]):
 
     async def _start_streaming(self, transcript: VerticalScroll) -> None:
         completed = False
+        cancelled_by_user = False
         composer = self.composer
-        composer.border_subtitle = "answering"
+        composer.border_subtitle = "answering · Ctrl+C to cancel"
         try:
             await self._stream_events(transcript)
         except asyncio.CancelledError:
-            raise
+            cancelled_by_user = self.cancel_requested
+            if not cancelled_by_user:
+                raise
+            sessions.append_interrupted_turn(self.session)
+            await transcript.mount(Markdown("Response interrupted by user.", classes="unknown"))
+            transcript.anchor()
         except Exception as error:
             await self._show_retry_error(error)
         else:
             completed = True
         finally:
             self.is_answering = False
+            self.cancel_requested = False
+            self.active_stream_worker = None
             self.refresh_terminal_title()
             if completed:
                 self.bell()
@@ -623,6 +637,15 @@ class FaltooChatApp(App[None]):
                 composer.focus()
         if completed:
             await self.queue().submit_next_message()
+
+    def action_cancel_response(self) -> None:
+        if not self.is_answering:
+            self.notify("No response running", severity="information")
+            return
+        self.cancel_requested = True
+        self.composer.border_subtitle = "+ cancelling..."
+        if self.active_stream_worker is not None:
+            self.active_stream_worker.cancel()
 
     async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
         message = str(error).strip() or repr(error)
@@ -650,7 +673,10 @@ class FaltooChatApp(App[None]):
         self.focus_composer()
         self.is_answering = True
         self.refresh_terminal_title()
-        self.run_worker(self._start_streaming(transcript), exclusive=True)
+        self.active_stream_worker = self.run_worker(
+            self._start_streaming(transcript),
+            exclusive=True,
+        )
 
 
 class AttachmentCheckbox(Checkbox):
