@@ -1,20 +1,43 @@
 import json
 import os
 import subprocess
-from collections.abc import Awaitable
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
+from google.maps import places_v1
 from openai.types.responses import (
     ResponseInputFile,
     ResponseInputImage,
     ResponseInputText,
 )
+from proto import Message
 
 from faltoobot import images
 from faltoobot.config import build_config
 from faltoobot.gpt_utils import get_openai_client
 from faltoobot.openai_auth import uses_chatgpt_oauth
+
+PLACE_SEARCH_FIELD_MASK = ",".join(
+    [
+        "places.name",
+        "places.id",
+        "places.displayName",
+        "places.formattedAddress",
+        "places.location",
+        "places.rating",
+        "places.userRatingCount",
+        "places.priceLevel",
+        "places.businessStatus",
+        "places.currentOpeningHours.openNow",
+        "places.googleMapsUri",
+        "places.websiteUri",
+        "places.nationalPhoneNumber",
+        "places.types",
+    ]
+)
+PLACE_DETAILS_FIELD_MASK = PLACE_SEARCH_FIELD_MASK.replace("places.", "")
+
 
 MAX_SHELL_OUTPUT = 12_000
 ToolOutput = str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -35,6 +58,8 @@ def _tool_env_overrides() -> dict[str, str]:
     if config.gemini_api_key:
         # comment: Gemini snippets expect the key in the process environment.
         env["GEMINI_API_KEY"] = config.gemini_api_key
+    if google_key := getattr(config, "google_places_api_key", ""):
+        env["GOOGLE_MAPS_API_KEY"] = google_key
     return env
 
 
@@ -130,3 +155,86 @@ def get_load_image_tool(workspace: Path) -> Callable[[str], Awaitable[ToolOutput
         - image_path: relative or absolute path of the image
     """
     return load_image
+
+
+def _to_plain(value: Any) -> Any:
+    """Convert Google proto/client objects to compact JSON-safe Python values."""
+    if isinstance(value, Message):
+        value = Message.to_dict(value, preserving_proto_field_name=True)
+    elif hasattr(value, "to_dict"):
+        value = value.to_dict()
+    if isinstance(value, dict):
+        return {
+            key: plain
+            for key, item in value.items()
+            if (plain := _to_plain(item)) not in (None, "", [], {}, 0, 0.0)
+        }
+    if isinstance(value, list | tuple):
+        return [
+            plain
+            for item in value
+            if (plain := _to_plain(item)) not in ({}, [], "", None)
+        ]
+    return value
+
+
+def _location_bias(
+    latitude: str, longitude: str, radius_meters: int
+) -> dict[str, Any] | None:
+    """Build a Places API circular location bias when coordinates are available."""
+    if not latitude.strip() or not longitude.strip() or radius_meters <= 0:
+        return None
+    return {
+        "circle": {
+            "center": {"latitude": float(latitude), "longitude": float(longitude)},
+            "radius": float(radius_meters),
+        }
+    }
+
+
+def google_places_search(
+    query: str, latitude: str, longitude: str, radius_meters: int
+) -> str:
+    """Search Google Places API (New) for real-world places, businesses, landmarks, and local recommendations. Use it for queries where Maps/Places data is more useful than general web search.
+
+    Args:
+        - query: Natural language place search, such as "best cafes", "nearest hospital", or "veg restaurants in Lucknow".
+        - latitude: Decimal latitude for the user's current location bias. Pass an empty string if unknown.
+        - longitude: Decimal longitude for the user's current location bias. Pass an empty string if unknown.
+        - radius_meters: Radius for the location bias in meters. Pass 0 if latitude/longitude are unknown.
+    """
+    config = build_config()
+    if not config.google_places_api_key:
+        return "Google Places is not configured. Set [google].places_api_key or GOOGLE_MAPS_API_KEY."
+    request: dict[str, Any] = {"text_query": query, "max_result_count": 5}
+    if bias := _location_bias(latitude, longitude, radius_meters):
+        request["location_bias"] = bias
+    client = places_v1.PlacesClient(
+        client_options={"api_key": config.google_places_api_key}
+    )
+    response = client.search_text(
+        request=places_v1.SearchTextRequest(request),
+        metadata=(("x-goog-fieldmask", PLACE_SEARCH_FIELD_MASK),),
+    )
+    return json.dumps(
+        _to_plain({"places": list(response.places)}), ensure_ascii=False, indent=2
+    )
+
+
+def google_place_details(place_name: str) -> str:
+    """Get details for a Google Place returned by google_places_search. Use the place resource name from search results, for example "places/ChIJ...".
+
+    Args:
+        - place_name: Google Places resource name, usually the "name" field from google_places_search.
+    """
+    config = build_config()
+    if not config.google_places_api_key:
+        return "Google Places is not configured. Set [google].places_api_key or GOOGLE_MAPS_API_KEY."
+    client = places_v1.PlacesClient(
+        client_options={"api_key": config.google_places_api_key}
+    )
+    response = client.get_place(
+        request=places_v1.GetPlaceRequest(name=place_name),
+        metadata=(("x-goog-fieldmask", PLACE_DETAILS_FIELD_MASK),),
+    )
+    return json.dumps(_to_plain(response), ensure_ascii=False, indent=2)

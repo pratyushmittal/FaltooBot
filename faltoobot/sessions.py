@@ -25,7 +25,12 @@ from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
-from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
+from faltoobot.tools import (
+    get_load_image_tool,
+    get_run_shell_call_tool,
+    google_place_details,
+    google_places_search,
+)
 
 MESSAGES_FILE = "messages.json"
 WORKSPACE_DIR = "workspace"
@@ -220,6 +225,7 @@ def get_messages(session: Session) -> MessagesJson:
     )
 
 
+
 def get_last_usage(session: Session) -> dict[str, Any] | None:
     for item in reversed(get_messages(session)["messages"]):
         if not isinstance(item, dict):
@@ -337,6 +343,8 @@ async def get_answer_streaming(
         get_run_shell_call_tool(workspace),
         get_load_image_tool(workspace),
     ]
+    if getattr(config, "google_places_api_key", ""):
+        tools.extend([google_places_search, google_place_details])
     available_skills, load_skill_tool = get_load_skill_tool(
         workspace,
         chat_key=chat_key,

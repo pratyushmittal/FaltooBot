@@ -36,6 +36,7 @@ class Config:
     browser_binary: str
     gemini_api_key: str = ""
     gemini_model: str = GEMINI_MODEL
+    google_places_api_key: str = ""
 
 
 def app_root() -> Path:
@@ -53,6 +54,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
+        "google": {"places_api_key": ""},
         "ui": {"theme": ""},
         "browser": {"binary": None},
         "bot": {
@@ -68,6 +70,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     openai = as_dict(data.get("openai"))
     gemini = as_dict(data.get("gemini"))
     ui = as_dict(data.get("ui"))
+    google = as_dict(data.get("google"))
     browser = as_dict(data.get("browser"))
     bot = as_dict(data.get("bot"))
     return {
@@ -88,6 +91,11 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 gemini.get("gemini_api_key"), defaults["gemini"]["gemini_api_key"]
             ),
             "model": as_str(gemini.get("model"), defaults["gemini"]["model"]),
+        },
+        "google": {
+            "places_api_key": as_str(
+                google.get("places_api_key"), defaults["google"]["places_api_key"]
+            ),
         },
         "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
         "browser": {
@@ -131,6 +139,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     openai = data["openai"]
     gemini = data["gemini"]
     ui = data["ui"]
+    google = data["google"]
     browser = data["browser"]
     allow_group_chats = (
         bot["allow_group_chats"] if isinstance(bot["allow_group_chats"], list) else []
@@ -157,6 +166,9 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "[gemini]",
             f"gemini_api_key = {quote(str(gemini['gemini_api_key']))}",
             f"model = {quote(str(gemini['model']))}",
+            "",
+            "[google]",
+            f"places_api_key = {quote(str(google['places_api_key']))}",
             "",
             "[ui]",
             f"theme = {quote(str(ui['theme']))}",
@@ -242,6 +254,7 @@ def build_config() -> Config:
     bot = data["bot"]
     browser = data["browser"]
     gemini = data["gemini"]
+    google = data["google"]
     return Config(
         home=Path.home(),
         root=root,
@@ -264,6 +277,8 @@ def build_config() -> Config:
         gemini_api_key=str(gemini["gemini_api_key"])
         or os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=str(gemini["model"]),
+        google_places_api_key=str(google["places_api_key"])
+        or os.environ.get("GOOGLE_MAPS_API_KEY", ""),
     )
 
 

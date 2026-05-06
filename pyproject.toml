@@ -21,6 +21,7 @@ dependencies = [
   "google-genai>=1.73.1",
   "textual-speedups>=0.2.1",
   "certifi>=2026.4.22",
+  "google-maps-places>=0.8.0",
 ]
 
 [project.scripts]
