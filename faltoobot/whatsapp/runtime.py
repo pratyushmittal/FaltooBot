@@ -829,8 +829,8 @@ async def _should_store_event(
 
     source_ids = source_chat_ids(source)
     if source.IsGroup:
-        group_ids = {normalize_chat(chat_jid)}
-        allowed = _matches_allowed_chats(config.allow_group_chats, group_ids)
+        group_id = normalize_chat(chat_jid)
+        allowed = group_id in config.allow_group_chats
         if not allowed:
             logger.info(
                 "Ignoring group message from %s in %s because the group is not allowlisted. Seen IDs: %s",

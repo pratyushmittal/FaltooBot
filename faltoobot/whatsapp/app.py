@@ -9,7 +9,13 @@ from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.jid import Jid2String, build_jid
 
 from faltoobot import notify_queue
-from faltoobot.config import Config, build_config, normalize_chat
+from faltoobot.config import (
+    Config,
+    build_config,
+    load_toml,
+    merge_config,
+    normalize_chat,
+)
 from faltoobot.sessions import append_user_turn, get_session
 
 from . import login, runtime
@@ -28,6 +34,24 @@ chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 debounce_timers: dict[str, asyncio.TimerHandle] = {}
 pending_albums: dict[str, runtime.PendingAlbum] = {}
 notifications_stop = asyncio.Event()
+_allowlists_config_marker: tuple[str, int] | None = None
+
+
+def _refresh_bot_allowlists() -> None:
+    global _allowlists_config_marker
+    path = config.config_file
+    if not path.exists():
+        # comment: tests and first-run setups may provide an in-memory config only.
+        return
+    marker = (path.as_posix(), path.stat().st_mtime_ns)
+    if marker == _allowlists_config_marker:
+        # comment: most messages arrive without config edits, so skip reparsing.
+        return
+    bot = merge_config(load_toml(path))["bot"]
+    # comment: allowlists are often edited while the WhatsApp service is running.
+    config.allow_group_chats = set(bot["allow_group_chats"])
+    config.allowed_chats = set(bot["allowed_chats"])
+    _allowlists_config_marker = marker
 
 
 async def on_exit() -> None:
@@ -115,6 +139,7 @@ async def _handle_debounce_timer(
 
 
 async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
+    _refresh_bot_allowlists()
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     chat_key = normalize_chat(chat_jid)

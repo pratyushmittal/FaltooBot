@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections import defaultdict
 from importlib.metadata import version as package_version
 from io import BytesIO
@@ -483,6 +484,75 @@ def test_matches_allowed_chats(
         runtime._matches_allowed_chats(allowed_chats, runtime.source_chat_ids(source))
         is expected
     )
+
+
+def _write_bot_allowlist_config(
+    config: Config,
+    *,
+    group: str = "120363046573411792@g.us",
+    direct: str = "919838502343@s.whatsapp.net",
+) -> None:
+    data = default_config()
+    data["bot"]["allow_group_chats"] = [group]
+    data["bot"]["allowed_chats"] = [direct]
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+
+def test_refresh_bot_allowlists_reads_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    _write_bot_allowlist_config(config)
+    monkeypatch.setattr(whatsapp_app, "config", config)
+
+    whatsapp_app._refresh_bot_allowlists()
+
+    assert config.allow_group_chats == {"120363046573411792@g.us"}
+    assert config.allowed_chats == {"919838502343@s.whatsapp.net"}
+
+
+def test_refresh_bot_allowlists_reloads_changed_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    _write_bot_allowlist_config(config)
+    monkeypatch.setattr(whatsapp_app, "config", config)
+
+    whatsapp_app._refresh_bot_allowlists()
+    _write_bot_allowlist_config(
+        config,
+        group="120363046573411793@g.us",
+        direct="919838502344@s.whatsapp.net",
+    )
+    stat = config.config_file.stat()
+    os.utime(config.config_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+    whatsapp_app._refresh_bot_allowlists()
+
+    assert config.allow_group_chats == {"120363046573411793@g.us"}
+    assert config.allowed_chats == {"919838502344@s.whatsapp.net"}
+
+
+def test_refresh_bot_allowlists_skips_unchanged_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    _write_bot_allowlist_config(config)
+    calls = 0
+    original_load_toml = whatsapp_app.load_toml
+
+    def counted_load_toml(path: Path) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original_load_toml(path)
+
+    monkeypatch.setattr(whatsapp_app, "config", config)
+    monkeypatch.setattr(whatsapp_app, "load_toml", counted_load_toml)
+
+    whatsapp_app._refresh_bot_allowlists()
+    whatsapp_app._refresh_bot_allowlists()
+
+    assert calls == 1
 
 
 def test_empty_group_allowlist_blocks_group_messages() -> None:
