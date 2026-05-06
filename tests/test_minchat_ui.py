@@ -52,6 +52,37 @@ def test_minchat_uses_terminal_theme_on_startup(
     assert app.theme == "textual-light"
 
 
+def test_minchat_terminal_title_uses_workspace_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles: list[str] = []
+    workspace, app = build_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("faltoobot.faltoochat.app.set_terminal_title", titles.append)
+
+    app.refresh_terminal_title()
+    app.is_answering = True
+    app.refresh_terminal_title()
+
+    assert titles == [workspace.name, f"{workspace.name} ・answering"]
+    assert app.title == f"{workspace.name} ・answering"
+
+
+@pytest.mark.anyio
+async def test_minchat_sets_terminal_title_on_mount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles: list[str] = []
+    workspace, app = build_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("faltoobot.faltoochat.app.set_terminal_title", titles.append)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+    assert workspace.name in titles
+
+
 @pytest.mark.anyio
 async def test_minchat_persists_and_restores_selected_theme(
     tmp_path: Path,
@@ -1170,6 +1201,10 @@ async def test_minchat_shows_retry_when_answer_fails(
         assert "\\[overloaded]" in cast(str, error_block.content)
 
         await app.action_retry_failed_message()
+        assert not list(
+            app.query_one("#transcript").query(Static).filter(".retry-error")
+        )
+        assert app.focused is composer
         await wait_for_condition(
             lambda: (
                 not app.is_answering

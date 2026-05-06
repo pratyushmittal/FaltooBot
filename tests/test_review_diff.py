@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from faltoobot.faltoochat.diff import Diff, get_diff
+from faltoobot.faltoochat.review_api import reviews_prompt
 from faltoobot.faltoochat.git import (
     _selected_patch,
     _stage_entries,
@@ -83,6 +84,28 @@ class ReviewViewStub:
 
 def review_view_stub() -> ReviewViewStub:
     return ReviewViewStub()
+
+
+def test_reviews_prompt_renders_file_comments() -> None:
+    prompt = reviews_prompt(
+        [
+            {
+                "filename": Path("alpha.py"),
+                "line_number_start": 0,
+                "line_number_end": 0,
+                "file_line_number_start": 0,
+                "file_line_number_end": 0,
+                "code": "old\n+new",
+                "comment": "Consider the whole file.",
+            }
+        ]
+    )
+
+    assert "### File comment" in prompt
+    assert "### Line `0-0`" not in prompt
+    assert "Code:" not in prompt
+    assert "old\n+new" not in prompt
+    assert "Consider the whole file." in prompt
 
 
 def test_comment_title_includes_staged_hunk_count() -> None:

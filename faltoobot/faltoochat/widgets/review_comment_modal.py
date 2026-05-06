@@ -7,6 +7,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static, TextArea
 
+from ..review_api import FILE_COMMENT_LINE
 from .search_file import SearchFile
 
 if TYPE_CHECKING:
@@ -101,9 +102,14 @@ class ReviewCommentModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="review-comment-dialog"):
-            yield Static(
-                f"Add review for {self.file_path}:{self.line_number_start}-{self.line_number_end}"
-            )
+            title = f"Add review for {self.file_path}"
+            if (
+                self.line_number_start != FILE_COMMENT_LINE
+                or self.line_number_end != FILE_COMMENT_LINE
+            ):
+                # comment: file comments use the zero sentinel and should not show a fake range.
+                title = f"{title}:{self.line_number_start}-{self.line_number_end}"
+            yield Static(title)
             with VerticalScroll(id="review-comment-code-scroll"):
                 yield Static(self.code, id="review-comment-code", markup=False)
             yield ReviewCommentEditor(

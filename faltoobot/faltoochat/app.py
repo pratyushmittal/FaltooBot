@@ -25,7 +25,10 @@ from textual.widgets import (
 from faltoobot import notify_queue, sessions
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
-from faltoobot.faltoochat.terminal import textual_theme_from_terminal
+from faltoobot.faltoochat.terminal import (
+    set_terminal_title,
+    textual_theme_from_terminal,
+)
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
@@ -336,6 +339,13 @@ class FaltooChatApp(App[None]):
     def focus_composer(self) -> None:
         self.set_focus(self.composer, scroll_visible=False)
 
+    def refresh_terminal_title(self) -> None:
+        title = self.workspace.name or str(self.workspace)
+        if self.is_answering:
+            title = f"{title} ・answering"
+        self.title = title
+        set_terminal_title(title)
+
     def refresh_composer_title(self) -> None:
         title = get_workspace_label(self.workspace)
         if self.composer.border_title == title:
@@ -409,6 +419,7 @@ class FaltooChatApp(App[None]):
         self.transcript = self.query_one("#transcript", VerticalScroll)
         self.composer = self.query_one("#composer", Composer)
         self.chat_shell = self.query_one("#chat-shell", ChatShell)
+        self.refresh_terminal_title()
         self.refresh_composer_title()
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
@@ -451,6 +462,7 @@ class FaltooChatApp(App[None]):
             await self.queue().add_to_queue(message_item)
             return
         self.is_answering = True
+        self.refresh_terminal_title()
         transcript = self.transcript
         try:
             stored = await self._add_user_turn(transcript, message_item)
@@ -466,6 +478,7 @@ class FaltooChatApp(App[None]):
             return
         # comment: duplicate notification ids can skip storing and therefore skip streaming.
         self.is_answering = False
+        self.refresh_terminal_title()
         composer = self.composer
         composer.border_subtitle = ""
         if self.tabs().active == "chat-tab":
@@ -601,6 +614,7 @@ class FaltooChatApp(App[None]):
             completed = True
         finally:
             self.is_answering = False
+            self.refresh_terminal_title()
             if completed:
                 self.bell()
             composer.border_subtitle = ""
@@ -618,7 +632,8 @@ class FaltooChatApp(App[None]):
         if retry:
             content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
         transcript = self.transcript
-        await transcript.mount(Static(content, classes="unknown"))
+        classes = "unknown retry-error" if retry else "unknown"
+        await transcript.mount(Static(content, classes=classes))
         transcript.anchor()
 
     async def action_retry_failed_message(self) -> None:
@@ -629,8 +644,12 @@ class FaltooChatApp(App[None]):
                 severity="warning",
             )
             return
-        self.is_answering = True
         transcript = self.transcript
+        for block in list(transcript.query(Static).filter(".retry-error")):
+            await block.remove()
+        self.focus_composer()
+        self.is_answering = True
+        self.refresh_terminal_title()
         self.run_worker(self._start_streaming(transcript), exclusive=True)
 
 

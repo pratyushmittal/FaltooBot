@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, OptionList, TabbedContent, TabPane, TextArea
+from textual.widgets import Input, OptionList, Static, TabbedContent, TabPane, TextArea
 from textual.widgets.option_list import Option
 
 from faltoobot import sessions
@@ -1334,6 +1334,51 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
         assert "Look closely" in seen[0]
         assert "alpha.py" in seen[0]
         assert app.query_one(ReviewView).reviews == []
+
+
+@pytest.mark.anyio
+async def test_review_add_file_comment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = next(
+            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
+        )
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        await pilot.press("C")
+        await pilot.pause(0)
+        modal = app.screen
+        assert isinstance(modal, ReviewCommentModal)
+        modal_title = str(modal.query_one(Static).render())
+        assert "alpha.py" in modal_title
+        assert ":0-0" not in modal_title
+        comment_input = modal.query_one("#review-comment-input", TextArea)
+        await pilot.click(comment_input)
+        await pilot.press("F", "i", "l", "e", " ", "n", "o", "t", "e", "enter")
+        await pilot.pause(0)
+
+        assert app.query_one(ReviewView).reviews == [
+            {
+                "filename": Path("alpha.py"),
+                "line_number_start": 0,
+                "line_number_end": 0,
+                "file_line_number_start": 0,
+                "file_line_number_end": 0,
+                "code": "",
+                "comment": "File note",
+            }
+        ]
+        assert viewer.border_title == "1 comment · 0/2 hunks staged"
+        assert viewer.render_line(1).crop(0, viewer.gutter_width).text.strip() != "*"
 
 
 def test_search_project_caches_project_files(monkeypatch: pytest.MonkeyPatch) -> None:

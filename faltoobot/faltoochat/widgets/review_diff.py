@@ -28,7 +28,7 @@ from ..editor_utils import (
     word_under_cursor,
 )
 from ..git import apply_selected_diff_lines, get_selected_change_state, stage_file
-from ..review_api import get_review
+from ..review_api import FILE_COMMENT_LINE, get_review
 from ..terminal import open_in_editor
 
 from .review_comment_modal import ReviewCommentModal
@@ -122,6 +122,7 @@ class ReviewDiffView(TextArea):
         Binding("escape", "review_escape", "Exit Search", priority=True, show=True),
         Binding("m", "review_cycle_mode", "Review Mode", priority=True, show=True),
         Binding("a,c", "review_add", "Add Review", priority=True, show=True),
+        Binding("C", "review_add_file", "Add File Review", priority=True, show=True),
         Binding("s", "review_stage_lines", "Stage Lines", priority=True, show=True),
         Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
         Binding(
@@ -608,11 +609,35 @@ class ReviewDiffView(TextArea):
     async def action_review_add(self) -> None:
         await self.reload_in_place()
         start, end = _review_range(self)
-        code = _get_code_for_review_submission(self.diff, start, end)
-        file_line_number_start = _file_line_for_diff_line(self.diff, start)
-        file_line_number_end = _file_line_for_diff_line(self.diff, end)
-        line_number_start = start + 1
-        line_number_end = end + 1
+        await self._add_review(start, end)
+
+    async def action_review_add_file(self) -> None:
+        await self.reload_in_place()
+        if not self.diff:
+            # comment: deleted/empty tabs can briefly have no diff rows to attach a file comment to.
+            return
+        await self._add_review(0, len(self.diff) - 1, file_comment=True)
+
+    async def _add_review(
+        self, start: int, end: int, *, file_comment: bool = False
+    ) -> None:
+        code = (
+            ""
+            if file_comment
+            else _get_code_for_review_submission(self.diff, start, end)
+        )
+        file_line_number_start = (
+            FILE_COMMENT_LINE
+            if file_comment
+            else _file_line_for_diff_line(self.diff, start)
+        )
+        file_line_number_end = (
+            FILE_COMMENT_LINE
+            if file_comment
+            else _file_line_for_diff_line(self.diff, end)
+        )
+        line_number_start = FILE_COMMENT_LINE if file_comment else start + 1
+        line_number_end = FILE_COMMENT_LINE if file_comment else end + 1
         existing = get_review(
             self.review_view.reviews,
             filename=self.file_path,
@@ -1032,6 +1057,12 @@ def _commented_lines(view: ReviewDiffView) -> set[int]:
     lines: set[int] = set()
     for review in view.review_view.reviews:
         if review["filename"] != view.file_path:
+            continue
+        if (
+            review["line_number_start"] == FILE_COMMENT_LINE
+            and review["line_number_end"] == FILE_COMMENT_LINE
+        ):
+            # comment: file-level comments belong in the title count, not every line gutter.
             continue
         lines.update(range(review["line_number_start"] - 1, review["line_number_end"]))
     return lines
