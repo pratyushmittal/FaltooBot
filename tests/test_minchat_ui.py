@@ -1224,3 +1224,27 @@ async def test_minchat_answer_completion_does_not_focus_composer_outside_chat(
 
         assert app.query_one(TabbedContent).active == "review-tab"
         assert app.screen.focused is not composer
+
+
+@pytest.mark.anyio
+async def test_composer_title_refreshes_when_workspace_label_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.get_workspace_label", lambda _: "repo • old"
+    )
+    monkeypatch.setattr("faltoobot.faltoochat.app.COMPOSER_TITLE_REFRESH_SECONDS", 0.01)
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        composer = app.query_one("#composer", Composer)
+        assert composer.border_title == "repo • old"
+        monkeypatch.setattr(
+            "faltoobot.faltoochat.app.get_workspace_label", lambda _: "repo • new"
+        )
+        await asyncio.wait_for(
+            wait_for_condition(lambda: composer.border_title == "repo • new"),
+            timeout=1,
+        )

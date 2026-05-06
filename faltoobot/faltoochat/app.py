@@ -53,6 +53,7 @@ from .widgets import (
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
+COMPOSER_TITLE_REFRESH_SECONDS = 7.0
 
 
 def _render_blocks(text: str, classes: str) -> list[Markdown]:
@@ -336,7 +337,11 @@ class FaltooChatApp(App[None]):
         self.set_focus(self.composer, scroll_visible=False)
 
     def refresh_composer_title(self) -> None:
-        self.composer.border_title = get_workspace_label(self.workspace)
+        title = get_workspace_label(self.workspace)
+        if self.composer.border_title == title:
+            # comment: polling often finds the same git branch, so avoid redundant redraws.
+            return
+        self.composer.border_title = title
 
     def action_show_chat_tab(self) -> None:
         self.refresh_composer_title()
@@ -411,6 +416,7 @@ class FaltooChatApp(App[None]):
         if self._binding_errors:
             self.push_screen(BindingsErrorModal(self._binding_errors))
         self.set_interval(1.0, self._poll_notifications)
+        self.set_interval(COMPOSER_TITLE_REFRESH_SECONDS, self.refresh_composer_title)
 
     def _poll_notifications(self) -> None:
         # comment: timer ticks can overlap while an earlier notification drain is still running.
