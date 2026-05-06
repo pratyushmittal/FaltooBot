@@ -631,6 +631,8 @@ async def test_get_streaming_reply_adds_codex_session_headers_for_oauth(
     assert client.responses.calls[0]["prompt_cache_key"] == "session-123"
     assert client.responses.calls[0]["extra_headers"] == {
         "session_id": "session-123",
+        "thread_id": "session-123",
+        "x-client-request-id": "session-123",
     }
     assert client.closed is True
 

@@ -72,7 +72,7 @@ def _request_extra_headers(
     config: Config, prompt_cache_key: str | None
 ) -> dict[str, str] | None:
     # comment: only ChatGPT Codex uses these sticky-routing headers. Keep them aligned with
-    # prompt_cache_key so follow-up requests have the same cache-affinity/session id signal.
+    # prompt_cache_key so follow-up requests have the same cache-affinity/thread signal.
     if not prompt_cache_key:
         return None
     # comment: API-key requests go to the public OpenAI API, which does not use Codex session
@@ -81,6 +81,8 @@ def _request_extra_headers(
         return None
     return {
         "session_id": prompt_cache_key,
+        "thread_id": prompt_cache_key,
+        "x-client-request-id": prompt_cache_key,
     }
 
 
