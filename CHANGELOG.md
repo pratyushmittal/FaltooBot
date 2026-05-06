@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 5.1.0 — 2026-05-06
+
+### Changed
+- WhatsApp bot now picks up direct and group allowlist edits while running, without requiring a service restart.
+- Faltoochat now refreshes the composer repository/branch title when the branch changes outside the app.
+
+### Fixed
+- WhatsApp group allowlist checks now match the group JID directly, avoiding participant-ID matching confusion.
+
 ## 5.0.0 — 2026-05-05
 
 ### Breaking
