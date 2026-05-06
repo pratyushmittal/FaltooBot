@@ -159,7 +159,9 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
         if turn is None:
             return
-        stored = turn["prompt"] in runtime.SLASH_COMMANDS or await append_user_turn(
+        stored = bool(
+            runtime.get_slash_command(turn["prompt"])
+        ) or await append_user_turn(
             session,
             question=turn["prompt"],
             attachments=turn["attachments"] or None,

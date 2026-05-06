@@ -20,7 +20,11 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
-from faltoobot.config import Config, config_status_text, normalize_chat
+from faltoobot.config import (
+    Config,
+    config_status_text,
+    normalize_chat,
+)
 from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
@@ -33,10 +37,11 @@ from faltoobot.sessions import (
 )
 
 from .audio import AudioError, audio_prompt, get_audio
+from . import group_approvals
+from .allowlist import matches_allowed_chats
 from .inspect import inspect_text_for_messages
 
 logger = logging.getLogger("faltoobot")
-MIN_ALLOWLIST_DIGITS = 8
 TYPING_REFRESH_SECONDS = 4.0
 MESSAGE_CHUNK_LIMIT = 3500
 WHATSAPP_MEDIA_DIR = ".whatsapp"
@@ -51,7 +56,16 @@ IMAGE_SUFFIXES = {
 }
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
-SLASH_COMMANDS = {"/help", "/inspect", "/status", "/reset"}
+SLASH_COMMANDS = {
+    "/help",
+    "/inspect",
+    "/status",
+    "/reset",
+    "/approve_group",
+    "/deny_group",
+    "/groups",
+}
+ARG_SLASH_COMMANDS = {"/approve_group", "/deny_group"}
 
 
 HELP_TEXT = (
@@ -81,33 +95,6 @@ def source_chat_ids(source: Any) -> set[str]:
         for jid in (source.Chat, source.Sender, source.SenderAlt, source.RecipientAlt)
     }
     return {source_id for source_id in source_ids if source_id}
-
-
-def _matches_allowed_chats(allowed_chats: set[str], source_ids: set[str]) -> bool:
-    if not allowed_chats:
-        return True
-    if not source_ids.isdisjoint(allowed_chats):
-        return True
-
-    for allowed_chat in allowed_chats:
-        if not allowed_chat.endswith("@s.whatsapp.net"):
-            continue
-        allowed_phone = allowed_chat.split("@", 1)[0]
-        if len(allowed_phone) < MIN_ALLOWLIST_DIGITS:
-            continue
-
-        for source_id in source_ids:
-            if not source_id.endswith("@s.whatsapp.net"):
-                continue
-            source_phone = source_id.split("@", 1)[0]
-            if len(source_phone) < MIN_ALLOWLIST_DIGITS:
-                continue
-            if allowed_phone.endswith(source_phone) or source_phone.endswith(
-                allowed_phone
-            ):
-                return True
-
-    return False
 
 
 async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -> None:
@@ -356,9 +343,19 @@ async def _handle_slash_command(
 ) -> None:
     event = cast(MessageEv, turn["event"])
     prompt = turn["prompt"]
-    if prompt == "/help":
+    if await group_approvals.handle_command(
+        client,
+        config=config,
+        event=event,
+        prompt=prompt,
+        source_ids=source_chat_ids(event.Info.MessageSource),
+    ):
+        return
+    command_text = get_slash_command(prompt)
+    command = command_text.split(maxsplit=1)[0] if command_text else None
+    if command == "/help":
         await client.reply_message(HELP_TEXT, event)
-    elif prompt == "/status":
+    elif command == "/status":
         await client.reply_message(
             config_status_text(
                 config,
@@ -368,9 +365,9 @@ async def _handle_slash_command(
             ),
             event,
         )
-    elif prompt == "/inspect":
+    elif command == "/inspect":
         await client.reply_message(inspect_text_for_messages(messages_json), event)
-    elif prompt == "/reset":
+    elif command == "/reset":
         reset_session = get_session(chat_key=session.chat_key, session_id=str(uuid4()))
         reset_messages_json = get_messages(reset_session)
         old_agents = Path(messages_json["workspace"]) / "AGENTS.md"
@@ -414,7 +411,7 @@ async def process_turn_locked(
     prompt = turn["prompt"]
     attachments = turn["attachments"]
     messages_json = get_messages(session)
-    if event is not None and not attachments and prompt in SLASH_COMMANDS:
+    if event is not None and not attachments and get_slash_command(prompt):
         await _handle_slash_command(
             client,
             session=session,
@@ -553,7 +550,7 @@ def _prompt_with_sender(
     sender_id: str | None,
 ) -> str:
     text = prompt.strip()
-    if text in SLASH_COMMANDS or not sender_name:
+    if get_slash_command(text) or not sender_name:
         return text
     speaker = " ".join(sender_name.split()).strip()
     if not speaker:
@@ -569,23 +566,26 @@ def _prompt_with_sender(
     return f"{prefix}\n{text}" if "\n" in text else f"{prefix} {text}"
 
 
-def _normalized_slash_command(text: str) -> str:
-    """Return a bare slash command from direct or addressed WhatsApp command text."""
-    prompt = text.strip()
-    if prompt in SLASH_COMMANDS:
-        return prompt
-    # comment: group commands often arrive as "@bot /status"; strip mentions before the command.
-    match = re.fullmatch(r"(?:@\S+\s+)+(?P<command>/\w+)", prompt)
-    if match is None:
-        return prompt
-    command = match.group("command")
-    return command if command in SLASH_COMMANDS else prompt
+def get_slash_command(text: str) -> str | None:
+    """Return a built-in slash command from direct or addressed WhatsApp text."""
+    parts = text.strip().split()
+    while parts and parts[0].startswith("@"):
+        parts.pop(0)
+    if not parts or parts[0] not in SLASH_COMMANDS:
+        return None
+    command = parts[0]
+    args = parts[1:]
+    if command in ARG_SLASH_COMMANDS:
+        return " ".join(parts)
+    if command not in ARG_SLASH_COMMANDS and not args:
+        return command
+    return None
 
 
 def _turn_prompt(user_text: str, event: MessageEv) -> str:
-    normalized_user_text = _normalized_slash_command(user_text)
-    if normalized_user_text in SLASH_COMMANDS:
-        return normalized_user_text
+    slash_command = get_slash_command(user_text)
+    if slash_command:
+        return slash_command
     source = event.Info.MessageSource
     sender_name = _sender_name(event) if source.IsGroup else None
     sender_id = _sender_id(event) if source.IsGroup else None
@@ -626,6 +626,16 @@ def _sender_name(event: MessageEv) -> str | None:
     return pushname or _sender_id(event)
 
 
+async def _event_addresses_bot(client: NewAClient, event: MessageEv) -> bool:
+    addressed_ids = _mentioned_chat_ids(event.Message) | _quoted_participant_ids(
+        event.Message
+    )
+    if not addressed_ids:
+        return False
+    bot_ids = await _bot_identity_ids(client)
+    return not addressed_ids.isdisjoint(bot_ids)
+
+
 async def _bot_identity_ids(client: NewAClient) -> set[str]:
     """Return the normalized WhatsApp IDs that identify the connected bot account."""
     cache_key = id(client)
@@ -661,14 +671,8 @@ async def should_reply_now(
     # comment: a 1:1 WhatsApp group is effectively a direct chat with the bot.
     if is_two_people_group:
         return True
-    addressed_ids = _mentioned_chat_ids(event.Message) | _quoted_participant_ids(
-        event.Message
-    )
-    if not addressed_ids:
-        # comment: larger groups need an explicit mention or reply to the bot.
-        return False
-    bot_ids = await _bot_identity_ids(client)
-    return not addressed_ids.isdisjoint(bot_ids)
+    # comment: larger groups need an explicit mention or reply to the bot.
+    return await _event_addresses_bot(client, event)
 
 
 def _quoted_reply_text(text: str, *, max_chars: int = 500) -> str:
@@ -860,12 +864,14 @@ async def _transcribe_audio_or_reply(
         return None
 
 
-async def _should_store_event(
+async def _should_store_event(  # noqa: PLR0913
+    client: NewAClient,
     event: MessageEv,
     *,
     config: Config,
     chat_jid: str,
     sender_jid: str,
+    message_text: str,
 ) -> bool:
     source = event.Info.MessageSource
     if source.IsFromMe:
@@ -875,16 +881,28 @@ async def _should_store_event(
     if source.IsGroup:
         group_id = normalize_chat(chat_jid)
         allowed = group_id in config.allow_group_chats
-        if not allowed:
-            logger.info(
-                "Ignoring group message from %s in %s because the group is not allowlisted. Seen IDs: %s",
-                sender_jid,
-                chat_jid,
-                ", ".join(sorted(source_ids)) or "<none>",
+        if allowed:
+            return True
+        logger.info(
+            "Ignoring group message from %s in %s because the group is not allowlisted. Seen IDs: %s",
+            sender_jid,
+            chat_jid,
+            ", ".join(sorted(source_ids)) or "<none>",
+        )
+        if await _event_addresses_bot(client, event):
+            await group_approvals.request_approval(
+                client,
+                config=config,
+                group=event.Info.MessageSource.Chat,
+                group_jid=group_id,
+                sender_jid=sender_jid,
+                sender_name=_sender_name(event),
+                message=message_text,
+                logger=logger,
             )
-        return allowed
+        return False
 
-    allowed = _matches_allowed_chats(config.allowed_chats, source_ids)
+    allowed = matches_allowed_chats(config.allowed_chats, source_ids)
     if not allowed:
         logger.info(
             "Ignoring message from %s in %s because it is not allowlisted. Seen IDs: %s",
@@ -908,19 +926,21 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     sender_jid = Jid2String(source.Sender)
+    message = event.Message
+    message_id = event.Info.ID
+    user_text = _message_text(message)
 
     if not await _should_store_event(
+        client,
         event,
         config=config,
         chat_jid=chat_jid,
         sender_jid=sender_jid,
+        message_text=user_text,
     ):
         return None
 
     workspace = Path(get_messages(session)["workspace"])
-    message = event.Message
-    message_id = event.Info.ID
-    user_text = _message_text(message)
     audio = get_audio(event)
     image_message = message.HasField("imageMessage")
     location_message = message.HasField("locationMessage") or message.HasField(
