@@ -225,12 +225,6 @@ async def _run_tool(function: Tool, kwargs: dict[str, Any]) -> ToolOutput:
     )
 
 
-def _raise_if_current_task_cancelled() -> None:
-    task = asyncio.current_task()
-    if task is not None and task.cancelling():
-        raise asyncio.CancelledError()
-
-
 async def _tool_result(
     tools_by_name: dict[str, Tool],
     tool_call: FunctionToolCallItem,
@@ -354,7 +348,6 @@ async def get_streaming_reply(  # noqa: C901
             result = await _tool_result(tools_by_name, tool_call)
             current_input.append(_to_message_item(result))
             yield result
-            _raise_if_current_task_cancelled()
 
         async for item in reply(current_input):
             yield item

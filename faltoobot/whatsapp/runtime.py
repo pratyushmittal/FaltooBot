@@ -825,15 +825,11 @@ async def _handle_album_event(  # noqa: PLR0913
     return None, False
 
 
-def _message_summary(
-    user_text: str, audio: Any, image_message: bool, location_message: bool
-) -> str:
+def _message_summary(user_text: str, audio: Any, image_message: bool) -> str:
     if user_text:
         return user_text
     if image_message:
         return "<image>"
-    if location_message:
-        return "<location>"
     return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
 
 
@@ -943,16 +939,12 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     workspace = Path(get_messages(session)["workspace"])
     audio = get_audio(event)
     image_message = message.HasField("imageMessage")
-    location_message = message.HasField("locationMessage") or message.HasField(
-        "liveLocationMessage"
-    )
     document = _document_message(message)
     expected_images, album_id = _album_id(message, message_id)
     if (
         not user_text
         and audio is None
         and not image_message
-        and not location_message
         and document is None
         and not album_id
     ):
@@ -1016,7 +1008,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
         "Received message from %s in %s: %s",
         sender_jid,
         chat_jid,
-        _message_summary(user_text, audio, image_message, location_message),
+        _message_summary(user_text, audio, image_message),
     )
     return {
         "event": event,

@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
 from textual.widget import Widget
+from textual.worker import Worker
 from textual.widgets import (
     Footer,
     Markdown,
@@ -309,8 +310,7 @@ class FaltooChatApp(App[None]):
         self.session = session
         self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.is_answering = False
-        self.active_stream_worker: Any | None = None
-        self.cancel_requested = False
+        self.active_stream_worker: Worker[None] | None = None
         self._is_polling_notifications = False
         self.transcript: VerticalScroll
         self.composer: Composer
@@ -608,25 +608,19 @@ class FaltooChatApp(App[None]):
 
     async def _start_streaming(self, transcript: VerticalScroll) -> None:
         completed = False
-        cancelled_by_user = False
         composer = self.composer
-        composer.border_subtitle = "answering · Ctrl+C to cancel"
+        composer.border_subtitle = "answering · Ctrl+C to stop"
         try:
             await self._stream_events(transcript)
         except asyncio.CancelledError:
-            cancelled_by_user = self.cancel_requested
-            if not cancelled_by_user:
-                raise
-            sessions.append_interrupted_turn(self.session)
-            await transcript.mount(Markdown("Response interrupted by user.", classes="unknown"))
-            transcript.anchor()
+            # comment: user/app cancellations leave messages.json unchanged.
+            pass
         except Exception as error:
             await self._show_retry_error(error)
         else:
             completed = True
         finally:
             self.is_answering = False
-            self.cancel_requested = False
             self.active_stream_worker = None
             self.refresh_terminal_title()
             if completed:
@@ -639,13 +633,17 @@ class FaltooChatApp(App[None]):
             await self.queue().submit_next_message()
 
     def action_cancel_response(self) -> None:
-        if not self.is_answering:
+        worker = self.active_stream_worker
+        # comment: Ctrl+C can arrive while a message is being stored, before streaming starts.
+        if worker is None and self.is_answering:
             self.notify("No response running", severity="information")
             return
-        self.cancel_requested = True
-        self.composer.border_subtitle = "+ cancelling..."
-        if self.active_stream_worker is not None:
-            self.active_stream_worker.cancel()
+        # comment: when idle, keep the usual Ctrl+C exits app behavior.
+        if worker is None:
+            self.exit()
+            return
+        self.composer.border_subtitle = "cancelling..."
+        worker.cancel()
 
     async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
         message = str(error).strip() or repr(error)

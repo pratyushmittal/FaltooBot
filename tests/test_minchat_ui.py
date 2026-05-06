@@ -926,7 +926,7 @@ async def test_minchat_queues_messages_while_streaming(
         await composer.action_composer_enter()
         await asyncio.wait_for(started.wait(), timeout=3)
         await pilot.pause(0)
-        assert str(composer.border_subtitle) == "answering · Ctrl+C to cancel"
+        assert str(composer.border_subtitle) == "answering · Ctrl+C to stop"
 
         composer.load_text("later")
         await composer.action_composer_enter()
@@ -975,7 +975,7 @@ async def test_minchat_ctrl_c_cancels_response_and_keeps_queue(
         await composer.action_composer_enter()
         await asyncio.wait_for(started.wait(), timeout=3)
         await pilot.pause(0)
-        assert str(composer.border_subtitle) == "answering · Ctrl+C to cancel"
+        assert str(composer.border_subtitle) == "answering · Ctrl+C to stop"
 
         composer.load_text("later")
         await composer.action_composer_enter()
@@ -983,18 +983,17 @@ async def test_minchat_ctrl_c_cancels_response_and_keeps_queue(
         assert submit_queue.get_queue(app.session)
 
         app.action_cancel_response()
-        await asyncio.wait_for(wait_for_condition(lambda: not app.is_answering), timeout=3)
+        await asyncio.wait_for(
+            wait_for_condition(lambda: not app.is_answering), timeout=3
+        )
         await pilot.pause(0)
 
         assert str(composer.border_subtitle) == ""
         assert submit_queue.get_queue(app.session)
-        texts = [message for message in sessions.get_messages(app.session)["messages"]]
-        assert texts[-1]["role"] == "assistant"
-        assert "id" not in texts[-1]
-        assert "status" not in texts[-1]
-        assert texts[-1]["content"] == [
-            {"type": "output_text", "text": "interrupted by user"}
-        ]
+        texts = sessions.get_messages(app.session)["messages"]
+        assert len(texts) == 1
+        assert texts[-1]["role"] == "user"
+
 
 def test_get_local_user_message_item_keeps_local_image_paths() -> None:
     message = get_local_user_message_item(
