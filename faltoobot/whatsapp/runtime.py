@@ -12,6 +12,8 @@ from neonize.proto import Neonize_pb2
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
     ContextInfo,
     DocumentMessage,
+    LiveLocationMessage,
+    LocationMessage,
     Message,
     MessageAssociation,
 )
@@ -457,6 +459,38 @@ async def process_turn_locked(
         await typing_task
 
 
+def _location_text(
+    location: LocationMessage | LiveLocationMessage, *, live: bool
+) -> str:
+    latitude = float(getattr(location, "degreesLatitude", 0.0) or 0.0)
+    longitude = float(getattr(location, "degreesLongitude", 0.0) or 0.0)
+    if not latitude and not longitude:
+        return ""
+    parts = [
+        "User shared a live WhatsApp location"
+        if live
+        else "User shared a WhatsApp location",
+        f"latitude={latitude:.7f}",
+        f"longitude={longitude:.7f}",
+    ]
+    for label, attr in (
+        ("name", "name"),
+        ("address", "address"),
+        ("url", "URL"),
+        ("caption", "caption"),
+        ("comment", "comment"),
+    ):
+        value = str(getattr(location, attr, "") or "").strip()
+        if value:
+            parts.append(f"{label}={value}")
+    accuracy = int(getattr(location, "accuracyInMeters", 0) or 0)
+    if accuracy:
+        parts.append(f"accuracy={accuracy}m")
+    maps_url = f"https://maps.google.com/?q={latitude:.7f},{longitude:.7f}"
+    parts.append(f"map={maps_url}")
+    return "; ".join(parts) + "."
+
+
 def _message_text(message: Any) -> str:
     text = message.conversation
     if not text and message.HasField("extendedTextMessage"):
@@ -465,6 +499,10 @@ def _message_text(message: Any) -> str:
         text = message.imageMessage.caption
     if not text and (document := _document_message(message)) is not None:
         text = str(getattr(document, "caption", "") or "")
+    if not text and message.HasField("locationMessage"):
+        text = _location_text(message.locationMessage, live=False)
+    if not text and message.HasField("liveLocationMessage"):
+        text = _location_text(message.liveLocationMessage, live=True)
     return text.strip()
 
 
@@ -475,6 +513,8 @@ def _message_context_info(message: Message) -> ContextInfo | None:
         "audioMessage",
         "albumMessage",
         "documentMessage",
+        "locationMessage",
+        "liveLocationMessage",
     ):
         if not message.HasField(field_name):
             continue
@@ -781,11 +821,15 @@ async def _handle_album_event(  # noqa: PLR0913
     return None, False
 
 
-def _message_summary(user_text: str, audio: Any, image_message: bool) -> str:
+def _message_summary(
+    user_text: str, audio: Any, image_message: bool, location_message: bool
+) -> str:
     if user_text:
         return user_text
     if image_message:
         return "<image>"
+    if location_message:
+        return "<location>"
     return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
 
 
@@ -879,12 +923,16 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     user_text = _message_text(message)
     audio = get_audio(event)
     image_message = message.HasField("imageMessage")
+    location_message = message.HasField("locationMessage") or message.HasField(
+        "liveLocationMessage"
+    )
     document = _document_message(message)
     expected_images, album_id = _album_id(message, message_id)
     if (
         not user_text
         and audio is None
         and not image_message
+        and not location_message
         and document is None
         and not album_id
     ):
@@ -948,7 +996,7 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
         "Received message from %s in %s: %s",
         sender_jid,
         chat_jid,
-        _message_summary(user_text, audio, image_message),
+        _message_summary(user_text, audio, image_message, location_message),
     )
     return {
         "event": event,
