@@ -2,6 +2,17 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 5.3.0 — 2026-05-06
+
+### Added
+- WhatsApp bot can now request approval for unknown groups when mentioned, and allowed direct chats can approve, deny, or list group requests with `/approve_group`, `/deny_group`, and `/groups`.
+- WhatsApp shared locations and live locations are now included in prompts with coordinates and a Maps link.
+- Faltoochat responses can now be stopped with `Ctrl+C` while streaming.
+
+### Fixed
+- ChatGPT OAuth-backed Codex requests now include aligned thread headers for more reliable session continuity.
+- WhatsApp slash commands with extra text are now treated as normal messages instead of accidentally running the command.
+
 ## 5.2.0 — 2026-05-06
 
 ### Added
