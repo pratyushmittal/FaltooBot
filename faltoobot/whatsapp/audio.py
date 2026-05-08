@@ -75,6 +75,9 @@ async def audio_prompt(  # noqa: PLR0913
         raise AudioError(
             f"Voice note is too long. Keep it under {max_seconds} seconds."
         )
+    if not openai_api_key.strip():
+        # comment: voice transcription uses the public API key, not Codex OAuth.
+        raise AudioError("OpenAI API key is required to transcribe voice notes.")
 
     blob = await client.download_any(event.Message)
     if not isinstance(blob, (bytes, bytearray)) or not blob:

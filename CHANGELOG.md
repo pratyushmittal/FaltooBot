@@ -2,6 +2,24 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.0.0 — 2026-05-08
+
+### Breaking
+- Removed the interactive `faltoobot configure` command. Run `faltoobot update` to create or migrate `~/.faltoobot/config.toml`, use `faltoobot codex-login` for Codex / ChatGPT OAuth, and edit the config file directly for other settings.
+
+### Added
+- Added optional OpenAI Responses WebSocket streaming with `openai.websocket = true` for lower-latency tool loops.
+- Faltoochat now shows basic `codex.rate_limits` events instead of ignoring them.
+
+### Changed
+- Refreshed locked dependencies, including the OpenAI SDK.
+
+### Fixed
+- Assistant responses are now saved correctly in `messages.json` when WebSocket streaming is disabled.
+- ChatGPT OAuth/Codex streaming no longer reuses cross-turn `previous_response_id`, avoiding repeated `previous_response_not_found` errors.
+- Tool/rate-limit status blocks no longer merge into the assistant response while streaming.
+- Voice note transcription now reports a clear error when no OpenAI API key is configured.
+
 ## 5.3.0 — 2026-05-06
 
 ### Added

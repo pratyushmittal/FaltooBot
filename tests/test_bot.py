@@ -1180,6 +1180,7 @@ async def test_process_message_transcribes_voice_notes(
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
+    config.openai_api_key = "test-key"
     client = FakePresenceClient()
     prompts: list[str] = []
 
@@ -1278,6 +1279,7 @@ async def test_process_message_includes_reply_quote_text_for_voice_notes(
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
+    config.openai_api_key = "test-key"
     client = FakePresenceClient()
     prompts: list[str] = []
 
