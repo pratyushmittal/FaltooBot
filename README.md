@@ -10,7 +10,9 @@
 - Get a separate SIM / WhatsApp account for Faltoobot.
 - Sign in to that account on a spare phone.
 - Install `faltoobot` on a computer that will stay online.
-- Run `faltoobot configure` to set up OpenAI and WhatsApp.
+- Run `faltoobot update` once after install to create `~/.faltoobot/config.toml`.
+- Edit `~/.faltoobot/config.toml` if you need to change defaults.
+- Run `faltoobot codex-login` to sign in with Codex / ChatGPT OAuth, or set `openai.api_key` in config.
 - Run `faltoobot whatsapp` to keep the bot running.
 - Message that WhatsApp number from your own number.
 
@@ -19,6 +21,14 @@
 ```bash
 uv tool install faltoobot
 ```
+
+Then run the setup/update step once:
+
+```bash
+faltoobot update
+```
+
+This creates `~/.faltoobot/config.toml` with defaults. You can run `faltoobot update` again later to upgrade Faltoobot and run migrations.
 
 Then you can run `faltoobot` and `faltoochat` from any folder.
 
@@ -48,23 +58,23 @@ sudo pacman -S ripgrep
 
 ## Quick start
 
-### 1. Configure
+### 1. Update and configure
 
 ```bash
-faltoobot configure
+faltoobot update
 ```
 
-The configure flow shows a simple menu:
-- Wizard
-- WhatsApp
-- Codex / OpenAI
+This creates `~/.faltoobot/config.toml` with defaults. Edit that file directly whenever you need to change settings.
 
-The wizard is the default. It helps you:
-- sign in with Codex / ChatGPT OAuth, or set an OpenAI API key
-- choose model / thinking / transcription settings
-- pair the WhatsApp account
+For Codex / ChatGPT OAuth, run:
 
-Example `~/.faltoobot/config.toml`:
+```bash
+faltoobot codex-login
+```
+
+Or set `openai.api_key` in `~/.faltoobot/config.toml`.
+
+Example config:
 
 ```toml
 [openai]
@@ -82,7 +92,7 @@ bot_name = "Faltoo"
 
 If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oauth` is blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
-Set `allowed_chats` to the WhatsApp phone numbers or JIDs that should be allowed to talk to the bot in direct chats. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
+Set `allowed_chats` before running the WhatsApp bot if you want to restrict who can talk to it in direct chats. Use WhatsApp phone numbers or JIDs. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
 
 Set `allow_group_chats` to the group JIDs that the bot should keep history for and reply in. If a non-approved group mentions the bot, Faltoobot DMs `allowed_chats` with `/approve_group <group_jid>` and `/deny_group <group_jid>` instructions. In groups with more than two people, the bot replies only when mentioned or when someone replies to the bot.
 
@@ -137,13 +147,15 @@ faltoobot logs
 
 Shows log output in follow mode.
 
-### `faltoobot configure`
+### `faltoobot codex-login`
 
 ```bash
-faltoobot configure
+faltoobot codex-login
 ```
 
-Opens the setup menu and restarts the service if it is already installed.
+Signs in with Codex / ChatGPT OAuth and saves the auth file path in `~/.faltoobot/config.toml`.
+
+To change other settings, edit `~/.faltoobot/config.toml` directly.
 
 ## Terminal chat
 

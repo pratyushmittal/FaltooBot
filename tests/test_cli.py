@@ -102,7 +102,6 @@ def test_run_update_command_upgrades_then_bootstraps(
 ) -> None:
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
-    ensured: list[str] = []
     migrations: list[str] = []
     versions = iter(["1.6.0", "1.6.0"])
 
@@ -110,9 +109,6 @@ def test_run_update_command_upgrades_then_bootstraps(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
-    monkeypatch.setattr(
-        cli, "_ensure_configured", lambda: ensured.append("ran") or config
-    )
     crontab: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_crontab_path", lambda: crontab.append("ran") or True
@@ -129,7 +125,6 @@ def test_run_update_command_upgrades_then_bootstraps(
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
-    assert ensured == ["ran"]
     assert crontab == ["ran"]
     assert migrations == ["ran"]
     assert reinstalls == ["ran"]
@@ -141,7 +136,6 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
 ) -> None:
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
-    ensured: list[str] = []
     versions = iter(["1.6.0", "1.6.1"])
     reexecs: list[str] = []
 
@@ -149,9 +143,6 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
-    monkeypatch.setattr(
-        cli, "_ensure_configured", lambda: ensured.append("ran") or config
-    )
     reinstalls: list[str] = []
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
@@ -166,7 +157,6 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
-    assert ensured == []
     assert reinstalls == []
     assert reexecs == ["ran"]
     assert result is None
@@ -212,47 +202,52 @@ def test_run_migrations_is_quiet_when_clean(tmp_path: Path, monkeypatch) -> None
     assert cli._run_migrations(config) == []
 
 
-def test_run_configure_command_runs_selected_setup(tmp_path: Path, monkeypatch) -> None:
+def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
+    versions = iter(["1.6.0", "1.6.0"])
+
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
+    monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
+    monkeypatch.setattr(cli, "_run_migrations", lambda config: [])
+    monkeypatch.setattr(cli, "_service_installed", lambda config: False)
+
+    result = cli.run_update_command(config)
+
+    assert result == config
+
+
+def test_handle_codex_login_command(monkeypatch) -> None:
     calls: list[str] = []
 
-    monkeypatch.setattr(cli, "_configure_openai", lambda config: calls.append("openai"))
-    monkeypatch.setattr(
-        cli, "_ensure_crontab_path", lambda: calls.append("cron") or True
-    )
-    monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
+    monkeypatch.setattr(cli, "run_openai_login", lambda console: calls.append("login"))
 
-    cli.run_configure_command(config, mode="openai")
+    cli.handle_command(cli.argparse.Namespace(command="codex-login"), None)
 
-    assert calls == ["openai", "cron", "restart"]
+    assert calls == ["login"]
 
 
-def test_run_configure_command_runs_gemini_setup(tmp_path: Path, monkeypatch) -> None:
-    config = make_config(tmp_path)
-    calls: list[str] = []
+def test_parse_args_hides_service_command_from_help(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["faltoobot", "--help"])
 
-    monkeypatch.setattr(cli, "_configure_gemini", lambda config: calls.append("gemini"))
-    monkeypatch.setattr(
-        cli, "_ensure_crontab_path", lambda: calls.append("cron") or True
-    )
-    monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
+    try:
+        cli.parse_args()
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("expected help to exit")
 
-    cli.run_configure_command(config, mode="gemini")
-
-    assert calls == ["gemini", "cron", "restart"]
+    assert "whatsapp-service" not in capsys.readouterr().out
 
 
-def test_configure_gemini_saves_api_key(tmp_path: Path, monkeypatch) -> None:
-    config = make_config(tmp_path)
+def test_parse_args_accepts_hidden_service_command(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["faltoobot", cli.SERVICE_COMMAND])
 
-    monkeypatch.setattr(cli, "_prompt_text", lambda *args, **kwargs: "gem-key")
+    args = cli.parse_args()
 
-    cli._configure_gemini(config)
-
-    text = config.config_file.read_text(encoding="utf-8")
-    assert "[gemini]" in text
-    assert 'gemini_api_key = "gem-key"' in text
-    assert 'model = "gemini-3.1-flash-image-preview"' in text
+    assert args.command == cli.SERVICE_COMMAND
 
 
 def test_run_notify_command_formats_message_with_source(monkeypatch) -> None:
@@ -352,26 +347,6 @@ def test_run_browser_command_installs_playwright_chrome_when_binary_missing(
     assert data["browser"]["binary"] == "/tmp/chrome"
 
 
-def test_run_configure_command_browser_mode_installs_playwright_chrome(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    calls: list[tuple[str, ...]] = []
-
-    monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
-    monkeypatch.setattr(
-        cli.browser_runtime, "default_browser_binary", lambda: "/tmp/chrome"
-    )
-    monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 1)
-    monkeypatch.setattr(cli, "_restart_service", lambda config: None)
-
-    cli.run_configure_command(config, mode="browser")
-
-    assert calls == [(sys.executable, "-m", "playwright", "install", "chrome")]
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["browser"]["binary"] == "/tmp/chrome"
-
-
 def test_run_browser_command_rejects_missing_configured_binary(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -384,91 +359,6 @@ def test_run_browser_command_rejects_missing_configured_binary(
         assert str(exc) == "Configured browser binary not found: /tmp/does-not-exist"
     else:
         raise AssertionError("Expected SystemExit")
-
-
-def test_ensure_configured_runs_missing_browser_setup_for_old_config(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    config.config_file.parent.mkdir(parents=True, exist_ok=True)
-    config.config_file.write_text('[openai]\nmodel = "gpt-5.4"\n', encoding="utf-8")
-    calls: list[str] = []
-
-    monkeypatch.setattr(cli, "app_root", lambda: config.root)
-    monkeypatch.setattr(cli, "build_config", lambda: config)
-    monkeypatch.setattr(
-        cli,
-        "run_configure_command",
-        lambda config, *, mode=None: calls.append(str(mode)),
-    )
-
-    result = cli._ensure_configured()
-
-    assert calls == ["browser"]
-    assert result == config
-
-
-def test_ensure_configured_checks_missing_modes_before_build_config_migrates_file(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    config.config_file.parent.mkdir(parents=True, exist_ok=True)
-    config.config_file.write_text(
-        """[openai]
-model = "gpt-5.4"
-""",
-        encoding="utf-8",
-    )
-    calls: list[str] = []
-
-    def fake_build_config() -> Config:
-        # comment: build_config migrates config.toml in real runs, so simulate it filling the
-        # browser section before _ensure_configured returns.
-        config.config_file.write_text(
-            """[openai]
-model = "gpt-5.4"
-
-[browser]
-binary = ""
-""",
-            encoding="utf-8",
-        )
-        return config
-
-    monkeypatch.setattr(cli, "app_root", lambda: config.root)
-    monkeypatch.setattr(cli, "build_config", fake_build_config)
-    monkeypatch.setattr(
-        cli,
-        "run_configure_command",
-        lambda config, *, mode=None: calls.append(str(mode)),
-    )
-
-    result = cli._ensure_configured()
-
-    assert calls == ["browser"]
-    assert result == config
-
-
-def test_ensure_configured_skips_present_required_values(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    config.config_file.parent.mkdir(parents=True, exist_ok=True)
-    config.config_file.write_text('[browser]\nbinary = ""\n', encoding="utf-8")
-    calls: list[str] = []
-
-    monkeypatch.setattr(cli, "app_root", lambda: config.root)
-    monkeypatch.setattr(cli, "build_config", lambda: config)
-    monkeypatch.setattr(
-        cli,
-        "run_configure_command",
-        lambda config, *, mode=None: calls.append(str(mode)),
-    )
-
-    result = cli._ensure_configured()
-
-    assert calls == []
-    assert result == config
 
 
 def test_run_whatsapp_auth_surfaces_libmagic_help(monkeypatch, tmp_path: Path) -> None:
@@ -556,29 +446,3 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
     changed = cli._ensure_crontab_path()
 
     assert changed is False
-
-
-def test_configure_whatsapp_leaves_group_allowlist_empty_by_default(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    prompts: list[tuple[str, list[str]]] = []
-
-    def fake_prompt(current: list[str], *, label: str = "Allowed chats") -> list[str]:
-        prompts.append((label, list(current)))
-        if label == "Allowed chats":
-            return ["15551234567@s.whatsapp.net"]
-        return list(current)
-
-    monkeypatch.setattr(cli, "_prompt_allowed_chats", fake_prompt)
-    monkeypatch.setattr(cli.Confirm, "ask", lambda *args, **kwargs: False)
-
-    cli._configure_whatsapp(config)
-
-    assert prompts == [
-        ("Allowed chats", []),
-        ("Allowed group chats", []),
-    ]
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["bot"]["allowed_chats"] == ["15551234567@s.whatsapp.net"]
-    assert data["bot"]["allow_group_chats"] == []
