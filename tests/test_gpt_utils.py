@@ -748,3 +748,326 @@ async def test_tool_result_keeps_structured_image_output() -> None:
     assert image.type == "input_image"
     assert image.image_url == "data:image/png;base64,abc"
     assert image.detail == "auto"
+
+
+class FakeWebSocket:
+    def __init__(self, responses: list[list[dict[str, Any]]]) -> None:
+        self.responses = responses
+        self.sent: list[dict[str, Any]] = []
+        self.index = 0
+        self.pending: list[str] = []
+
+    async def __aenter__(self) -> "FakeWebSocket":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+        return None
+
+    async def send(self, data: str) -> None:
+        self.sent.append(json.loads(data))
+        self.pending = [json.dumps(event) for event in self.responses[self.index]]
+        self.index += 1
+
+    def __aiter__(self) -> "FakeWebSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        if not self.pending:
+            raise StopAsyncIteration
+        return self.pending.pop(0)
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            [
+                {
+                    "type": "response.output_text.delta",
+                    "sequence_number": 1,
+                    "item_id": "msg_1",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": "Checking.",
+                    "logprobs": [],
+                },
+                {
+                    "type": "response.output_item.done",
+                    "sequence_number": 2,
+                    "output_index": 1,
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "greet",
+                        "arguments": '{"name":"Faltoobot"}',
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "sequence_number": 3,
+                    "response": {
+                        "id": "resp_1",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [],
+                    },
+                },
+            ],
+            [
+                {
+                    "type": "response.output_text.delta",
+                    "sequence_number": 1,
+                    "item_id": "msg_2",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": "Done.",
+                    "logprobs": [],
+                },
+                {
+                    "type": "response.completed",
+                    "sequence_number": 2,
+                    "response": {
+                        "id": "resp_2",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [
+                            {
+                                "type": "message",
+                                "id": "msg_2",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Done."}],
+                            }
+                        ],
+                    },
+                },
+            ],
+        ]
+    )
+    connect_calls: list[dict[str, Any]] = []
+
+    def fake_connect(uri: str, **kwargs: Any) -> FakeWebSocket:
+        connect_calls.append({"uri": uri, **kwargs})
+        return websocket
+
+    from faltoobot import websockets as websocket_utils
+
+    monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
+    monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_api_key="test-key",
+            openai_oauth="",
+            openai_thinking="low",
+            openai_fast=False,
+            openai_websocket=True,
+        ),
+    )
+
+    history: MessageHistory = [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+    items = [
+        item
+        async for item in get_streaming_reply(
+            "system prompt",
+            history,
+            [greet],
+            prompt_cache_key="session-123",
+        )
+    ]
+
+    assert [getattr(item, "type", "response") for item in items] == [
+        "response.output_text.delta",
+        "response.output_item.done",
+        "response.completed",
+        "function_call_output",
+        "response.output_text.delta",
+        "response.completed",
+    ]
+    assert connect_calls == [
+        {
+            "uri": "wss://api.openai.com/v1/responses",
+            "additional_headers": {"Authorization": "Bearer test-key"},
+        }
+    ]
+    assert websocket.sent[0]["type"] == "response.create"
+    assert websocket.sent[0]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+    assert websocket.sent[0]["prompt_cache_key"] == "session-123"
+    assert websocket.sent[0]["tool_choice"] == "auto"
+    assert "stream" not in websocket.sent[0]
+    assert "background" not in websocket.sent[0]
+    assert websocket.sent[1]["previous_response_id"] == "resp_1"
+    assert websocket.sent[1]["input"] == [
+        {
+            "id": "fco_call_1",
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "hello Faltoobot",
+            "status": "completed",
+        }
+    ]
+    assert history[-2:] == [
+        websocket.sent[1]["input"][0],
+        {
+            "type": "message",
+            "id": "msg_2",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Done."}],
+            "response_id": "resp_2",
+        },
+    ]
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_uses_history_response_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            [
+                {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": "resp_new",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [
+                            {
+                                "type": "message",
+                                "id": "msg_new",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Hello"}],
+                            }
+                        ],
+                    },
+                }
+            ]
+        ]
+    )
+
+    def fake_connect(uri: str, **kwargs: Any) -> FakeWebSocket:
+        return websocket
+
+    from faltoobot import websockets as websocket_utils
+
+    monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
+    monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_api_key="test-key",
+            openai_oauth="",
+            openai_thinking="low",
+            openai_fast=False,
+            openai_websocket=True,
+        ),
+    )
+
+    history: MessageHistory = [
+        {"role": "user", "content": "old question"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "old answer"}],
+            "response_id": "resp_old",
+        },
+        {"role": "user", "content": "new question"},
+    ]
+    _items = [item async for item in get_streaming_reply("system prompt", history, [])]
+
+    assert websocket.sent[0]["previous_response_id"] == "resp_old"
+    assert websocket.sent[0]["input"] == [{"role": "user", "content": "new question"}]
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            [
+                {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": "resp_oauth",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [],
+                    },
+                }
+            ]
+        ]
+    )
+    connect_calls: list[dict[str, Any]] = []
+
+    def fake_connect(uri: str, **kwargs: Any) -> FakeWebSocket:
+        connect_calls.append({"uri": uri, **kwargs})
+        return websocket
+
+    async def oauth_token() -> str:
+        return "oauth-token"
+
+    from faltoobot import websockets as websocket_utils
+
+    monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
+    monkeypatch.setattr(
+        websocket_utils,
+        "get_openai_client_options",
+        lambda config: (
+            oauth_token,
+            "https://chatgpt.com/backend-api/codex/",
+            {"chatgpt-account-id": "acct_123", "originator": "codex_cli_rs"},
+        ),
+    )
+    monkeypatch.setattr(
+        gpt_utils,
+        "build_config",
+        lambda: SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_api_key="",
+            openai_oauth="auth.json",
+            openai_thinking="low",
+            openai_fast=False,
+            openai_websocket=True,
+        ),
+    )
+
+    _items = [
+        item
+        async for item in get_streaming_reply(
+            "system prompt",
+            [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+            [],
+        )
+    ]
+
+    assert connect_calls == [
+        {
+            "uri": "wss://chatgpt.com/backend-api/codex/responses",
+            "additional_headers": {
+                "Authorization": "Bearer oauth-token",
+                "chatgpt-account-id": "acct_123",
+                "originator": "codex_cli_rs",
+            },
+        }
+    ]

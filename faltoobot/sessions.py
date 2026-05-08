@@ -225,7 +225,6 @@ def get_messages(session: Session) -> MessagesJson:
     )
 
 
-
 def get_last_usage(session: Session) -> dict[str, Any] | None:
     for item in reversed(get_messages(session)["messages"]):
         if not isinstance(item, dict):
@@ -352,9 +351,9 @@ async def get_answer_streaming(
     if available_skills:
         tools.append(load_skill_tool)
 
-    instructions = messages_json["system_prompt"]
-    if not instructions:
-        instructions = get_system_instructions(config, chat_key, workspace)
+    instructions = get_system_instructions(config, chat_key, workspace)
+    if messages_json["system_prompt"] != instructions:
+        # comment: keep a debug snapshot without trusting stale prompts from older app versions.
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 

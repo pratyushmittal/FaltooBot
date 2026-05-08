@@ -1,8 +1,9 @@
 import json
 import os
 import tomllib
-from importlib.metadata import PackageNotFoundError, version as package_version
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ class Config:
     gemini_api_key: str = ""
     gemini_model: str = GEMINI_MODEL
     google_places_api_key: str = ""
+    openai_websocket: bool = False
 
 
 def app_root() -> Path:
@@ -51,6 +53,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "model": MODEL_OPTIONS[0],
             "thinking": DEFAULT_THINKING,
             "fast": False,
+            "websocket": False,
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
@@ -80,6 +83,9 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "model": as_str(openai.get("model"), defaults["openai"]["model"]),
             "thinking": as_str(openai.get("thinking"), defaults["openai"]["thinking"]),
             "fast": as_bool(openai.get("fast"), defaults["openai"]["fast"]),
+            "websocket": as_bool(
+                openai.get("websocket"), defaults["openai"]["websocket"]
+            ),
             "transcription_model": as_choice(
                 openai.get("transcription_model"),
                 defaults["openai"]["transcription_model"],
@@ -161,6 +167,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"model = {quote(str(openai['model']))}",
             f"thinking = {quote(str(openai['thinking']))}",
             f"fast = {str(bool(openai['fast'])).lower()}",
+            f"websocket = {str(bool(openai['websocket'])).lower()}",
             f"transcription_model = {quote(str(openai['transcription_model']))}",
             "",
             "[gemini]",
@@ -279,6 +286,7 @@ def build_config() -> Config:
         gemini_model=str(gemini["model"]),
         google_places_api_key=str(google["places_api_key"])
         or os.environ.get("GOOGLE_MAPS_API_KEY", ""),
+        openai_websocket=bool(openai["websocket"]),
     )
 
 

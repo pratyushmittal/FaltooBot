@@ -1575,6 +1575,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 '• openai_model="gpt-5.2-codex"',
                 '• openai_thinking="high"',
                 "• openai_fast=false",
+                "• openai_websocket=false",
                 '• openai_transcription_model="gpt-4o-transcribe"',
                 '• gemini_gemini_api_key=""',
                 '• gemini_model="gemini-3.1-flash-image-preview"',

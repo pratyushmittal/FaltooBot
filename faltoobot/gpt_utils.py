@@ -188,7 +188,7 @@ def trim_input(
         trimmed = {
             key: value
             for key, value in item.items()
-            if key not in {"parsed_arguments", "usage"}
+            if key not in {"parsed_arguments", "response_id", "usage"}
         }
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
@@ -253,18 +253,8 @@ async def _tool_result(
     )
 
 
-async def get_streaming_reply(  # noqa: C901
-    instructions: str,
-    input: MessageHistory,
-    tools: list[Tool],
-    prompt_cache_key: str | None = None,
-) -> AsyncIterator[StreamingReplyItem]:
-    config = build_config()
-    client = get_openai_client(config)
-    tool_defs = [get_tools_definition(tool) for tool in tools]
-    tools_by_name = {_callable_name(tool): tool for tool in tools}
-
-    cloud_tools = [
+def _cloud_tools() -> list[dict[str, Any]]:
+    return [
         {
             "type": "web_search",
             "user_location": {
@@ -275,6 +265,102 @@ async def get_streaming_reply(  # noqa: C901
             },
         }
     ]
+
+
+def _use_websocket_mode(config: Config) -> bool:
+    if not getattr(config, "openai_websocket", False):
+        return False
+    return bool(config.openai_api_key or config.openai_oauth)
+
+
+def _remember_response_event(
+    event: ResponsesServerEvent,
+    response_output: list[ResponseOutputItem],
+    current_input: MessageHistory,
+) -> str | None:
+    if event.type == "response.output_item.done":
+        # comment: response.output_item.done carries finalized items before completion.
+        response_output.append(cast(ResponseOutputItem, getattr(event, "item", None)))
+        return None
+    if event.type != "response.completed":
+        return None
+
+    completed = cast(ResponseCompletedEvent, event)
+    if completed.response.output:
+        # comment: replace streamed item fallbacks with the canonical completed output.
+        response_output[:] = list(completed.response.output)
+    else:
+        # comment: Codex API leaves completed.response.output empty, so use output_item.done.
+        cast(Any, completed.response).codex_output = response_output
+
+    response_id = str(getattr(completed.response, "id", "") or "") or None
+    current_input.extend(_to_message_item(item) for item in response_output)
+    # comment: item["id"] is msg_/fc_/rs_; previous_response_id needs resp_.
+    if response_output and response_id:
+        current_input[-1]["response_id"] = response_id
+    # comment: empty responses have no assistant item to attach usage to.
+    if response_output and completed.response.usage:
+        current_input[-1]["usage"] = completed.response.usage.to_dict()
+    return response_id
+
+
+def _tool_calls_from_response(
+    last_event: ResponsesServerEvent | None,
+    response_output: list[ResponseOutputItem],
+) -> list[FunctionToolCallItem]:
+    # https://developers.openai.com/api/reference/resources/responses/streaming-events#response.completed
+    # The last event is always `response.completed`. Public API responses include
+    # full output and usage there; Codex may need the collected output_item.done items.
+    if last_event is None or last_event.type != "response.completed":
+        raise ValueError(
+            f"last event was {getattr(last_event, 'type', None)}, not response.completed"
+        )
+    return [
+        cast(FunctionToolCallItem, _to_message_item(raw_item))
+        for raw_item in response_output
+        if getattr(raw_item, "type", None) == "function_call"
+        and hasattr(raw_item, "name")
+        and hasattr(raw_item, "arguments")
+        and hasattr(raw_item, "call_id")
+    ]
+
+
+async def _yield_tool_results(
+    tools_by_name: dict[str, Tool],
+    tool_calls: list[FunctionToolCallItem],
+    current_input: MessageHistory,
+) -> AsyncIterator[ResponseFunctionToolCallOutputItem]:
+    for tool_call in tool_calls:
+        result = await _tool_result(tools_by_name, tool_call)
+        current_input.append(_to_message_item(result))
+        yield result
+
+
+async def get_streaming_reply(  # noqa: C901
+    instructions: str,
+    input: MessageHistory,
+    tools: list[Tool],
+    prompt_cache_key: str | None = None,
+) -> AsyncIterator[StreamingReplyItem]:
+    config = build_config()
+    tool_defs = [get_tools_definition(tool) for tool in tools]
+    tools_by_name = {_callable_name(tool): tool for tool in tools}
+
+    if _use_websocket_mode(config):
+        from faltoobot.websockets import streaming_reply
+
+        async for item in streaming_reply(
+            config,
+            instructions=instructions,
+            input=input,
+            tools=tool_defs + _cloud_tools(),
+            tools_by_name=tools_by_name,
+            prompt_cache_key=prompt_cache_key,
+        ):
+            yield item
+        return
+
+    client = get_openai_client(config)
 
     async def reply(
         current_input: MessageHistory,
@@ -289,7 +375,7 @@ async def get_streaming_reply(  # noqa: C901
                     replace_unavailable_uploads=uses_chatgpt_oauth(config),
                 ),
             ),
-            tools=tool_defs + cloud_tools,  # type: ignore
+            tools=tool_defs + _cloud_tools(),  # type: ignore
             store=False,
             parallel_tool_calls=True,
             instructions=instructions,
@@ -303,50 +389,16 @@ async def get_streaming_reply(  # noqa: C901
             service_tier="priority" if config.openai_fast else omit,
         ) as stream:
             async for event in stream:
-                if event.type == "response.output_item.done":
-                    # comment: response.output_item.done carries the finalized output item
-                    # for that block, such as a tool call or assistant message.
-                    response_output.append(
-                        cast(ResponseOutputItem, getattr(event, "item", None))
-                    )
-                if event.type == "response.completed":
-                    # comment: ChatGPT OAuth streams can leave response.output empty on
-                    # response.completed even though the finalized items were already sent
-                    # via response.output_item.done.
-                    event = cast(ResponseCompletedEvent, event)
-                    if event.response.output:
-                        response_output = list(event.response.output)
-                    else:
-                        cast(Any, event.response).codex_output = response_output
-                    current_input.extend(
-                        _to_message_item(item) for item in response_output
-                    )
-                    if hasattr(event.response, "usage") and event.response.usage:
-                        current_input[-1]["usage"] = event.response.usage.to_dict()
+                _remember_response_event(event, response_output, current_input)
                 yield event
 
-        # https://developers.openai.com/api/reference/resources/responses/streaming-events#response.completed
-        # the last event is always `response.completed`
-        # it always contains full response in event.response
-        # including usage
-        if event.type != "response.completed":
-            raise ValueError(f"last event was {event.type}, not response.completed")
-        event = cast(ResponseCompletedEvent, event)
-
-        tool_calls: list[FunctionToolCallItem] = [
-            cast(FunctionToolCallItem, _to_message_item(raw_item))
-            for raw_item in response_output
-            if getattr(raw_item, "type", None) == "function_call"
-            and hasattr(raw_item, "name")
-            and hasattr(raw_item, "arguments")
-            and hasattr(raw_item, "call_id")
-        ]
+        tool_calls = _tool_calls_from_response(event, response_output)
         if not tool_calls:
             return
 
-        for tool_call in tool_calls:
-            result = await _tool_result(tools_by_name, tool_call)
-            current_input.append(_to_message_item(result))
+        async for result in _yield_tool_results(
+            tools_by_name, tool_calls, current_input
+        ):
             yield result
 
         async for item in reply(current_input):

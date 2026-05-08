@@ -83,6 +83,7 @@ oauth = ""
 model = "gpt-5.5"
 thinking = "high"
 fast = false
+websocket = false
 
 [bot]
 allow_group_chats = ["120363000000000000@g.us"]
@@ -92,7 +93,9 @@ bot_name = "Faltoo"
 
 If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oauth` is blank, Faltoobot falls back to `OPENAI_API_KEY` from the environment.
 
-Set `allowed_chats` before running the WhatsApp bot if you want to restrict who can talk to it in direct chats. Use WhatsApp phone numbers or JIDs. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
+If `websocket = true`, Faltoobot uses the Responses API WebSocket mode for lower-latency tool loops with either an API key or ChatGPT/Codex OAuth.
+
+Set `allowed_chats` to the WhatsApp phone numbers that should be allowed to it in direct chats. Use WhatsApp phone numbers or JIDs. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
 
 Set `allow_group_chats` to the group JIDs that the bot should keep history for and reply in. If a non-approved group mentions the bot, Faltoobot DMs `allowed_chats` with `/approve_group <group_jid>` and `/deny_group <group_jid>` instructions. In groups with more than two people, the bot replies only when mentioned or when someone replies to the bot.
 

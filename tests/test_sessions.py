@@ -478,7 +478,61 @@ async def test_get_answer_exposes_shell_tool_for_whatsapp_chats(
 
 
 @pytest.mark.anyio
-async def test_get_answer_caches_system_prompt_per_session(
+async def test_get_answer_refreshes_whatsapp_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+
+    prompts = iter(["old prompt", "new prompt"])
+
+    def fake_get_system_instructions(
+        config: Any, chat_key: str, workspace: Path
+    ) -> str:
+        return next(prompts)
+
+    monkeypatch.setattr(
+        sessions, "get_system_instructions", fake_get_system_instructions
+    )
+    seen: list[str] = []
+
+    async def fake_get_streaming_reply(
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+        prompt_cache_key: str | None = None,
+    ):
+        seen.append(instructions)
+        reply = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "ok"}],
+        }
+        input.append(cast(Any, reply))
+        yield FakeCompletedEvent(
+            [reply],
+            {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 2,
+            },
+        )
+
+    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+
+    session = sessions.get_session(chat_key="15551234567@s.whatsapp.net")
+    assert await run_answer(session=session, question="one") == "ok"
+    assert await run_answer(session=session, question="two") == "ok"
+
+    payload = sessions.get_messages(session)
+    assert seen == ["old prompt", "new prompt"]
+    assert payload["system_prompt"] == "new prompt"
+
+
+@pytest.mark.anyio
+async def test_get_answer_refreshes_system_prompt_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -497,13 +551,15 @@ async def test_get_answer_caches_system_prompt_per_session(
         sessions, "get_system_instructions", fake_get_system_instructions
     )
 
+    seen: list[str] = []
+
     async def fake_get_streaming_reply(
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
         prompt_cache_key: str | None = None,
     ):
-        assert instructions == "system prompt 1"
+        seen.append(instructions)
         reply = {
             "type": "message",
             "role": "assistant",
@@ -527,8 +583,9 @@ async def test_get_answer_caches_system_prompt_per_session(
     assert await run_answer(session=session, question="two") == "ok"
 
     payload = sessions.get_messages(session)
-    assert calls["count"] == 1
-    assert payload["system_prompt"] == "system prompt 1"
+    assert calls["count"] == len(seen)
+    assert seen == ["system prompt 1", "system prompt 2"]
+    assert payload["system_prompt"] == "system prompt 2"
 
 
 @pytest.mark.anyio

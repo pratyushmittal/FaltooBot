@@ -363,6 +363,7 @@ dependencies = [
     { name = "textual-speedups" },
     { name = "tree-sitter-lua" },
     { name = "tree-sitter-typescript" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -391,6 +392,7 @@ requires-dist = [
     { name = "textual-speedups", specifier = ">=0.2.1" },
     { name = "tree-sitter-lua", specifier = ">=0.5.0" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
+    { name = "websockets", specifier = ">=16.0" },
 ]
 
 [package.metadata.requires-dev]
