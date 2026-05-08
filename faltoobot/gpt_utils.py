@@ -350,7 +350,8 @@ async def get_streaming_reply(  # noqa: C901
         ) as stream:
             async for event in stream:
                 response_id = _remember_response_event(event, response_output)
-                yield event
+                if event.type != "response.completed":
+                    yield event
 
         completed = cast(ResponseCompletedEvent, event)
         current_input.extend(_to_message_item(item) for item in response_output)
@@ -360,6 +361,7 @@ async def get_streaming_reply(  # noqa: C901
         # comment: empty responses have no assistant item to attach usage to.
         if response_output and completed.response.usage:
             current_input[-1]["usage"] = completed.response.usage.to_dict()
+        yield event
 
         tool_calls = _tool_calls_from_response(event, response_output)
         if not tool_calls:

@@ -467,6 +467,55 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
 
 
 @pytest.mark.anyio
+async def test_get_streaming_reply_updates_history_before_completed_yield(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(
+        [
+            {
+                "events": [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=FakeItem(
+                            {
+                                "type": "message",
+                                "id": "msg_1",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Hi."}],
+                            }
+                        ),
+                    ),
+                    FakeCompletedEvent([]),
+                ],
+                "output": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+
+    history: MessageHistory = [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+    seen_completed = False
+
+    async for item in get_streaming_reply(
+        instructions="system prompt",
+        input=history,
+        tools=[],
+    ):
+        if item.type == "response.completed":
+            seen_completed = True
+            assert history[-1] == {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hi."}],
+            }
+
+    assert seen_completed is True
+
+
+@pytest.mark.anyio
 async def test_get_streaming_reply_yields_all_stream_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
