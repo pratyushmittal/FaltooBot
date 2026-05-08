@@ -25,12 +25,7 @@ from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
-from faltoobot.tools import (
-    get_load_image_tool,
-    get_run_shell_call_tool,
-    google_place_details,
-    google_places_search,
-)
+from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
 MESSAGES_FILE = "messages.json"
@@ -374,8 +369,6 @@ async def get_answer_streaming(
         get_run_shell_call_tool(workspace),
         get_load_image_tool(workspace),
     ]
-    if getattr(config, "google_places_api_key", ""):
-        tools.extend([google_places_search, google_place_details])
     available_skills, load_skill_tool = get_load_skill_tool(
         workspace,
         chat_key=chat_key,
