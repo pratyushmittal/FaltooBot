@@ -31,6 +31,7 @@ from faltoobot.tools import (
     google_place_details,
     google_places_search,
 )
+from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
 MESSAGES_FILE = "messages.json"
 WORKSPACE_DIR = "workspace"
@@ -331,6 +332,37 @@ async def append_user_turn(
     return True
 
 
+async def _get_streaming_reply(
+    *,
+    config: Config,
+    instructions: str,
+    input: MessageHistory,
+    tools: list[Tool],
+    prompt_cache_key: str | None,
+) -> AsyncIterator[StreamingReplyItem]:
+    if getattr(config, "openai_websocket", False) and (
+        config.openai_api_key or config.openai_oauth
+    ):
+        async for item in websocket_streaming_reply(
+            config,
+            instructions=instructions,
+            input=input,
+            tools=tools,
+            prompt_cache_key=prompt_cache_key,
+        ):
+            yield item
+        return
+
+    async for item in get_streaming_reply(
+        config,
+        instructions=instructions,
+        input=input,
+        tools=tools,
+        prompt_cache_key=prompt_cache_key,
+    ):
+        yield item
+
+
 async def get_answer_streaming(
     session: Session,
 ) -> AsyncIterator[StreamingReplyItem]:
@@ -357,7 +389,8 @@ async def get_answer_streaming(
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
-    async for event in get_streaming_reply(
+    async for event in _get_streaming_reply(
+        config=config,
         instructions=instructions,
         input=messages_json["messages"],
         tools=tools,

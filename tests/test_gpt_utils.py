@@ -23,14 +23,44 @@ from openai.types.responses import (
     ResponseTextDoneEvent,
 )
 
-from faltoobot import gpt_utils
+from faltoobot import gpt_utils, sessions
+from faltoobot.config import Config
 from faltoobot.gpt_utils import (
     MessageHistory,
-    get_streaming_reply,
+    get_streaming_reply as get_api_streaming_reply,
     get_tools_definition,
 )
 
 RESPONSIVE_TOOL_MAX_SECONDS = 0.15
+
+
+def _api_config() -> Config:
+    return cast(
+        Config,
+        SimpleNamespace(
+            openai_model="gpt-5-mini",
+            openai_api_key="test-key",
+            openai_oauth="",
+            openai_thinking="low",
+            openai_fast=False,
+        ),
+    )
+
+
+async def get_streaming_reply(
+    instructions: str,
+    input: MessageHistory,
+    tools: list[Any],
+    prompt_cache_key: str | None = None,
+):
+    async for item in get_api_streaming_reply(
+        _api_config(),
+        instructions=instructions,
+        input=input,
+        tools=tools,
+        prompt_cache_key=prompt_cache_key,
+    ):
+        yield item
 
 
 class Mode(str, Enum):
@@ -291,17 +321,6 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         ]
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="test-key",
-            openai_oauth="",
-            openai_thinking="low",
-            openai_fast=False,
-        ),
-    )
 
     items = [
         item
@@ -387,17 +406,6 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
         ]
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="test-key",
-            openai_oauth="",
-            openai_thinking="low",
-            openai_fast=False,
-        ),
-    )
 
     history: MessageHistory = [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
@@ -491,17 +499,6 @@ async def test_get_streaming_reply_yields_all_stream_events(
         ]
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="test-key",
-            openai_oauth="",
-            openai_thinking="low",
-            openai_fast=False,
-        ),
-    )
 
     items = [
         item
@@ -532,17 +529,6 @@ async def test_get_streaming_reply_trims_input(
         ]
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="test-key",
-            openai_oauth="",
-            openai_thinking="low",
-            openai_fast=False,
-        ),
-    )
 
     items = cast(
         MessageHistory,
@@ -606,17 +592,6 @@ async def test_get_streaming_reply_adds_codex_session_headers_for_oauth(
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
     monkeypatch.setattr(gpt_utils, "uses_chatgpt_oauth", lambda config: True)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="",
-            openai_oauth="auth.json",
-            openai_thinking="low",
-            openai_fast=False,
-        ),
-    )
 
     _items = [
         item
@@ -653,17 +628,6 @@ async def test_get_streaming_reply_replaces_unavailable_uploaded_files_for_oauth
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
     monkeypatch.setattr(gpt_utils, "uses_chatgpt_oauth", lambda config: True)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="",
-            openai_oauth="auth.json",
-            openai_thinking="low",
-            openai_fast=False,
-        ),
-    )
 
     history: MessageHistory = [
         {
@@ -860,10 +824,9 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
 
     monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
     monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
+    config = cast(
+        Config,
+        SimpleNamespace(
             openai_model="gpt-5-mini",
             openai_api_key="test-key",
             openai_oauth="",
@@ -878,10 +841,11 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     ]
     items = [
         item
-        async for item in get_streaming_reply(
-            "system prompt",
-            history,
-            [greet],
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[greet],
             prompt_cache_key="session-123",
         )
     ]
@@ -967,10 +931,9 @@ async def test_get_streaming_reply_uses_history_response_id(
 
     monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
     monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
+    config = cast(
+        Config,
+        SimpleNamespace(
             openai_model="gpt-5-mini",
             openai_api_key="test-key",
             openai_oauth="",
@@ -990,7 +953,16 @@ async def test_get_streaming_reply_uses_history_response_id(
         },
         {"role": "user", "content": "new question"},
     ]
-    _items = [item async for item in get_streaming_reply("system prompt", history, [])]
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key=None,
+        )
+    ]
 
     assert websocket.sent[0]["previous_response_id"] == "resp_old"
     assert websocket.sent[0]["input"] == [{"role": "user", "content": "new question"}]
@@ -1039,10 +1011,9 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
             {"chatgpt-account-id": "acct_123", "originator": "codex_cli_rs"},
         ),
     )
-    monkeypatch.setattr(
-        gpt_utils,
-        "build_config",
-        lambda: SimpleNamespace(
+    config = cast(
+        Config,
+        SimpleNamespace(
             openai_model="gpt-5-mini",
             openai_api_key="",
             openai_oauth="auth.json",
@@ -1054,10 +1025,12 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
 
     _items = [
         item
-        async for item in get_streaming_reply(
-            "system prompt",
-            [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
-            [],
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+            tools=[],
+            prompt_cache_key=None,
         )
     ]
 

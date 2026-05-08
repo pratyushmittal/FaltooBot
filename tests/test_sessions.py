@@ -274,6 +274,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     tool_defs: list[Any] = []
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -315,7 +316,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
             },
         )
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
     chat_key = "code@test"
 
     session = sessions.get_session(chat_key=chat_key)
@@ -442,6 +443,7 @@ async def test_get_answer_exposes_shell_tool_for_whatsapp_chats(
     tool_defs: list[Any] = []
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -464,7 +466,7 @@ async def test_get_answer_exposes_shell_tool_for_whatsapp_chats(
             },
         )
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
 
     session = sessions.get_session(chat_key="15551234567@s.whatsapp.net")
     answer = await run_answer(session=session, question="Hi")
@@ -498,6 +500,7 @@ async def test_get_answer_refreshes_whatsapp_system_prompt(
     seen: list[str] = []
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -520,7 +523,7 @@ async def test_get_answer_refreshes_whatsapp_system_prompt(
             },
         )
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
 
     session = sessions.get_session(chat_key="15551234567@s.whatsapp.net")
     assert await run_answer(session=session, question="one") == "ok"
@@ -554,6 +557,7 @@ async def test_get_answer_refreshes_system_prompt_snapshot(
     seen: list[str] = []
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -576,7 +580,7 @@ async def test_get_answer_refreshes_system_prompt_snapshot(
             },
         )
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
 
     session = sessions.get_session(chat_key="code@test")
     assert await run_answer(session=session, question="one") == "ok"
@@ -634,6 +638,7 @@ async def test_get_answer_uploads_image_attachments(
     monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -643,7 +648,7 @@ async def test_get_answer_uploads_image_attachments(
         if False:
             yield FakeCompletedEvent([], {})
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
 
     attachments: list[Path] = []
     for filename, size, color in cast(
@@ -752,6 +757,7 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
     monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -761,7 +767,7 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
         if False:
             yield FakeCompletedEvent([], {})
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
 
     image = tmp_path / "small.png"
     Image.new("RGB", (8, 8), color="red").save(image)
@@ -842,6 +848,7 @@ async def test_get_answer_reuses_existing_user_turn(
     calls: list[MessageHistory] = []
 
     async def fake_get_streaming_reply(
+        config: Any,
         instructions: str,
         input: MessageHistory,
         tools: list[Any],
@@ -874,7 +881,7 @@ async def test_get_answer_reuses_existing_user_turn(
             },
         )
 
-    monkeypatch.setattr(sessions, "get_streaming_reply", fake_get_streaming_reply)
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
     session = sessions.get_session(chat_key="code@test")
     await sessions.append_user_turn(session, question="Hi", message_ids=["msg-1"])
 

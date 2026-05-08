@@ -17,7 +17,7 @@ from openai.types.responses import (
     ResponsesServerEvent,
 )
 
-from faltoobot.config import Config, build_config
+from faltoobot.config import Config
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 200_000
@@ -267,16 +267,9 @@ def _cloud_tools() -> list[dict[str, Any]]:
     ]
 
 
-def _use_websocket_mode(config: Config) -> bool:
-    if not getattr(config, "openai_websocket", False):
-        return False
-    return bool(config.openai_api_key or config.openai_oauth)
-
-
 def _remember_response_event(
     event: ResponsesServerEvent,
     response_output: list[ResponseOutputItem],
-    current_input: MessageHistory,
 ) -> str | None:
     if event.type == "response.output_item.done":
         # comment: response.output_item.done carries finalized items before completion.
@@ -293,15 +286,7 @@ def _remember_response_event(
         # comment: Codex API leaves completed.response.output empty, so use output_item.done.
         cast(Any, completed.response).codex_output = response_output
 
-    response_id = str(getattr(completed.response, "id", "") or "") or None
-    current_input.extend(_to_message_item(item) for item in response_output)
-    # comment: item["id"] is msg_/fc_/rs_; previous_response_id needs resp_.
-    if response_output and response_id:
-        current_input[-1]["response_id"] = response_id
-    # comment: empty responses have no assistant item to attach usage to.
-    if response_output and completed.response.usage:
-        current_input[-1]["usage"] = completed.response.usage.to_dict()
-    return response_id
+    return str(getattr(completed.response, "id", "") or "") or None
 
 
 def _tool_calls_from_response(
@@ -325,42 +310,17 @@ def _tool_calls_from_response(
     ]
 
 
-async def _yield_tool_results(
-    tools_by_name: dict[str, Tool],
-    tool_calls: list[FunctionToolCallItem],
-    current_input: MessageHistory,
-) -> AsyncIterator[ResponseFunctionToolCallOutputItem]:
-    for tool_call in tool_calls:
-        result = await _tool_result(tools_by_name, tool_call)
-        current_input.append(_to_message_item(result))
-        yield result
-
-
 async def get_streaming_reply(  # noqa: C901
+    config: Config,
+    *,
     instructions: str,
     input: MessageHistory,
     tools: list[Tool],
     prompt_cache_key: str | None = None,
 ) -> AsyncIterator[StreamingReplyItem]:
-    config = build_config()
+    client = get_openai_client(config)
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
-
-    if _use_websocket_mode(config):
-        from faltoobot.websockets import streaming_reply
-
-        async for item in streaming_reply(
-            config,
-            instructions=instructions,
-            input=input,
-            tools=tool_defs + _cloud_tools(),
-            tools_by_name=tools_by_name,
-            prompt_cache_key=prompt_cache_key,
-        ):
-            yield item
-        return
-
-    client = get_openai_client(config)
 
     async def reply(
         current_input: MessageHistory,
@@ -389,16 +349,25 @@ async def get_streaming_reply(  # noqa: C901
             service_tier="priority" if config.openai_fast else omit,
         ) as stream:
             async for event in stream:
-                _remember_response_event(event, response_output, current_input)
+                response_id = _remember_response_event(event, response_output)
                 yield event
+
+        completed = cast(ResponseCompletedEvent, event)
+        current_input.extend(_to_message_item(item) for item in response_output)
+        # comment: item["id"] is msg_/fc_/rs_; previous_response_id needs resp_.
+        if response_output and response_id:
+            current_input[-1]["response_id"] = response_id
+        # comment: empty responses have no assistant item to attach usage to.
+        if response_output and completed.response.usage:
+            current_input[-1]["usage"] = completed.response.usage.to_dict()
 
         tool_calls = _tool_calls_from_response(event, response_output)
         if not tool_calls:
             return
 
-        async for result in _yield_tool_results(
-            tools_by_name, tool_calls, current_input
-        ):
+        for tool_call in tool_calls:
+            result = await _tool_result(tools_by_name, tool_call)
+            current_input.append(_to_message_item(result))
             yield result
 
         async for item in reply(current_input):
