@@ -17,7 +17,7 @@ def _tool_text(item: Any) -> str:
     return text if classes == "tool" else ""
 
 
-def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:
+def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa: C901
     event_type = event.type
     match event_type:
         case (
@@ -69,6 +69,16 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:
                 "answer",
                 value if isinstance(value, str) else "",
             )
+        case "codex.rate_limits":
+            limits = getattr(event, "rate_limits", {})
+            primary = limits.get("primary", {}) if isinstance(limits, dict) else {}
+            used = primary.get("used_percent") if isinstance(primary, dict) else None
+            text = (
+                f"Rate limits: primary {used}% used"
+                if used is not None
+                else "Rate limits"
+            )
+            is_new, classes = True, "tool"
         case "response.web_search_call.in_progress":
             is_new, classes, text = True, "tool", "Web search"
         case "response.web_search_call.searching":

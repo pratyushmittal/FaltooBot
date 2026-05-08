@@ -567,7 +567,7 @@ class FaltooChatApp(App[None]):
                     transcript.anchor()
                 continue
 
-            if block is None or is_new:
+            if block is None or is_new or classes not in block.classes:
                 await _finish_answer_stream(answer_stream, block, raw_text)
                 answer_stream, raw_text = None, ""
                 block = Markdown("", classes=classes)

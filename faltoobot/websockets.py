@@ -21,6 +21,7 @@ from faltoobot.gpt_utils import (
     _callable_name,
     _cloud_tools,
     _remember_response_event,
+    _request_extra_headers,
     _to_message_item,
     _tool_calls_from_response,
     _tool_result,
@@ -34,9 +35,14 @@ RESPONSES_WEBSOCKET_URL = "wss://api.openai.com/v1/responses"
 async def _auth_headers(
     api_key: str | Callable[[], Awaitable[str]],
     default_headers: dict[str, str] | None,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, str]:
     token = api_key if isinstance(api_key, str) else await api_key()
-    return {**(default_headers or {}), "Authorization": f"Bearer {token}"}
+    return {
+        **(default_headers or {}),
+        **(extra_headers or {}),
+        "Authorization": f"Bearer {token}",
+    }
 
 
 def _websocket_url(base_url: str | None) -> str:
@@ -51,6 +57,10 @@ def _parse_websocket_event(raw: str | bytes) -> ResponsesServerEvent:
     return construct_type_unchecked(
         value=payload, type_=cast(Any, ResponsesServerEvent)
     )
+
+
+class PreviousResponseNotFoundError(RuntimeError):
+    pass
 
 
 def _raise_for_response_error(event: ResponsesServerEvent) -> None:
@@ -73,7 +83,10 @@ def _raise_for_response_error(event: ResponsesServerEvent) -> None:
             or error
             or "Unknown websocket error"
         )
-    raise RuntimeError(f"OpenAI websocket {code}: {message}")
+    exception = f"OpenAI websocket {code}: {message}"
+    if code == "previous_response_not_found":
+        raise PreviousResponseNotFoundError(exception)
+    raise RuntimeError(exception)
 
 
 def _create_payload(  # noqa: PLR0913
@@ -109,25 +122,7 @@ def _create_payload(  # noqa: PLR0913
     return payload
 
 
-def _initial_input(
-    input: MessageHistory,
-    *,
-    replace_unavailable_uploads: bool,
-) -> tuple[str | None, MessageHistory]:
-    for index in range(len(input) - 1, -1, -1):
-        response_id = input[index].get("response_id")
-        if isinstance(response_id, str) and response_id:
-            # comment: continue after the latest stored response to improve cache reuse.
-            return response_id, trim_input(
-                input[index + 1 :],
-                replace_unavailable_uploads=replace_unavailable_uploads,
-            )
-    return None, trim_input(
-        input, replace_unavailable_uploads=replace_unavailable_uploads
-    )
-
-
-async def streaming_reply(  # noqa: PLR0913
+async def streaming_reply(  # noqa: C901, PLR0913
     config: Config,
     *,
     instructions: str,
@@ -138,14 +133,20 @@ async def streaming_reply(  # noqa: PLR0913
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
     replace_unavailable_uploads = uses_chatgpt_oauth(config)
-    previous_response_id, current_input = _initial_input(
+    previous_response_id: str | None = None
+    current_input = trim_input(
         input, replace_unavailable_uploads=replace_unavailable_uploads
     )
+    retried_missing_previous_response = False
 
     api_key, base_url, default_headers = get_openai_client_options(config)
     async with websocket_connect(
         _websocket_url(base_url),
-        additional_headers=await _auth_headers(api_key, default_headers),
+        additional_headers=await _auth_headers(
+            api_key,
+            default_headers,
+            _request_extra_headers(config, prompt_cache_key),
+        ),
     ) as ws:
         while True:
             response_output: list[ResponseOutputItem] = []
@@ -164,7 +165,22 @@ async def streaming_reply(  # noqa: PLR0913
 
             async for raw in ws:
                 event = _parse_websocket_event(raw)
-                _raise_for_response_error(event)
+                try:
+                    _raise_for_response_error(event)
+                except PreviousResponseNotFoundError:
+                    if (
+                        retried_missing_previous_response
+                        or previous_response_id is None
+                    ):
+                        # comment: repeated/malformed retry should fail instead of looping forever.
+                        raise
+                    # comment: cached response expired; replay full trimmed history once.
+                    current_input = trim_input(
+                        input, replace_unavailable_uploads=replace_unavailable_uploads
+                    )
+                    retried_missing_previous_response = True
+                    previous_response_id = None
+                    break
                 response_id = _remember_response_event(event, response_output)
                 if event.type != "response.completed":
                     yield event

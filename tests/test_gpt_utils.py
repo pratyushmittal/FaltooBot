@@ -741,6 +741,47 @@ class FakeWebSocket:
         return self.pending.pop(0)
 
 
+def _websocket_config(**overrides: Any) -> Config:
+    values = {
+        "openai_model": "gpt-5-mini",
+        "openai_api_key": "test-key",
+        "openai_oauth": "",
+        "openai_thinking": "low",
+        "openai_fast": False,
+        "openai_websocket": True,
+    } | overrides
+    return cast(Config, SimpleNamespace(**values))
+
+
+def _patch_api_websocket(
+    monkeypatch: pytest.MonkeyPatch,
+    websocket: FakeWebSocket,
+) -> list[dict[str, Any]]:
+    connect_calls: list[dict[str, Any]] = []
+
+    def fake_connect(uri: str, **kwargs: Any) -> FakeWebSocket:
+        connect_calls.append({"uri": uri, **kwargs})
+        return websocket
+
+    from faltoobot import websockets as websocket_utils
+
+    monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
+    monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
+    return connect_calls
+
+
+def _previous_response_not_found_event() -> dict[str, Any]:
+    return {
+        "type": "error",
+        "sequence_number": 1,
+        "error": {
+            "type": "invalid_request_error",
+            "code": "previous_response_not_found",
+            "message": "Previous response not found",
+        },
+    }
+
+
 @pytest.mark.anyio
 async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     monkeypatch: pytest.MonkeyPatch,
@@ -814,27 +855,8 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
             ],
         ]
     )
-    connect_calls: list[dict[str, Any]] = []
-
-    def fake_connect(uri: str, **kwargs: Any) -> FakeWebSocket:
-        connect_calls.append({"uri": uri, **kwargs})
-        return websocket
-
-    from faltoobot import websockets as websocket_utils
-
-    monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
-    monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
-    config = cast(
-        Config,
-        SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="test-key",
-            openai_oauth="",
-            openai_thinking="low",
-            openai_fast=False,
-            openai_websocket=True,
-        ),
-    )
+    connect_calls = _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
 
     history: MessageHistory = [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
@@ -895,7 +917,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
 
 
 @pytest.mark.anyio
-async def test_get_streaming_reply_uses_history_response_id(
+async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket = FakeWebSocket(
@@ -923,25 +945,8 @@ async def test_get_streaming_reply_uses_history_response_id(
             ]
         ]
     )
-
-    def fake_connect(uri: str, **kwargs: Any) -> FakeWebSocket:
-        return websocket
-
-    from faltoobot import websockets as websocket_utils
-
-    monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
-    monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
-    config = cast(
-        Config,
-        SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="test-key",
-            openai_oauth="",
-            openai_thinking="low",
-            openai_fast=False,
-            openai_websocket=True,
-        ),
-    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
 
     history: MessageHistory = [
         {"role": "user", "content": "old question"},
@@ -964,8 +969,183 @@ async def test_get_streaming_reply_uses_history_response_id(
         )
     ]
 
-    assert websocket.sent[0]["previous_response_id"] == "resp_old"
-    assert websocket.sent[0]["input"] == [{"role": "user", "content": "new question"}]
+    assert "previous_response_id" not in websocket.sent[0]
+    assert websocket.sent[0]["input"] == [
+        {"role": "user", "content": "old question"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "old answer"}],
+        },
+        {"role": "user", "content": "new question"},
+    ]
+    assert history[-1]["response_id"] == "resp_new"
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_recovers_missing_previous_response_id_after_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            [
+                {
+                    "type": "response.output_item.done",
+                    "sequence_number": 1,
+                    "output_index": 0,
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "greet",
+                        "arguments": '{"name":"Faltoobot"}',
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "sequence_number": 2,
+                    "response": {
+                        "id": "resp_1",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [],
+                    },
+                },
+            ],
+            [_previous_response_not_found_event()],
+            [
+                {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": "resp_2",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [
+                            {
+                                "type": "message",
+                                "id": "msg_2",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Hello"}],
+                            }
+                        ],
+                    },
+                }
+            ],
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+    history: MessageHistory = [{"role": "user", "content": "new question"}]
+
+    items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[greet],
+            prompt_cache_key=None,
+        )
+    ]
+
+    assert [getattr(item, "type", "response") for item in items] == [
+        "response.output_item.done",
+        "response.completed",
+        "function_call_output",
+        "response.completed",
+    ]
+    assert "previous_response_id" not in websocket.sent[0]
+    assert websocket.sent[1]["previous_response_id"] == "resp_1"
+    assert websocket.sent[1]["input"] == [
+        {
+            "id": "fco_call_1",
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "hello Faltoobot",
+            "status": "completed",
+        }
+    ]
+    assert "previous_response_id" not in websocket.sent[2]
+    assert websocket.sent[2]["input"] == [
+        {"role": "user", "content": "new question"},
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "greet",
+            "arguments": '{"name":"Faltoobot"}',
+        },
+        websocket.sent[1]["input"][0],
+    ]
+    assert history[-1] == {
+        "type": "message",
+        "id": "msg_2",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Hello"}],
+        "response_id": "resp_2",
+    }
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_raises_when_previous_response_retry_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            [
+                {
+                    "type": "response.output_item.done",
+                    "sequence_number": 1,
+                    "output_index": 0,
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "greet",
+                        "arguments": '{"name":"Faltoobot"}',
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "sequence_number": 2,
+                    "response": {
+                        "id": "resp_1",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [],
+                    },
+                },
+            ],
+            [_previous_response_not_found_event()],
+            [_previous_response_not_found_event()],
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+    history: MessageHistory = [{"role": "user", "content": "new question"}]
+
+    with pytest.raises(RuntimeError, match="previous_response_not_found"):
+        _items = [
+            item
+            async for item in sessions._get_streaming_reply(
+                config=config,
+                instructions="system prompt",
+                input=history,
+                tools=[greet],
+                prompt_cache_key=None,
+            )
+        ]
+
+    assert len(websocket.sent) == len(websocket.responses)
+    assert websocket.sent[1]["previous_response_id"] == "resp_1"
+    assert "previous_response_id" not in websocket.sent[2]
 
 
 @pytest.mark.anyio
@@ -1011,17 +1191,7 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
             {"chatgpt-account-id": "acct_123", "originator": "codex_cli_rs"},
         ),
     )
-    config = cast(
-        Config,
-        SimpleNamespace(
-            openai_model="gpt-5-mini",
-            openai_api_key="",
-            openai_oauth="auth.json",
-            openai_thinking="low",
-            openai_fast=False,
-            openai_websocket=True,
-        ),
-    )
+    config = _websocket_config(openai_api_key="", openai_oauth="auth.json")
 
     _items = [
         item
@@ -1030,7 +1200,7 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
             instructions="system prompt",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[],
-            prompt_cache_key=None,
+            prompt_cache_key="session-123",
         )
     ]
 
@@ -1041,6 +1211,9 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
                 "Authorization": "Bearer oauth-token",
                 "chatgpt-account-id": "acct_123",
                 "originator": "codex_cli_rs",
+                "session_id": "session-123",
+                "thread_id": "session-123",
+                "x-client-request-id": "session-123",
             },
         }
     ]

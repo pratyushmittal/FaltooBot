@@ -1069,6 +1069,49 @@ async def test_minchat_queue_enter_loads_selected_message_back_into_composer(
 
 
 @pytest.mark.anyio
+async def test_minchat_keeps_answer_text_out_of_tool_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        yield type(
+            "Event",
+            (),
+            {
+                "type": "codex.rate_limits",
+                "rate_limits": {"primary": {"used_percent": 17}},
+            },
+        )()
+        yield type(
+            "Event", (), {"type": "response.output_text.delta", "delta": "Final answer"}
+        )()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: not app.is_answering)
+        await pilot.pause(0)
+
+        blocks = [block for block in app.query_one("#transcript").query(Markdown)]
+        tool = [block for block in blocks if block.has_class("tool")]
+        answer = [block for block in blocks if block.has_class("answer")]
+        assert tool
+        assert answer
+        assert tool[-1]._markdown == "Rate limits: primary 17% used"
+        assert answer[-1]._markdown == "Final answer"
+
+
+@pytest.mark.anyio
 async def test_minchat_keeps_answer_text_out_of_thinking_block(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
