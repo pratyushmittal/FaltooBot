@@ -50,7 +50,23 @@ from faltoobot.faltoochat.stream import get_event_text
             (
                 True,
                 "tool",
-                "Rate limits: 5h = 2% ・ 7d = 60%",
+                "Remaining limit: 5h = 98% ・ 7d = 40%",
+            ),
+        ),
+        (
+            SimpleNamespace(
+                type="codex.rate_limits",
+                plan_type="prolite",
+                rate_limits={
+                    "primary": True,
+                    "secondary": {"used_percent": False, "reset_after_seconds": 10},
+                    "tertiary": {"used_percent": 17},
+                },
+            ),
+            (
+                True,
+                "tool",
+                "Remaining limit: tertiary = 83%",
             ),
         ),
     ],

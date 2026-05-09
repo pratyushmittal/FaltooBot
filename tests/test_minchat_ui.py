@@ -1107,7 +1107,7 @@ async def test_minchat_keeps_answer_text_out_of_tool_block(
         answer = [block for block in blocks if block.has_class("answer")]
         assert tool
         assert answer
-        assert tool[-1]._markdown == "Rate limits: primary 17% used"
+        assert tool[-1]._markdown == "Remaining limit: primary = 83%"
         assert answer[-1]._markdown == "Final answer"
 
 
