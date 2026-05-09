@@ -102,7 +102,7 @@ def test_run_update_command_upgrades_then_bootstraps(
 ) -> None:
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
-    migrations: list[str] = []
+    migrations: list[dict[str, str]] = []
     versions = iter(["1.6.0", "1.6.0"])
 
     monkeypatch.setattr(cli, "build_config", lambda: config)
@@ -115,7 +115,9 @@ def test_run_update_command_upgrades_then_bootstraps(
     )
     reinstalls: list[str] = []
     monkeypatch.setattr(
-        cli, "_run_migrations", lambda config: migrations.append("ran") or ["sessions"]
+        cli,
+        "_run_migrations",
+        lambda config, **kwargs: migrations.append(kwargs) or ["sessions"],
     )
     monkeypatch.setattr(cli, "_service_installed", lambda config: True)
     monkeypatch.setattr(
@@ -126,7 +128,7 @@ def test_run_update_command_upgrades_then_bootstraps(
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert crontab == ["ran"]
-    assert migrations == ["ran"]
+    assert migrations == [{"previous_version": "1.6.0", "current_version": "1.6.0"}]
     assert reinstalls == ["ran"]
     assert result == config
 
@@ -147,6 +149,7 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
+    monkeypatch.delenv(cli.PREVIOUS_VERSION_ENV, raising=False)
     monkeypatch.setattr(cli, "_reexec_current_command", lambda: reexecs.append("ran"))
     monkeypatch.setattr(
         cli,
@@ -159,6 +162,7 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert reinstalls == []
     assert reexecs == ["ran"]
+    assert cli.os.environ[cli.PREVIOUS_VERSION_ENV] == "1.6.0"
     assert result is None
 
 
@@ -182,7 +186,9 @@ def test_run_migrations_reports_actual_changes(tmp_path: Path, monkeypatch) -> N
 
     monkeypatch.setattr(cli, "migrate_config_file", lambda path: False)
     monkeypatch.setattr(
-        cli, "run_migrations", lambda config: ["migration:remove-session-last-used"]
+        cli,
+        "run_migrations",
+        lambda config, **kwargs: ["migration:remove-session-last-used"],
     )
 
     assert cli._run_migrations(config) == [
@@ -197,7 +203,7 @@ def test_run_migrations_is_quiet_when_clean(tmp_path: Path, monkeypatch) -> None
     config.sessions_dir.mkdir(parents=True)
 
     monkeypatch.setattr(cli, "migrate_config_file", lambda path: False)
-    monkeypatch.setattr(cli, "run_migrations", lambda config: [])
+    monkeypatch.setattr(cli, "run_migrations", lambda config, **kwargs: [])
 
     assert cli._run_migrations(config) == []
 
@@ -211,7 +217,7 @@ def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
     monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
-    monkeypatch.setattr(cli, "_run_migrations", lambda config: [])
+    monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
     monkeypatch.setattr(cli, "_service_installed", lambda config: False)
 
     result = cli.run_update_command(config)

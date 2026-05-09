@@ -2,6 +2,12 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.1.0 — 2026-05-09
+
+### Changed
+- OpenAI WebSocket streaming is now enabled by default. Set `openai.websocket = false` to turn it off.
+- Faltoochat rate-limit notices now show remaining allowance, for example `Remaining limit: 1h = 89% ・ 3d = 59%`.
+
 ## 6.0.0 — 2026-05-08
 
 ### Breaking

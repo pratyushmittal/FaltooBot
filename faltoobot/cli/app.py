@@ -40,6 +40,7 @@ LOG_STYLES = {
 }
 LINUX_SERVICE_NAME = "faltoobot.service"
 SERVICE_COMMAND = "whatsapp-service"
+PREVIOUS_VERSION_ENV = "FALTOOBOT_PREVIOUS_VERSION"
 CRONTAB_DEFAULT_PATH_PARTS = [
     "/usr/bin",
     "/bin",
@@ -411,7 +412,12 @@ def run_browser_command(args: argparse.Namespace, config: Config | None = None) 
     browser_runtime.open_browser(root=config.root, binary=binary, url=args.url)
 
 
-def _run_migrations(config: Config) -> list[str]:
+def _run_migrations(
+    config: Config,
+    *,
+    previous_version: str | None = None,
+    current_version: str | None = None,
+) -> list[str]:
     changes: list[str] = []
     if migrate_config_file(config.config_file):
         changes.append("config")
@@ -420,7 +426,11 @@ def _run_migrations(config: Config) -> list[str]:
     # comment: report session setup only when update created the root directory.
     if created_sessions_dir:
         changes.append("sessions")
-    changes.extend(run_migrations(config))
+    changes.extend(
+        run_migrations(
+            config, previous_version=previous_version, current_version=current_version
+        )
+    )
     return changes
 
 
@@ -439,6 +449,7 @@ def run_update_command(config: Config | None = None) -> Config | None:
 
     # comment: finish setup in the newly installed code after uv upgrades the tool.
     if current_version != previous_version:
+        os.environ[PREVIOUS_VERSION_ENV] = previous_version
         console.print(
             "[yellow]Faltoobot was upgraded.[/] "
             f"Restarting into [cyan]{current_version}[/] to finish the update."
@@ -453,7 +464,10 @@ def run_update_command(config: Config | None = None) -> Config | None:
     console.print(f"[dim]Config:[/] [cyan]{config.config_file}[/]")
 
     _ensure_crontab_path()
-    changes = _run_migrations(config)
+    upgrade_from_version = os.environ.pop(PREVIOUS_VERSION_ENV, previous_version)
+    changes = _run_migrations(
+        config, previous_version=upgrade_from_version, current_version=current_version
+    )
     final_config = build_config()
 
     # comment: only refresh services on update when one was already installed before this update run.
