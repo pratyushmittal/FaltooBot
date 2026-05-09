@@ -35,6 +35,9 @@ include = ["faltoobot*"]
 [tool.setuptools.package-data]
 faltoobot = ["skills/*", "skills/**/*"]
 
+[tool.setuptools.data-files]
+"share/faltoobot" = ["CHANGELOG.md"]
+
 
 [dependency-groups]
 dev = [

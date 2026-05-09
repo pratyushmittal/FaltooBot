@@ -123,12 +123,17 @@ def test_run_update_command_upgrades_then_bootstraps(
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
+    recorded_updates: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        cli, "record_update", lambda old, new: recorded_updates.append((old, new))
+    )
 
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert crontab == ["ran"]
     assert migrations == [{"previous_version": "1.6.0", "current_version": "1.6.0"}]
+    assert recorded_updates == [("1.6.0", "1.6.0")]
     assert reinstalls == ["ran"]
     assert result == config
 
@@ -164,6 +169,32 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     assert reexecs == ["ran"]
     assert cli.os.environ[cli.PREVIOUS_VERSION_ENV] == "1.6.0"
     assert result is None
+
+
+def test_run_update_command_records_original_version_after_reexec(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    versions = iter(["6.1.0", "6.1.0"])
+    recorded_updates: list[tuple[str, str]] = []
+
+    monkeypatch.setenv(cli.PREVIOUS_VERSION_ENV, "6.0.0")
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
+    monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
+    monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
+    monkeypatch.setattr(cli, "_service_installed", lambda config: False)
+    monkeypatch.setattr(
+        cli, "record_update", lambda old, new: recorded_updates.append((old, new))
+    )
+
+    result = cli.run_update_command(config)
+
+    assert recorded_updates == [("6.0.0", "6.1.0")]
+    assert cli.PREVIOUS_VERSION_ENV not in cli.os.environ
+    assert result == config
 
 
 def test_run_whatsapp_command_runs_service_flow(tmp_path: Path, monkeypatch) -> None:

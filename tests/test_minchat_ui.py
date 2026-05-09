@@ -69,6 +69,33 @@ def test_minchat_terminal_title_uses_workspace_name(
 
 
 @pytest.mark.anyio
+async def test_minchat_shows_update_changelog_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    update_file = tmp_path / "home" / ".faltoobot" / "last_update.json"
+    update_file.parent.mkdir(parents=True, exist_ok=True)
+    update_file.write_text(
+        '{"previous_version":"6.0.0","current_version":"6.1.0"}\n',
+        encoding="utf-8",
+    )
+    changelog_path = tmp_path / "CHANGELOG.md"
+    changelog_path.write_text(
+        "# Changelog\n\n## 6.1.0 — 2026-05-09\n\n- Updated chat\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("faltoobot.changelog._changelog_path", lambda: changelog_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+
+        blocks = [block for block in app.query_one("#transcript").query(Markdown)]
+        assert any("Updated chat" in str(block._markdown) for block in blocks)
+        assert not update_file.exists()
+
+
+@pytest.mark.anyio
 async def test_minchat_sets_terminal_title_on_mount(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

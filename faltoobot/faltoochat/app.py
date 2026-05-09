@@ -24,6 +24,7 @@ from textual.widgets import (
 )
 
 from faltoobot import notify_queue, sessions
+from faltoobot.changelog import consume_changelog_update
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
 from faltoobot.faltoochat.terminal import (
@@ -426,6 +427,9 @@ class FaltooChatApp(App[None]):
         self.refresh_composer_title()
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
+        if text := consume_changelog_update():
+            await self.transcript.mount(Markdown(text, classes="tool"))
+            self.transcript.anchor()
         await self.queue().refresh_queue()
         if self._binding_errors:
             self.push_screen(BindingsErrorModal(self._binding_errors))

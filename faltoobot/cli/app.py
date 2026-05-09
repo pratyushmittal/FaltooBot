@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.text import Text
 
 from faltoobot import notify_queue
+from faltoobot.changelog import record_update
 from faltoobot.cli import browser as browser_runtime
 from faltoobot.config import (
     APP_LABEL,
@@ -468,6 +469,7 @@ def run_update_command(config: Config | None = None) -> Config | None:
     changes = _run_migrations(
         config, previous_version=upgrade_from_version, current_version=current_version
     )
+    record_update(upgrade_from_version, current_version)
     final_config = build_config()
 
     # comment: only refresh services on update when one was already installed before this update run.
