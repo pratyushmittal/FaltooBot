@@ -1,11 +1,26 @@
-from typing import Any
+from typing import Any, TypeAlias
 
 from faltoobot.gpt_utils import StreamingReplyItem
 from .messages_rendering import get_item_text
 
+RateLimit: TypeAlias = dict[str, int | float]
+RateLimits: TypeAlias = dict[str, RateLimit]
+
 
 def _safe_class_name(value: str) -> str:
     return value.replace(".", "-")
+
+
+def _rate_limit_parts(limits: RateLimits) -> list[str]:
+    parts = []
+    for limit in limits.values():
+        used = limit.get("used_percent")
+        reset = limit.get("reset_after_seconds")
+        if isinstance(used, int | float) and isinstance(reset, int | float):
+            hours = round(reset / 3600)
+            label = f"{hours}h" if hours < 48 else f"{round(hours / 24)}d"  # noqa: PLR2004
+            parts.append(f"{label} = {used:g}%")
+    return parts
 
 
 def _tool_text(item: Any) -> str:
@@ -17,7 +32,7 @@ def _tool_text(item: Any) -> str:
     return text if classes == "tool" else ""
 
 
-def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa: C901
+def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa: C901, PLR0912
     event_type = event.type
     match event_type:
         case (
@@ -71,13 +86,8 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
             )
         case "codex.rate_limits":
             limits = getattr(event, "rate_limits", {})
-            primary = limits.get("primary", {}) if isinstance(limits, dict) else {}
-            used = primary.get("used_percent") if isinstance(primary, dict) else None
-            text = (
-                f"Rate limits: primary {used}% used"
-                if used is not None
-                else "Rate limits"
-            )
+            parts = _rate_limit_parts(limits) if isinstance(limits, dict) else []
+            text = "Rate limits" + (f": {' ・ '.join(parts)}" if parts else "")
             is_new, classes = True, "tool"
         case "response.web_search_call.in_progress":
             is_new, classes, text = True, "tool", "Web search"

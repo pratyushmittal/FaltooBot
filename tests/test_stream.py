@@ -43,14 +43,14 @@ from faltoobot.faltoochat.stream import get_event_text
                 type="codex.rate_limits",
                 plan_type="prolite",
                 rate_limits={
-                    "primary": {"used_percent": 13, "reset_after_seconds": 1294},
-                    "secondary": {"used_percent": 37, "reset_after_seconds": 283462},
+                    "primary": {"used_percent": 2, "reset_after_seconds": 18000},
+                    "secondary": {"used_percent": 60, "reset_after_seconds": 604800},
                 },
             ),
             (
                 True,
                 "tool",
-                "Rate limits: primary 13% used",
+                "Rate limits: 5h = 2% ・ 7d = 60%",
             ),
         ),
     ],
