@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import TypedDict
 
-from .telescope import MAX_RESULTS, Telescope
+from .telescope import MAX_RESULTS, Telescope, _fuzzy_score
 
 PREVIEW_CHARS = 120
 
@@ -56,7 +56,9 @@ def _project_search_results(
 ) -> list[ProjectSearchResult]:
     needle = query.strip()
     files = _project_files(workspace) if files is None else files
+
     if not needle:
+        # comment: show files immediately before the user starts typing.
         return [
             {
                 "title": str(path),
@@ -67,12 +69,15 @@ def _project_search_results(
             for path in files[:MAX_RESULTS]
         ]
 
-    file_matches = _ripgrep_file_results(workspace, needle, files)
+    # comment: file paths are fuzzy-matched; code search remains exact grep.
+    file_matches = _file_results(needle, files)
     grep_matches = _ripgrep_results(workspace, needle)
+
     grep_items: list[tuple[int, ProjectSearchResult]] = [
         (10_000 - index, result) for index, result in enumerate(grep_matches)
     ]
     matches = [*file_matches, *grep_items]
+
     matches.sort(key=lambda item: (-item[0], item[1]["title"]))
     return [item for _score, item in matches[:MAX_RESULTS]]
 
@@ -140,46 +145,32 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
     return matches
 
 
-def _ripgrep_file_results(
-    workspace: Path,
+def _file_results(
     query: str,
     files: list[Path],
 ) -> list[tuple[int, ProjectSearchResult]]:
-    if not files:
-        return []
-    process = _start_rg(
-        ["rg", "--smart-case", "--fixed-strings", query],
-        workspace,
-        input="\n".join(str(path) for path in files),
-    )
-    if process is None or process.stdout is None:
+    needle = query.strip().lower()
+    if not needle or not files:
         return []
 
     matches: list[tuple[int, ProjectSearchResult]] = []
-    try:
-        for index, line in enumerate(process.stdout):
-            path = line.rstrip("\n")
-            if not path:
-                continue
-            matches.append(
-                (
-                    100_000 - index,
-                    {
-                        "title": path,
-                        "path": Path(path),
-                        "line_number": None,
-                        "text": "",
-                    },
-                )
+    for path in files:
+        score = _fuzzy_score(needle, str(path))
+        if score is None:
+            continue
+        matches.append(
+            (
+                100_000 + score,
+                {
+                    "title": str(path),
+                    "path": path,
+                    "line_number": None,
+                    "text": "",
+                },
             )
-            if len(matches) >= MAX_RESULTS:
-                process.kill()
-                break
-    finally:
-        process.wait()
-    if process.returncode not in {0, 1} and len(matches) < MAX_RESULTS:
-        return []
-    return matches
+        )
+    matches.sort(key=lambda item: (-item[0], item[1]["title"]))
+    return matches[:MAX_RESULTS]
 
 
 def _run_rg(

@@ -25,6 +25,7 @@ from faltoobot.faltoochat.widgets.search_project import (
 )
 from faltoobot.faltoochat.widgets.search_file import SearchFile as SearchFileModal
 from faltoobot.faltoochat.widgets.search_project import (
+    _file_results,
     _project_search_results,
     _ripgrep_results,
 )
@@ -1389,8 +1390,8 @@ def test_search_project_caches_project_files(monkeypatch: pytest.MonkeyPatch) ->
         lambda workspace: calls.append(workspace) or [Path("alpha.py")],
     )
     monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project._ripgrep_file_results",
-        lambda _workspace, _query, _files: [],
+        "faltoobot.faltoochat.widgets.search_project._file_results",
+        lambda _query, _files: [],
     )
     monkeypatch.setattr(
         "faltoobot.faltoochat.widgets.search_project._ripgrep_results",
@@ -1403,6 +1404,17 @@ def test_search_project_caches_project_files(monkeypatch: pytest.MonkeyPatch) ->
     ]
     assert search._search_results("alpha") == []
     assert calls == [Path(".")]
+
+
+def test_search_project_fuzzy_matches_file_paths() -> None:
+    matches = _file_results(
+        "announcementmode",
+        [Path("announcements/models.py"), Path("announcements/filters.py")],
+    )
+
+    assert [item["path"] for _score, item in matches] == [
+        Path("announcements/models.py")
+    ]
 
 
 def test_project_search_returns_empty_without_rg(
