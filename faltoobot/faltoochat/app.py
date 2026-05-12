@@ -24,7 +24,7 @@ from textual.widgets import (
 )
 
 from faltoobot import notify_queue, sessions
-from faltoobot.changelog import consume_changelog_update
+from faltoobot.changelog import available_update_notice, consume_changelog_update
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
 from faltoobot.faltoochat.terminal import (
@@ -430,11 +430,21 @@ class FaltooChatApp(App[None]):
         if text := consume_changelog_update():
             await self.transcript.mount(Markdown(text, classes="tool"))
             self.transcript.anchor()
+        self.run_worker(self._show_available_update_notice(), exclusive=False)
         await self.queue().refresh_queue()
         if self._binding_errors:
             self.push_screen(BindingsErrorModal(self._binding_errors))
         self.set_interval(1.0, self._poll_notifications)
         self.set_interval(COMPOSER_TITLE_REFRESH_SECONDS, self.refresh_composer_title)
+
+    async def _show_available_update_notice(self) -> None:
+        text = await asyncio.to_thread(
+            available_update_notice, package_version("faltoobot")
+        )
+        if not text:
+            return
+        await self.transcript.mount(Markdown(text, classes="tool"))
+        self.transcript.anchor()
 
     def _poll_notifications(self) -> None:
         # comment: timer ticks can overlap while an earlier notification drain is still running.

@@ -1,10 +1,36 @@
 import json
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
+from urllib.request import urlopen
 from faltoobot.config import app_root
 from faltoobot.migrate import _version_tuple
 
 _UPDATE_FILE = "last_update.json"
+_PYPI_URL = "https://pypi.org/pypi/faltoobot/json"
+
+
+def _latest_package_version() -> str | None:
+    try:
+        with urlopen(_PYPI_URL, timeout=2) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    info = data.get("info") if isinstance(data, dict) else None
+    version = info.get("version") if isinstance(info, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def available_update_notice(current_version: str) -> str:
+    latest_version = _latest_package_version()
+    if not latest_version or _version_tuple(latest_version) <= _version_tuple(
+        current_version
+    ):
+        return ""
+    return (
+        f"New Faltoobot version available: {latest_version} "
+        f"(current {current_version}). Run `faltoobot update` to upgrade."
+    )
 
 
 def _changelog_path() -> Path | None:

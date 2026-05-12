@@ -2,10 +2,10 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
-## Unreleased
+## 6.2.0 — 2026-05-12
 
 ### Added
-- Faltoochat now shows the changelog after `faltoobot update`.
+- Faltoochat now shows the changelog after `faltoobot update` and warns when a newer version is available.
 
 ## 6.1.0 — 2026-05-09
 

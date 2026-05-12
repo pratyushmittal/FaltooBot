@@ -96,6 +96,26 @@ async def test_minchat_shows_update_changelog_once(
 
 
 @pytest.mark.anyio
+async def test_minchat_shows_available_update_notice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.available_update_notice",
+        lambda _: "New Faltoobot version available",
+    )
+
+    async with app.run_test():
+        await wait_for_condition(
+            lambda: any(
+                "New Faltoobot version available" in str(block._markdown)
+                for block in app.query_one("#transcript").query(Markdown)
+            )
+        )
+
+
+@pytest.mark.anyio
 async def test_minchat_sets_terminal_title_on_mount(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -156,6 +176,9 @@ def build_app(
     workspace.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.available_update_notice", lambda _: ""
+    )
     return workspace, FaltooChatApp(
         session=sessions.get_session(
             chat_key=sessions.get_dir_chat_key(workspace),
