@@ -13,7 +13,11 @@ from textual.widgets.option_list import Option
 from faltoobot import sessions
 from faltoobot.faltoochat.app import FaltooChatApp
 from faltoobot.faltoochat.diff import get_diff
-from faltoobot.faltoochat.review import ReviewView, _review_tab_titles
+from faltoobot.faltoochat.review import (
+    ReviewView,
+    _get_modified_files,
+    _review_tab_titles,
+)
 from faltoobot.faltoochat.widgets import (
     ReviewCommentModal,
     ReviewDiffView,
@@ -31,6 +35,12 @@ from faltoobot.faltoochat.widgets.search_project import (
 )
 
 EXPECTED_REVIEW_FILES = 2
+
+
+def test_review_missing_workspace_returns_git_error(tmp_path: Path) -> None:
+    workspace = tmp_path / "missing"
+
+    assert _get_modified_files(workspace) == ("Git repository not found.", [])
 
 
 def test_project_search_stops_after_max_results(

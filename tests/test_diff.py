@@ -15,6 +15,10 @@ def git(workspace: Path, *args: str) -> str:
     return result.stdout
 
 
+def test_get_diff_returns_empty_when_file_parent_is_missing(tmp_path: Path) -> None:
+    assert get_diff(tmp_path / "missing" / "alpha.py") == []
+
+
 def test_get_diff_returns_staged_and_unstaged_lines(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

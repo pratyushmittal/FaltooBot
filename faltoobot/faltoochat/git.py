@@ -5,17 +5,32 @@ from typing import Any
 from .diff import Diff
 
 
+def _run_git(
+    workspace: Path,
+    *args: str,
+    input: str | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=workspace,
+            input=input,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        # comment: missing workspace/git should behave like an empty git result.
+        return None
+
+
 def stage_file(workspace: Path, file_path: Path) -> str | None:
     """Stage the full file in git."""
-    result = subprocess.run(
-        ["git", "add", "--", str(file_path)],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode == 0:
+    result = _run_git(workspace, "add", "--", str(file_path))
+    if result is not None and result.returncode == 0:
         return None
+    if result is None:
+        return "Git workspace not found."
     return (result.stderr or result.stdout or "Could not stage the file.").strip()
 
 
@@ -46,23 +61,19 @@ def apply_selected_diff_lines(
     patch = _selected_patch(file_path, selected_entries)
     if patch is None:
         return "No modified lines to stage or unstage here."
-    result = subprocess.run(
-        [
-            "git",
-            "apply",
-            "--cached",
-            *(["--reverse"] if is_staged else []),
-            "--unidiff-zero",
-            "-",
-        ],
-        cwd=workspace,
+    result = _run_git(
+        workspace,
+        "apply",
+        "--cached",
+        *(["--reverse"] if is_staged else []),
+        "--unidiff-zero",
+        "-",
         input=patch,
-        capture_output=True,
-        text=True,
-        check=False,
     )
-    if result.returncode == 0:
+    if result is not None and result.returncode == 0:
         return None
+    if result is None:
+        return "Git workspace not found."
     return (
         result.stderr or result.stdout or "Could not stage the selected lines."
     ).strip()
@@ -88,47 +99,25 @@ def get_selected_change_state(
 
 
 def is_git_workspace(workspace: Path) -> bool:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0
+    result = _run_git(workspace, "rev-parse", "--show-toplevel")
+    return result is not None and result.returncode == 0
 
 
 def get_workspace_label(workspace: Path) -> str:
-    root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if root.returncode != 0:
+    root = _run_git(workspace, "rev-parse", "--show-toplevel")
+    if root is None or root.returncode != 0:
         return ""
-    branch = subprocess.run(
-        ["git", "branch", "--show-current"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if branch.returncode != 0 or not branch.stdout.strip():
-        return Path(root.stdout.strip()).name
-    return f"{Path(root.stdout.strip()).name} •  {branch.stdout.strip()}"
+
+    root_name = Path(root.stdout.strip()).name
+    branch = _run_git(workspace, "branch", "--show-current")
+    if branch is None or branch.returncode != 0 or not branch.stdout.strip():
+        return root_name
+    return f"{root_name} •  {branch.stdout.strip()}"
 
 
 def _git_paths(workspace: Path, *args: str) -> list[Path]:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode not in {0, 1}:
+    result = _run_git(workspace, *args)
+    if result is None or result.returncode not in {0, 1}:
         return []
     return [Path(path) for path in result.stdout.split("\0") if path]
 
@@ -176,22 +165,10 @@ def get_unstaged_files(workspace: Path) -> list[Path]:
 
 
 def _ensure_index_entry(workspace: Path, file_path: Path) -> None:
-    result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", str(file_path)],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode == 0:
+    result = _run_git(workspace, "ls-files", "--error-unmatch", str(file_path))
+    if result is None or result.returncode == 0:
         return
-    subprocess.run(
-        ["git", "add", "--intent-to-add", str(file_path)],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    _run_git(workspace, "add", "--intent-to-add", str(file_path))
 
 
 def _stage_entries(diff: Diff, start: int, end: int) -> list[dict[str, Any]]:
