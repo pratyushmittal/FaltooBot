@@ -29,6 +29,7 @@ from faltoobot.prompts.transcription import PROMPT as TRANSCRIPTION_PROMPT
 from faltoobot.sessions import (
     MessagesJson,
     Session,
+    compact_message_history,
     get_answer,
     get_last_usage,
     get_messages,
@@ -61,6 +62,7 @@ SLASH_COMMANDS = {
     "/inspect",
     "/status",
     "/reset",
+    "/compact",
     "/approve_group",
     "/deny_group",
     "/groups",
@@ -72,6 +74,7 @@ HELP_TEXT = (
     "Faltoobot is online.\n\n"
     "• Send any message to ask the model\n"
     "• /reset — clear this chat's memory\n"
+    "• /compact — compact this chat's memory\n"
     "• /status — show bot status\n"
     "• /inspect — show recent tool calls\n"
     "• /help — show this help"
@@ -367,6 +370,11 @@ async def _handle_slash_command(
         )
     elif command == "/inspect":
         await client.reply_message(inspect_text_for_messages(messages_json), event)
+    elif command == "/compact":
+        compacted = await compact_message_history(session)
+        await client.reply_message(
+            "Memory compacted." if compacted else "Nothing to compact.", event
+        )
     elif command == "/reset":
         reset_session = get_session(chat_key=session.chat_key, session_id=str(uuid4()))
         reset_messages_json = get_messages(reset_session)

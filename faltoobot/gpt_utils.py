@@ -21,6 +21,13 @@ from faltoobot.config import Config
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 200_000
+STANDALONE_COMPACTION_KEY = "_standalone_compaction"
+STRIPPED_MESSAGE_KEYS = {
+    "parsed_arguments",
+    "response_id",
+    "usage",
+    STANDALONE_COMPACTION_KEY,
+}
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -177,18 +184,30 @@ def trim_input(
     *,
     replace_unavailable_uploads: bool = False,
 ) -> MessageHistory:
-    # Keep only the latest compacted history window.
+    # Auto-compaction items can replace history before that turn.
     for index in range(len(items) - 1, -1, -1):
-        if items[index].get("type") == "compaction":
-            items = items[index:]
+        if items[index].get("type") != "compaction":
+            continue
+        if items[index].get(STANDALONE_COMPACTION_KEY):
+            # comment: standalone compact output must be replayed as-is.
             break
+
+        # Include the user turn that produced this auto-compaction item.
+        for start in range(index - 1, -1, -1):
+            if items[start].get("role") == "user":
+                items = items[start:]
+                break
+        else:
+            # comment: old/corrupt histories may not have a user item before compaction.
+            items = items[index:]
+        break
 
     trimmed_items: MessageHistory = []
     for item in items:
         trimmed = {
             key: value
             for key, value in item.items()
-            if key not in {"parsed_arguments", "response_id", "usage"}
+            if key not in STRIPPED_MESSAGE_KEYS
         }
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)

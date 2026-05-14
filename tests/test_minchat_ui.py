@@ -220,6 +220,7 @@ async def test_minchat_shows_slash_command_suggestions(
         option_list = app.query_one("#slash-commands", SlashCommandsOptionList)
         assert option_list.display
         assert [str(option.prompt) for option in option_list.options] == [
+            "/compact — compact this session history",
             "/name — name the current session",
             "/reset — start a fresh session",
             "/resume — resume another session",
@@ -542,6 +543,61 @@ async def test_minchat_enter_applies_highlighted_slash_command(
 
         assert composer.text == "/reset"
         assert composer.cursor_location == (0, len("/reset"))
+
+
+@pytest.mark.anyio
+async def test_minchat_compact_command_compacts_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    calls: list[sessions.Session] = []
+
+    async def fake_compact_message_history(session: sessions.Session) -> bool:
+        calls.append(session)
+        return True
+
+    monkeypatch.setattr(
+        sessions, "compact_message_history", fake_compact_message_history
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/compact")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        assert calls == [app.session]
+        assert any("Memory compacted." in block._markdown for block in blocks)
+
+
+@pytest.mark.anyio
+async def test_minchat_compact_command_reports_empty_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async def fake_compact_message_history(session: sessions.Session) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        sessions, "compact_message_history", fake_compact_message_history
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/compact")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        assert any("Nothing to compact." in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio

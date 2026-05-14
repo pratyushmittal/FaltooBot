@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, TypedDict, cast
 from uuid import uuid4
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.responses import (
     ResponseCompletedEvent,
     ResponseOutputMessage,
@@ -17,9 +17,12 @@ from openai.types.responses import (
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
     MessageHistory,
+    STANDALONE_COMPACTION_KEY,
     StreamingReplyItem,
     Tool,
+    get_openai_client,
     get_streaming_reply,
+    trim_input,
 )
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
@@ -229,6 +232,50 @@ def get_last_usage(session: Session) -> dict[str, Any] | None:
         if isinstance(usage, dict):
             return cast(dict[str, Any], usage)
     return None
+
+
+async def compact_message_history(session: Session) -> bool:
+    config = build_config()
+    messages_json = get_messages(session)
+    if not messages_json["messages"]:
+        # comment: nothing to compact for a new/empty session.
+        return False
+
+    workspace = Path(messages_json["workspace"])
+    instructions = get_system_instructions(config, session.chat_key, workspace)
+    input_items = trim_input(
+        messages_json["messages"],
+        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+    )
+    client = get_openai_client(config)
+    try:
+        compacted = await client.responses.compact(
+            model=config.openai_model,
+            input=cast(Any, input_items),
+            instructions=instructions or omit,
+            prompt_cache_key=messages_json["id"],
+        )
+    finally:
+        await client.close()
+
+    output: MessageHistory = []
+    for raw_item in compacted.output:
+        item = raw_item.to_dict() if hasattr(raw_item, "to_dict") else raw_item
+        if not isinstance(item, dict):
+            # comment: compaction output should be a response input item.
+            raise TypeError(f"Expected compacted item dict, got {type(item).__name__}")
+        if item.get("type") == "compaction":
+            # comment: standalone compact output must be replayed as one canonical window.
+            item = {**item, STANDALONE_COMPACTION_KEY: True}
+        output.append(item)
+    if not output:
+        # comment: avoid losing history if the compaction endpoint returns no window.
+        return False
+
+    messages_json["system_prompt"] = instructions
+    messages_json["messages"] = output
+    set_messages(session, messages_json)
+    return True
 
 
 def set_messages(session: Session, messages_json: MessagesJson) -> None:

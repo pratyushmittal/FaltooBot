@@ -603,6 +603,55 @@ async def test_get_streaming_reply_trims_input(
     [item async for item in get_streaming_reply("system prompt", items, [])]
 
     assert client.responses.calls[0]["input"] == [
+        {"type": "message", "role": "user", "content": "old"},
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "greet",
+            "arguments": '{"name":"Faltoobot"}',
+        },
+        {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
+        {"type": "message", "role": "assistant", "content": "hi"},
+    ]
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_keeps_standalone_compaction_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(
+        [
+            {
+                "events": [FakeCompletedEvent([])],
+                "output": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+
+    items = cast(
+        MessageHistory,
+        [
+            {"type": "message", "role": "user", "content": "retained"},
+            {
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "secret",
+                gpt_utils.STANDALONE_COMPACTION_KEY: True,
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": "hi",
+                "usage": {"total_tokens": 3},
+            },
+        ],
+    )
+
+    [item async for item in get_streaming_reply("system prompt", items, [])]
+
+    assert client.responses.calls[0]["input"] == [
+        {"type": "message", "role": "user", "content": "retained"},
         {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
         {"type": "message", "role": "assistant", "content": "hi"},
     ]
