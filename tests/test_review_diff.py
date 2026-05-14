@@ -341,7 +341,7 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode(monkeypatch) -> None:
             {"is_staged": False, "type": "+", "text": "b = 20"},
             {"is_staged": False, "type": "", "text": "c = 3"},
         ],
-        file_path=Path("alpha.py"),
+        file_path=Path("app/alpha.py"),
         review_view=cast(Any, review_view_stub()),
     )
     centers: list[bool] = []
@@ -356,7 +356,7 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode(monkeypatch) -> None:
 
     assert centers[-1] is True
     assert viewer.mode == "add"
-    assert viewer.border_subtitle == "add"
+    assert viewer.border_subtitle == "app/alpha.py · add"
     assert viewer.text == "a = 1\nb = 20\nc = 3"
     assert viewer.visible_diff_lines == [0, 2, 3]
 
@@ -364,7 +364,7 @@ def test_review_cycle_mode_hides_deleted_lines_in_add_mode(monkeypatch) -> None:
 
     assert centers[-1] is True
     assert viewer.mode == "diff"
-    assert viewer.border_subtitle == ""
+    assert viewer.border_subtitle == "app/alpha.py"
     assert viewer.text == "a = 1\nb = 2\nb = 20\nc = 3"
 
 

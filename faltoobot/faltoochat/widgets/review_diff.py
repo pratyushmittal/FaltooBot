@@ -392,7 +392,11 @@ class ReviewDiffView(TextArea):
         )
 
     def _update_mode_subtitle(self) -> None:
-        self.border_subtitle = "" if self.mode == DIFF_MODE else self.mode
+        self.border_subtitle = (
+            str(self.file_path)
+            if self.mode == DIFF_MODE
+            else f"{self.file_path} · {self.mode}"
+        )
 
     def _visible_diff_line(self, line_index: int) -> int:
         """Return the backing diff line for a document row."""
