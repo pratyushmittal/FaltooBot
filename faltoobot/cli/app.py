@@ -11,7 +11,7 @@ import sys
 import time
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from rich.console import Console
 from rich.text import Text
@@ -68,9 +68,10 @@ def _run_cmd(*args: str) -> None:
     subprocess.run(list(args), check=True, text=True)
 
 
-def _reexec_current_command() -> None:
+def _reexec_current_command() -> NoReturn:
     """Replace this process with the freshly installed Faltoobot command."""
     os.execv(sys.executable, [sys.executable, "-m", "faltoobot.cli.app", *sys.argv[1:]])
+    raise RuntimeError("os.execv returned unexpectedly")
 
 
 def _run_capture(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -325,13 +326,6 @@ def _reinstall_service(config: Config) -> None:
     _start_service(config)
 
 
-def _restart_service(config: Config) -> None:
-    if not _service_installed(config):
-        return
-    _stop_service(config)
-    _start_service(config)
-
-
 def _log_style(line: str) -> str:
     if "Traceback" in line or "Exception" in line:
         return "bold red"
@@ -472,7 +466,7 @@ def run_update_command(config: Config | None = None) -> Config | None:
     record_update(upgrade_from_version, current_version)
     final_config = build_config()
 
-    # comment: only refresh services on update when one was already installed before this update run.
+    # comment: reinstall stops the old service, rewrites files, then starts it again.
     if _service_installed(final_config):
         _reinstall_service(final_config)
 

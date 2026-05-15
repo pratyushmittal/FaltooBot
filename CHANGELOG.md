@@ -2,6 +2,18 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.3.0 — 2026-05-15
+
+### Added
+- Added `/compact` to manually compact long chat histories in Faltoochat and WhatsApp.
+
+### Changed
+- Project search now matches file paths fuzzily, so partial names can find matching files more easily.
+- Review file subtitles now show the full workspace-relative path.
+
+### Fixed
+- Review no longer crashes when the workspace or a deleted file is missing.
+
 ## 6.2.0 — 2026-05-12
 
 ### Added
