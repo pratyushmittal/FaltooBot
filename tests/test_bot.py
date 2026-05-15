@@ -2314,6 +2314,9 @@ async def test_compact_message_history_replaces_messages_with_compacted_window(
     ]
     messages_json["message_ids"] = ["msg-1"]
     set_messages(session, messages_json)
+    archived_before_compact = json.loads(
+        session.messages_path.read_text(encoding="utf-8")
+    )
 
     raw_compacted_output = [
         {"type": "message", "role": "user", "content": "summary seed"},
@@ -2351,6 +2354,13 @@ async def test_compact_message_history_replaces_messages_with_compacted_window(
     assert saved["messages"] == saved_compacted_output
     assert saved["message_ids"] == ["msg-1"]
     assert saved["system_prompt"] == "system prompt"
+    archive_paths = list(session.session_dir.glob("messages.archive.*.json"))
+    assert len(archive_paths) == 1
+    archive_json = json.loads(archive_paths[0].read_text(encoding="utf-8"))
+    assert archive_json == {
+        **archived_before_compact,
+        "system_prompt": "system prompt",
+    }
     assert client.closed is True
     assert client.responses.calls == [
         {
@@ -2364,6 +2374,56 @@ async def test_compact_message_history_replaces_messages_with_compacted_window(
             "instructions": "system prompt",
             "prompt_cache_key": session.session_id,
         }
+    ]
+
+
+@pytest.mark.anyio
+async def test_compact_message_history_creates_archive_file_per_compaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    messages_json = get_messages(session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": "old"},
+    ]
+    set_messages(session, messages_json)
+
+    raw_outputs = [
+        [{"type": "message", "role": "user", "content": "first compact"}],
+        [{"type": "message", "role": "user", "content": "second compact"}],
+    ]
+
+    class FakeResponses:
+        async def compact(self, **_: Any) -> Any:
+            return SimpleNamespace(output=raw_outputs.pop(0))
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(sessions, "build_config", lambda: config)
+    monkeypatch.setattr(sessions, "get_openai_client", lambda _: FakeClient())
+    monkeypatch.setattr(sessions, "get_system_instructions", lambda *_: "system prompt")
+
+    first_snapshot = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    assert await sessions.compact_message_history(session) is True
+    second_snapshot = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    assert await sessions.compact_message_history(session) is True
+
+    archived_snapshots = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in session.session_dir.glob("messages.archive.*.json")
+    ]
+    assert sorted(
+        archived_snapshots, key=lambda snapshot: snapshot["messages"][0]["content"]
+    ) == [
+        {**second_snapshot, "system_prompt": "system prompt"},
+        {**first_snapshot, "system_prompt": "system prompt"},
     ]
 
 

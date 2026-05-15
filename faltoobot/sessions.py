@@ -273,6 +273,11 @@ async def compact_message_history(session: Session) -> bool:
         return False
 
     messages_json["system_prompt"] = instructions
+    # comment: create an archive snapshot file before replacing messages.json.
+    _write_text_atomic(
+        session.session_dir / f"messages.archive.{uuid4().hex}.json",
+        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
+    )
     messages_json["messages"] = output
     set_messages(session, messages_json)
     return True
