@@ -78,6 +78,7 @@ def test_run_shell_call_in_workspace_sets_openai_key_from_config(
         lambda: SimpleNamespace(
             openai_api_key="openai-key",
             gemini_api_key="gemini-key",
+            google_places_api_key="maps-key",
         ),
         raising=False,
     )
@@ -89,6 +90,7 @@ def test_run_shell_call_in_workspace_sets_openai_key_from_config(
 import os
 print(os.environ.get("OPENAI_API_KEY", ""))
 print(os.environ.get("GEMINI_API_KEY", ""))
+print(os.environ.get("GOOGLE_MAPS_API_KEY", ""))
 PY""",
             timeout_ms=5000,
         )
@@ -99,6 +101,7 @@ PY""",
     assert result["timed_out"] is False
     assert "openai-key" in result["stdout"]
     assert "gemini-key" in result["stdout"]
+    assert "maps-key" in result["stdout"]
 
 
 def test_get_load_image_tool_builds_valid_tool_definition(tmp_path: Path) -> None:

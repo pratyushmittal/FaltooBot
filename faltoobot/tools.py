@@ -35,6 +35,9 @@ def _tool_env_overrides() -> dict[str, str]:
     if config.gemini_api_key:
         # comment: Gemini snippets expect the key in the process environment.
         env["GEMINI_API_KEY"] = config.gemini_api_key
+    if google_key := getattr(config, "google_places_api_key", ""):
+        # comment: Google Places skill snippets read the Maps key from the environment.
+        env["GOOGLE_MAPS_API_KEY"] = google_key
     return env
 
 
