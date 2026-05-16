@@ -225,14 +225,12 @@ class ReviewView(TabPane):
         app = cast("FaltooChatApp", self.app)
         workspace = app.workspace
 
-        def on_result(result: "ProjectSearchResult | None") -> None:
+        async def on_result(result: "ProjectSearchResult | None") -> None:
             if result is None:
                 return
-            asyncio.create_task(
-                self.open_file(
-                    result["path"],
-                    line_number=result["line_number"],
-                )
+            await self.open_file(
+                result["path"],
+                line_number=result["line_number"],
             )
 
         app.push_screen(SearchProject(workspace=workspace), on_result)

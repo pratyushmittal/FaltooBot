@@ -907,11 +907,12 @@ async def test_review_grep_opens_modal_and_jumps_to_selected_line(
     async with app.run_test() as pilot:
         review_tabs = await open_review(app, pilot)
         alpha_pane = review_pane(review_tabs, "alpha.py")
-        review_tabs.active = alpha_pane.id or ""
+        beta_pane = review_pane(review_tabs, "beta.py")
+        review_tabs.active = beta_pane.id or ""
         await pilot.pause(0)
 
         viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
+        beta_pane.query_one(ReviewDiffView).focus()
         target_line = 5
 
         await pilot.press("@")
@@ -1986,6 +1987,46 @@ async def test_review_comment_at_opens_file_picker_and_inserts_mention(
         assert (
             app.screen.query_one("#review-comment-input", TextArea).text == "`beta.py` "
         )
+
+
+@pytest.mark.anyio
+async def test_review_comment_cancelled_at_picker_inserts_at(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = review_pane(review_tabs, "alpha.py")
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
+        viewer.move_cursor((1, 0), record_width=False)
+
+        await pilot.press("a")
+        await pilot.pause(0)
+        modal = app.screen
+        assert isinstance(modal, ReviewCommentModal)
+        comment_input = modal.query_one("#review-comment-input", TextArea)
+        await pilot.click(comment_input)
+
+        await pilot.press("@")
+        await pilot.pause(0)
+        assert isinstance(app.screen, SearchFileModal)
+
+        await pilot.press("escape")
+        await wait_for_condition(
+            lambda: (
+                isinstance(app.screen, ReviewCommentModal)
+                and app.screen.query_one("#review-comment-input", TextArea).text == "@"
+            )
+        )
+
+        assert comment_input.text == "@"
 
 
 @pytest.mark.anyio

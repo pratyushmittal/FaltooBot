@@ -499,6 +499,28 @@ async def test_minchat_at_opens_file_picker_and_inserts_mention(
 
 
 @pytest.mark.anyio
+async def test_minchat_cancelled_at_picker_inserts_at(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+
+        await pilot.press("@")
+        await pilot.pause(0)
+        assert isinstance(app.screen, SearchFile)
+
+        await pilot.press("escape")
+        await wait_for_condition(lambda: composer.text == "@")
+
+        assert composer.text == "@"
+
+
+@pytest.mark.anyio
 async def test_minchat_up_down_navigate_slash_command_suggestions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

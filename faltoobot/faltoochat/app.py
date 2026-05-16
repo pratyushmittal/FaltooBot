@@ -903,9 +903,7 @@ class Composer(TextArea):
 
     def action_mention_file(self) -> None:
         def on_result(result: Path | None) -> None:
-            if result is None:
-                return
-            self.insert(f"`{result}` ")
+            self.insert("@" if result is None else f"`{result}` ")
             self.focus()
 
         self.app.push_screen(
