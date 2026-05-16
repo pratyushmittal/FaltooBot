@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.4.1 — 2026-05-16
+
+### Fixed
+- Backfilled the WebSocket default migration for users who upgraded through earlier 6.x releases.
+
 ## 6.4.0 — 2026-05-16
 
 ### Added

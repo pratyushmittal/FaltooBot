@@ -58,8 +58,8 @@ def enable_default_openai_websocket(
     previous_version: str | None,
     current_version: str | None,
 ) -> bool:
-    if not _upgrading_across(previous_version, current_version, "6.1.0"):
-        # comment: avoid overriding users who disable websocket after this release.
+    if not _upgrading_across(previous_version, current_version, "6.4.1"):
+        # comment: backfill users whose 6.1-6.4 config kept the old default.
         return False
     path = config.config_file
     if not path.exists():

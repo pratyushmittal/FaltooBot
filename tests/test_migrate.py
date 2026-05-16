@@ -112,7 +112,7 @@ def test_enable_default_openai_websocket_moves_old_default(tmp_path: Path) -> No
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
     changed = enable_default_openai_websocket(
-        config, previous_version="6.0.0", current_version="6.1.0"
+        config, previous_version="6.2.0", current_version="6.4.1"
     )
 
     assert changed
@@ -126,12 +126,12 @@ def test_migrate_main_enables_default_openai_websocket(tmp_path: Path) -> None:
     config.config_file.parent.mkdir(parents=True)
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
-    assert main(config, previous_version="6.0.0", current_version="6.1.0") == [
+    assert main(config, previous_version="6.2.0", current_version="6.4.1") == [
         "migration:enable-default-openai-websocket"
     ]
 
 
-def test_migrate_main_does_not_reenable_websocket_after_default_change(
+def test_migrate_main_does_not_reenable_websocket_after_backfill(
     tmp_path: Path,
 ) -> None:
     config = make_config(tmp_path)
@@ -140,5 +140,5 @@ def test_migrate_main_does_not_reenable_websocket_after_default_change(
     config.config_file.parent.mkdir(parents=True)
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
-    assert main(config, previous_version="6.1.0", current_version="6.2.0") == []
+    assert main(config, previous_version="6.4.1", current_version="6.4.2") == []
     assert "websocket = false" in config.config_file.read_text(encoding="utf-8")
