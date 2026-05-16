@@ -98,8 +98,9 @@ def add_to_queue(session: sessions.Session, message: MessageItem) -> MessageHist
 def move_up(session: sessions.Session, message_id: str) -> MessageHistory:
     with _locked_queue(session):
         queue = _queue(session)
+        index = _message_index(queue, message_id)
         # comment: missing ids or the first item can't move any higher.
-        if (index := _message_index(queue, message_id)) not in {None, 0}:
+        if index is not None and index > 0:
             queue[index - 1], queue[index] = queue[index], queue[index - 1]
             _write_queue(_queue_path(session), queue)
         return queue

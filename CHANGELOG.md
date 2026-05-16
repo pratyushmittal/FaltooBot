@@ -2,6 +2,18 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.4.0 — 2026-05-16
+
+### Added
+- Manual compaction now archives the previous `messages.json` before replacing it.
+
+### Changed
+- Refreshed dependencies, including OpenAI, Textual, Ruff, and Ty.
+
+### Fixed
+- Cancelling the `@` file picker now inserts a literal `@` in chat and review comments.
+- Review project search now jumps to the selected line, not just the file.
+
 ## 6.3.0 — 2026-05-15
 
 ### Added
