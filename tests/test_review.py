@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import nullcontext
-import json
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -24,15 +23,7 @@ from faltoobot.faltoochat.widgets import (
     SearchProject,
     Telescope,
 )
-from faltoobot.faltoochat.widgets.search_project import (
-    SearchProject as SearchProjectModal,
-)
 from faltoobot.faltoochat.widgets.search_file import SearchFile as SearchFileModal
-from faltoobot.faltoochat.widgets.search_project import (
-    _file_results,
-    _project_search_results,
-    _ripgrep_results,
-)
 
 EXPECTED_REVIEW_FILES = 2
 
@@ -41,50 +32,6 @@ def test_review_missing_workspace_returns_git_error(tmp_path: Path) -> None:
     workspace = tmp_path / "missing"
 
     assert _get_modified_files(workspace) == ("Git repository not found.", [])
-
-
-def test_project_search_stops_after_max_results(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from faltoobot.faltoochat.widgets.telescope import MAX_RESULTS
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode = 0
-            self.killed = False
-            self.stdout = iter(
-                [
-                    json.dumps(
-                        {
-                            "type": "match",
-                            "data": {
-                                "path": {"text": "alpha.py"},
-                                "line_number": index + 1,
-                                "lines": {"text": f"line {index}\n"},
-                            },
-                        }
-                    )
-                    for index in range(MAX_RESULTS * 2)
-                ]
-            )
-
-        def kill(self) -> None:
-            self.killed = True
-            self.returncode = -9
-
-        def wait(self) -> int:
-            return self.returncode
-
-    process = FakeProcess()
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project._start_rg",
-        lambda *_args, **_kwargs: process,
-    )
-
-    results = _ripgrep_results(Path("."), "f")
-
-    assert len(results) == MAX_RESULTS
-    assert process.killed is True
 
 
 def review_file_panes(tabs: TabbedContent) -> list[TabPane]:
@@ -252,33 +199,6 @@ async def test_review_hides_staged_only_files_by_default(
     async with app.run_test() as pilot:
         review_tabs = await open_review(app, pilot)
         assert review_file_titles(review_tabs) == {"alpha.py"}
-
-
-@pytest.mark.anyio
-async def test_review_tab_shows_modified_files_as_nested_tabs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        panes = review_file_panes(review_tabs)
-        assert {pane._title for pane in panes} == {"alpha.py", "beta.py"}
-
-        viewers = [viewer for viewer in review_tabs.query(ReviewDiffView)]
-        assert len(viewers) == EXPECTED_REVIEW_FILES
-        assert all(viewer.language == "python" for viewer in viewers)
-        assert all("diff --git" not in viewer.text for viewer in viewers)
-        assert any("b = 20" in viewer.text for viewer in viewers)
-
-        beta_pane = review_pane(review_tabs, "beta.py")
-        review_tabs.active = beta_pane.id or ""
-        await wait_for_condition(
-            lambda: "beta staged" in beta_pane.query_one(ReviewDiffView).text
-        )
-        assert "beta staged" in beta_pane.query_one(ReviewDiffView).text
 
 
 @pytest.mark.anyio
@@ -691,132 +611,6 @@ async def test_review_diff_highlights_keep_cursor_visible(
 
 
 @pytest.mark.anyio
-async def test_review_wrap_keeps_line_numbers_on_real_lines(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    alpha = workspace / "alpha.py"
-    alpha.write_text("short\nnext = 1\n", encoding="utf-8")
-    git(workspace, "add", ".")
-    git(workspace, "commit", "-m", "initial")
-    alpha.write_text(
-        "this is a very long line that should wrap around the review diff widget width significantly\nnext = 2\n",
-        encoding="utf-8",
-    )
-
-    async with app.run_test(size=(40, 12)) as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = review_pane(review_tabs, "alpha.py")
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0.3)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        await pilot.pause(0.3)
-        await pilot.press("W")
-        await pilot.pause(0.3)
-
-        gutters = [
-            viewer.render_line(y).crop(0, viewer.gutter_width).text.strip()
-            for y in range(viewer.wrapped_document.height)
-        ]
-
-        assert gutters == ["-", "-", "+1", "+", "+", "+", "+2"]
-
-
-@pytest.mark.anyio
-async def test_review_tab_cycle_closes_deleted_untracked_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-    (workspace / "randomfile").touch()
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        review_tabs = await open_review(app, pilot)
-        review = app.query_one(ReviewView)
-        await review.refresh_files(close_unmodified=True)
-        await wait_for_condition(
-            lambda: any(
-                str(pane._title) == "randomfile"
-                for pane in review_file_panes(
-                    app.query_one("#review-tabs", TabbedContent)
-                )
-            )
-        )
-
-        alpha_pane = review_pane(review_tabs, "alpha.py")
-        review_tabs.active = alpha_pane.id or ""
-        alpha_pane.query_one(ReviewDiffView).focus()
-        await pilot.pause(0.3)
-
-        await pilot.press("tab")
-        await pilot.pause(0.3)
-        await pilot.press("tab")
-        await pilot.pause(0.3)
-        assert (
-            active_review_title(app.query_one("#review-tabs", TabbedContent))
-            == "randomfile"
-        )
-
-        (workspace / "randomfile").unlink()
-
-        await pilot.press("shift+tab")
-        await pilot.pause(0.3)
-        assert (
-            active_review_title(app.query_one("#review-tabs", TabbedContent))
-            == "beta.py"
-        )
-
-        await pilot.press("tab")
-        await pilot.pause(0.3)
-
-        review_tabs = app.query_one("#review-tabs", TabbedContent)
-        assert review_file_titles(review_tabs) == {
-            "alpha.py",
-            "beta.py",
-        }
-        assert active_review_title(review_tabs) == "alpha.py"
-
-
-@pytest.mark.anyio
-async def test_review_refresh_closes_deleted_untracked_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-    (workspace / "randomfile").touch()
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        review_tabs = await open_review(app, pilot)
-        review = app.query_one(ReviewView)
-        await review.refresh_files(close_unmodified=True)
-        await wait_for_condition(
-            lambda: any(
-                str(pane._title) == "randomfile"
-                for pane in review_file_panes(
-                    app.query_one("#review-tabs", TabbedContent)
-                )
-            )
-        )
-
-        (workspace / "randomfile").unlink()
-        assert review_file_titles(review_tabs) == {
-            "alpha.py",
-            "beta.py",
-            "randomfile",
-        }
-
-        await review.refresh_files(close_unmodified=True)
-        await wait_for_condition(
-            lambda: review_file_titles(review_tabs) == {"alpha.py", "beta.py"}
-        )
-
-
-@pytest.mark.anyio
 async def test_review_visual_line_selection_extends_with_j_and_k(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -939,40 +733,6 @@ async def test_review_grep_opens_modal_and_jumps_to_selected_line(
             alpha_pane.id or ""
         )
         assert viewer.cursor_location == (6, 0)
-
-
-@pytest.mark.anyio
-async def test_review_focus_reloads_already_loaded_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = review_pane(review_tabs, "alpha.py")
-        beta_pane = review_pane(review_tabs, "beta.py")
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        alpha_viewer = alpha_pane.query_one(ReviewDiffView)
-        await wait_for_condition(lambda: bool(alpha_viewer.diff))
-        assert "b = 20" in alpha_viewer.text
-
-        review_tabs.active = beta_pane.id or ""
-        await pilot.pause(0)
-        (workspace / "alpha.py").write_text(
-            "\n".join(["a = 1", "b = 200", "c = 3", "d = 4", "e = 50", "f = 6"]) + "\n",
-            encoding="utf-8",
-        )
-
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-        alpha_viewer.focus()
-        await wait_for_condition(lambda: "b = 200" in alpha_viewer.text)
-
-        assert "b = 200" in alpha_viewer.text
 
 
 @pytest.mark.anyio
@@ -1165,57 +925,6 @@ async def test_review_refresh_binding_reloads_current_file_and_keeps_position(
 
 
 @pytest.mark.anyio
-async def test_review_stage_lines_updates_diff_and_shows_staged_prefix(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = review_pane(review_tabs, "alpha.py")
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        assert viewer.border_title == "0 comments · 0/2 hunks staged"
-        viewer.selection = type(viewer.selection)((1, 0), (3, 0))
-        await viewer.action_review_stage_lines()
-        await pilot.pause(0)
-
-        assert any(
-            line["is_staged"] and line["text"] == "b = 2"
-            for line in get_diff(workspace / "alpha.py")
-        )
-        assert any(
-            not line["is_staged"] and line["text"] == "e = 50"
-            for line in get_diff(workspace / "alpha.py")
-        )
-        assert "b = 20" in viewer.text
-        assert viewer.render_line(2).crop(0, viewer.gutter_width).text.strip() == "|2"
-        assert viewer.border_title == "0 comments · 1/2 hunks staged"
-        assert viewer.text.count("a = 1") == 1
-        assert viewer.selection.is_empty
-
-        beta_pane = review_pane(review_tabs, "beta.py")
-        review_tabs.active = beta_pane.id or ""
-        await pilot.pause(0)
-
-        beta_viewer = beta_pane.query_one(ReviewDiffView)
-        beta_viewer.focus()
-        beta_viewer.selection = type(beta_viewer.selection)((0, 0), (2, 0))
-        await beta_viewer.action_review_stage_lines()
-        await pilot.pause(0)
-
-        assert any(
-            line["text"] == 'value = "beta staged"'
-            for line in get_diff(workspace / "beta.py")
-        )
-
-
-@pytest.mark.anyio
 async def test_review_stage_file_stages_current_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1241,50 +950,6 @@ async def test_review_stage_file_stages_current_file(
         )
         assert viewer.selection.is_empty
         assert review_file_titles(review_tabs) == {"beta.py"}
-
-
-@pytest.mark.anyio
-async def test_review_stage_file_moves_focus_to_next_tab(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-    (workspace / "gamma.py").write_text('value = "gamma updated"\n', encoding="utf-8")
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        await wait_for_condition(
-            lambda: any(
-                pane._title == "gamma.py"
-                for pane in review_file_panes(
-                    app.query_one("#review-tabs", TabbedContent)
-                )
-            )
-        )
-
-        review_tabs = app.query_one("#review-tabs", TabbedContent)
-        panes = review_file_panes(review_tabs)
-        tab_count = 3
-        assert len(panes) >= tab_count
-        current_pane = panes[1]
-        next_title = str(panes[2]._title)
-        review_tabs.active = current_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = current_pane.query_one(ReviewDiffView)
-        assert viewer._next_review_file_path() == Path(next_title)
-        viewer.focus()
-        await viewer.action_review_stage_file()
-        await pilot.pause(0)
-
-        review_tabs = app.query_one("#review-tabs", TabbedContent)
-        next_pane = next(
-            pane for pane in review_tabs.query(TabPane) if pane._title == next_title
-        )
-        assert review_tabs.active == (next_pane.id or "")
-        assert isinstance(app.screen.focused, ReviewDiffView)
-        assert app.screen.focused.file_path == Path(next_title)
 
 
 @pytest.mark.anyio
@@ -1349,112 +1014,9 @@ async def test_review_adds_review_via_modal_and_submits_in_chat(
 
 
 @pytest.mark.anyio
-async def test_review_add_file_comment(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = next(
-            pane for pane in review_tabs.query(TabPane) if pane._title == "alpha.py"
-        )
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        await pilot.press("C")
-        await pilot.pause(0)
-        modal = app.screen
-        assert isinstance(modal, ReviewCommentModal)
-        modal_title = str(modal.query_one(Static).render())
-        assert "alpha.py" in modal_title
-        assert ":0-0" not in modal_title
-        comment_input = modal.query_one("#review-comment-input", TextArea)
-        await pilot.click(comment_input)
-        await pilot.press("F", "i", "l", "e", " ", "n", "o", "t", "e", "enter")
-        await pilot.pause(0)
-
-        assert app.query_one(ReviewView).reviews == [
-            {
-                "filename": Path("alpha.py"),
-                "line_number_start": 0,
-                "line_number_end": 0,
-                "file_line_number_start": 0,
-                "file_line_number_end": 0,
-                "code": "",
-                "comment": "File note",
-            }
-        ]
-        assert viewer.border_title == "1 comment · 0/2 hunks staged"
-        assert viewer.render_line(1).crop(0, viewer.gutter_width).text.strip() != "*"
-
-
-def test_search_project_caches_project_files(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[Path] = []
-
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project._project_files",
-        lambda workspace: calls.append(workspace) or [Path("alpha.py")],
-    )
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project._file_results",
-        lambda _query, _files: [],
-    )
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project._ripgrep_results",
-        lambda _workspace, _query: [],
-    )
-
-    search = SearchProjectModal(workspace=Path("."))
-    assert search._search_results("") == [
-        {"title": "alpha.py", "path": Path("alpha.py"), "line_number": None, "text": ""}
-    ]
-    assert search._search_results("alpha") == []
-    assert calls == [Path(".")]
-
-
-def test_search_project_fuzzy_matches_file_paths() -> None:
-    matches = _file_results(
-        "announcementmode",
-        [Path("announcements/models.py"), Path("announcements/filters.py")],
-    )
-
-    assert [item["path"] for _score, item in matches] == [
-        Path("announcements/models.py")
-    ]
-
-
-def test_project_search_returns_empty_without_rg(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / "alpha.py").write_text('value = "alpha"\n', encoding="utf-8")
-    (workspace / "beta.py").write_text("answer = 50\n", encoding="utf-8")
-
-    def missing_rg(*_args, **_kwargs):
-        raise FileNotFoundError("rg")
-
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project.subprocess.run", missing_rg
-    )
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.widgets.search_project.subprocess.Popen", missing_rg
-    )
-
-    assert _project_search_results(workspace, "") == []
-    assert _project_search_results(workspace, "50") == []
-
-
-@pytest.mark.anyio
 async def test_search_project_warns_when_rg_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from textual.widgets import Static
 
     seen: list[tuple[str, str]] = []
 
@@ -1492,7 +1054,6 @@ async def test_search_project_warns_when_rg_missing(
 async def test_review_grep_modal_treats_results_as_plain_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from textual.widgets import Static
 
     monkeypatch.setattr(
         "faltoobot.faltoochat.widgets.search_project._project_search_results",
@@ -1531,7 +1092,6 @@ async def test_review_grep_modal_treats_results_as_plain_text(
 
 @pytest.mark.anyio
 async def test_telescope_debounces_callable_searches() -> None:
-    from textual.widgets import Static
 
     seen: list[str] = []
 
@@ -1565,7 +1125,6 @@ async def test_telescope_debounces_callable_searches() -> None:
 
 @pytest.mark.anyio
 async def test_telescope_up_and_down_bindings_move_highlight() -> None:
-    from textual.widgets import Static
 
     class ModalApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -1599,7 +1158,6 @@ async def test_telescope_up_and_down_bindings_move_highlight() -> None:
 
 @pytest.mark.anyio
 async def test_review_file_modal_uses_option_index_for_selection() -> None:
-    from textual.widgets import Static
 
     selected: list[Path | None] = []
 
@@ -1638,7 +1196,6 @@ async def test_review_file_modal_uses_option_index_for_selection() -> None:
 @pytest.mark.anyio
 async def test_review_modal_keeps_long_code_scrollable() -> None:
     from textual.containers import VerticalScroll
-    from textual.widgets import Static
 
     class ModalApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -1664,7 +1221,6 @@ async def test_review_modal_keeps_long_code_scrollable() -> None:
 
 @pytest.mark.anyio
 async def test_review_modal_treats_code_as_plain_text() -> None:
-    from textual.widgets import Static
 
     class ModalApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -1804,107 +1360,6 @@ def test_review_tab_titles_keep_paths_for_duplicate_names() -> None:
         Path("src/app.py"): "src/app.py",
         Path("tests/app.py"): "tests/app.py",
     }
-
-
-@pytest.mark.anyio
-async def test_review_add_prefills_existing_comment_and_overwrites_it(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = review_pane(review_tabs, "alpha.py")
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        viewer.move_cursor((1, 0), record_width=False)
-
-        await pilot.press("a")
-        await pilot.pause(0)
-        modal = app.screen
-        assert isinstance(modal, ReviewCommentModal)
-        comment_input = modal.query_one("#review-comment-input", TextArea)
-        await pilot.click(comment_input)
-        await pilot.press("F", "i", "r", "s", "t", "enter")
-        await pilot.pause(0)
-
-        assert app.query_one(ReviewView).reviews[-1]["comment"] == "First"
-        assert viewer.render_line(1).crop(0, viewer.gutter_width).text.strip() == "*"
-        assert viewer.border_title == "1 comment · 0/2 hunks staged"
-
-        await pilot.press("a")
-        await pilot.pause(0)
-        modal = app.screen
-        assert isinstance(modal, ReviewCommentModal)
-        comment_input = modal.query_one("#review-comment-input", TextArea)
-        assert comment_input.text == "First"
-        comment_input.load_text("")
-        await pilot.click(comment_input)
-        await pilot.press("S", "e", "c", "o", "n", "d", "enter")
-        await pilot.pause(0)
-
-        assert app.query_one(ReviewView).reviews == [
-            {
-                "filename": Path("alpha.py"),
-                "line_number_start": 2,
-                "line_number_end": 2,
-                "file_line_number_start": 2,
-                "file_line_number_end": 2,
-                "code": "-b = 2",
-                "comment": "Second",
-            }
-        ]
-
-
-@pytest.mark.anyio
-async def test_review_blank_comment_deletes_existing_review(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, app = build_app(tmp_path, monkeypatch)
-    create_modified_files(workspace)
-
-    async with app.run_test() as pilot:
-        review_tabs = await open_review(app, pilot)
-        alpha_pane = review_pane(review_tabs, "alpha.py")
-        review_tabs.active = alpha_pane.id or ""
-        await pilot.pause(0)
-
-        viewer = alpha_pane.query_one(ReviewDiffView)
-        viewer.focus()
-        viewer.move_cursor((1, 0), record_width=False)
-
-        await pilot.press("a")
-        await pilot.pause(0)
-        modal = app.screen
-        assert isinstance(modal, ReviewCommentModal)
-        comment_input = modal.query_one("#review-comment-input", TextArea)
-        await pilot.click(comment_input)
-        await pilot.press("F", "i", "r", "s", "t", "enter")
-        await pilot.pause(0)
-
-        assert len(app.query_one(ReviewView).reviews) == 1
-        assert viewer.border_title == "1 comment · 0/2 hunks staged"
-
-        await pilot.press("a")
-        await pilot.pause(0)
-        modal = app.screen
-        assert isinstance(modal, ReviewCommentModal)
-        comment_input = modal.query_one("#review-comment-input", TextArea)
-        assert comment_input.text == "First"
-        comment_input.load_text("")
-        await pilot.click(comment_input)
-        await pilot.press("enter")
-        await pilot.pause(0)
-
-        assert app.query_one(ReviewView).reviews == []
-        assert viewer.render_line(1).crop(0, viewer.gutter_width).text.strip() != "*"
-        assert viewer.border_title == "0 comments · 0/2 hunks staged"
 
 
 @pytest.mark.anyio

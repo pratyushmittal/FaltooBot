@@ -295,7 +295,15 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "m",
             "action": "review_cycle_mode",
-            "description": "Review Mode",
+            "description": "Diff View",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "o",
+            "action": "review_focus_other_pane",
+            "description": "Other Pane",
             "show": True,
             "priority": True,
             "key_display": None,

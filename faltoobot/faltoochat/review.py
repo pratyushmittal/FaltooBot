@@ -6,48 +6,20 @@ from typing import TYPE_CHECKING, TypeAlias, cast
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.css.query import NoMatches
+from textual.reactive import reactive
 from textual.widgets import Static, TabbedContent, TabPane, Tabs
 
 
 from .git import get_unstaged_files, is_git_workspace
 from .review_api import Review, Reviews, review_to_message_item, upsert_review
-from .widgets import ReviewDiffView, SearchProject
+from .widgets import ReviewDiffView, ReviewFileView, SearchProject
 
 if TYPE_CHECKING:
     from .app import FaltooChatApp
     from .widgets.search_project import ProjectSearchResult
 
 ModifiedFiles: TypeAlias = list[Path]
-
-
-LANGUAGES_BY_SUFFIX = {
-    ".c": "c",
-    ".cc": "cpp",
-    ".cpp": "cpp",
-    ".css": "css",
-    ".go": "go",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".html": "html",
-    ".java": "java",
-    ".js": "javascript",
-    ".json": "json",
-    ".jsx": "javascript",
-    ".lua": "lua",
-    ".md": "markdown",
-    ".py": "python",
-    ".rb": "ruby",
-    ".rs": "rust",
-    ".sh": "bash",
-    ".sql": "sql",
-    ".toml": "toml",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".txt": None,
-    ".xml": "xml",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-}
+ReviewFilesSignature: TypeAlias = tuple[tuple[str, int, int], ...]
 
 
 NO_CHANGES_PANE_ID = "no-changes"
@@ -80,6 +52,23 @@ def _get_modified_files(
     return None, files
 
 
+def _review_files_signature(
+    workspace: Path, files: ModifiedFiles
+) -> ReviewFilesSignature:
+    signature: list[tuple[str, int, int]] = []
+    index = workspace / ".git" / "index"
+    if index.exists():
+        stat = index.stat()
+        signature.append((".git/index", stat.st_mtime_ns, stat.st_size))
+    for path in files:
+        full_path = workspace / path
+        if not full_path.exists():
+            continue
+        stat = full_path.stat()
+        signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(signature)
+
+
 def _review_tab_titles(files: ModifiedFiles) -> dict[Path, str]:
     counts: dict[str, int] = {}
     for path in files:
@@ -99,6 +88,10 @@ class ReviewEmpty(Static):
 
 
 class ReviewView(TabPane):
+    review_files = reactive[tuple[Path, ...]](())
+    active_file = reactive[Path | None](None)
+    line_highlights = reactive(True)
+
     DEFAULT_BINDINGS = [
         Binding(
             "@", "review_search_project", "Search Project", priority=True, show=True
@@ -127,11 +120,6 @@ class ReviewView(TabPane):
     ReviewDiffView {
         width: 1fr;
         height: 1fr;
-        border: round $panel;
-    }
-
-    ReviewDiffView:focus {
-        border: round $primary;
     }
     """
 
@@ -139,27 +127,27 @@ class ReviewView(TabPane):
         super().__init__("Review [Ctrl+R]", id="review-tab")
         self.active_pane: ReviewDiffView | None = None
         self.reviews: Reviews = []
-        self.extra_paths: list[Path] = []
         self.search_term = ""
         self.search_whole_word = False
-        self.soft_wrap_enabled = True
-        self.line_highlights = True
+        self._review_files_signature: ReviewFilesSignature | None = None
 
     def compose(self) -> ComposeResult:
         with TabbedContent(initial=NO_CHANGES_PANE_ID, id="review-tabs"):
             with TabPane("Review", id=NO_CHANGES_PANE_ID):
                 yield ReviewEmpty("No modified files yet.", id="review-empty")
 
+    def on_show(self) -> None:
+        if self.active_pane is not None:
+            self.call_after_refresh(self.active_pane.file_view.focus_active_viewer)
+
     async def _add_file_pane(self, path: Path, title: str) -> None:
         await self.query_one("#review-tabs", TabbedContent).add_pane(
             TabPane(
                 title,
-                ReviewDiffView(
-                    [],
+                ReviewFileView(
                     file_path=path,
                     review_view=self,
-                    language=LANGUAGES_BY_SUFFIX.get(path.suffix.lower()),
-                    soft_wrap=self.soft_wrap_enabled,
+                    soft_wrap=True,
                     line_highlights=self.line_highlights,
                     read_only=True,
                     show_cursor=True,
@@ -170,23 +158,21 @@ class ReviewView(TabPane):
             )
         )
 
-    def set_display_preferences(
-        self,
-        *,
-        soft_wrap: bool | None = None,
-        line_highlights: bool | None = None,
-    ) -> None:
+    def set_display_preferences(self, *, line_highlights: bool | None = None) -> None:
         """Apply shared display preferences to all open review diff viewers."""
-        if soft_wrap is not None:
-            self.soft_wrap_enabled = soft_wrap
         if line_highlights is not None:
             self.line_highlights = line_highlights
+
+    def watch_line_highlights(self, line_highlights: bool) -> None:
         for viewer in self.query(ReviewDiffView):
-            if soft_wrap is not None:
-                viewer.soft_wrap = soft_wrap
-            if line_highlights is not None:
-                viewer.line_highlights = line_highlights
-                viewer.refresh()
+            viewer.line_highlights = line_highlights
+            viewer.refresh()
+
+    async def on_review_diff_view_file_tab_cycle_requested(
+        self, event: ReviewDiffView.FileTabCycleRequested
+    ) -> None:
+        event.stop()
+        await self.cycle_active_file(event.delta)
 
     def add_review(self, review: Review) -> None:
         result = upsert_review(self.reviews, review)
@@ -216,7 +202,7 @@ class ReviewView(TabPane):
 
     def action_review_refresh_files(self) -> None:
         self.app.run_worker(
-            self.refresh_files(close_unmodified=True),
+            self.refresh_files(),
             group="review-refresh",
             exclusive=True,
         )
@@ -225,94 +211,85 @@ class ReviewView(TabPane):
         app = cast("FaltooChatApp", self.app)
         workspace = app.workspace
 
-        async def on_result(result: "ProjectSearchResult | None") -> None:
+        def on_result(result: "ProjectSearchResult | None") -> None:
             if result is None:
                 return
-            await self.open_file(
-                result["path"],
-                line_number=result["line_number"],
+            asyncio.create_task(
+                self.open_file(
+                    result["path"],
+                    line_number=result["line_number"] or 1,
+                )
             )
 
         app.push_screen(SearchProject(workspace=workspace), on_result)
 
-    def set_active_tab(self, path: Path) -> bool:
+    def watch_active_file(self, path: Path | None) -> None:
+        if path is None:
+            self.active_pane = None
+            return
         tabs = self.query_one("#review-tabs", TabbedContent)
         pane = _get_file_pane(tabs, path)
-        if pane is None or not pane.query(ReviewDiffView):
-            self.active_pane = None
-            return False
-        self.active_pane = pane.query_one(ReviewDiffView)
-        tabs.active = _get_tab_id(path)
-        self.active_pane.focus()
-        return True
+        if pane is None:
+            return
+        if tabs.active != pane.id:
+            tabs.active = pane.id or ""
+        file_view = pane.query_one(ReviewFileView)
+        file_view.focus_active_viewer()
+        self.active_pane = file_view.active_viewer
+        if file_view.needs_reload():
+            self.app.run_worker(
+                file_view.reload_in_place(),
+                group=f"review-load-{path}",
+                exclusive=True,
+            )
 
-    async def close_stale_file(self, path: Path) -> bool:
-        workspace = cast("FaltooChatApp", self.app).workspace
-        if (workspace / path).exists():
-            return False
-        _message, files = await asyncio.to_thread(
-            _get_modified_files,
-            workspace,
-            self.extra_paths,
-        )
-        if path in files:
-            return False
-        self.extra_paths = [item for item in self.extra_paths if item != path]
-        tabs = self.query_one("#review-tabs", TabbedContent)
-        pane = _get_file_pane(tabs, path)
-        if pane is None or pane.id is None:
-            return False
-        await tabs.remove_pane(pane.id)
-        if self.active_pane is not None and self.active_pane.file_path == path:
-            self.active_pane = None
-        return True
+    def on_tabbed_content_tab_activated(
+        self,
+        event: TabbedContent.TabActivated,
+    ) -> None:
+        if event.pane.id == NO_CHANGES_PANE_ID:
+            self.active_file = None
+            return
+        self.active_file = event.pane.query_one(ReviewFileView).file_path
+
+    async def cycle_active_file(self, delta: int) -> None:
+        files = list(self.review_files)
+        index = files.index(self.active_file) if self.active_file in files else 0
+        self.active_file = files[(index + delta) % len(files)]
 
     async def open_file(
         self,
         path: Path,
         *,
-        line_number: int | None = None,
+        line_number: int = 1,
     ) -> None:
         tabs = self.query_one("#review-tabs", TabbedContent)
-        pane = _get_file_pane(tabs, path)
-        if pane is None:
-            if path not in self.extra_paths:
-                self.extra_paths.append(path)
-            await self.refresh_files()
-        if not self.set_active_tab(path) or self.active_pane is None:
-            return
-        if line_number is None:
-            return
-        await self.active_pane.reload_in_place()
-        self.active_pane.jump_to_file_line(line_number)
+        if path not in self.review_files:
+            self.review_files = (*self.review_files, path)
+            await self._add_file_pane(
+                path, _review_tab_titles(list(self.review_files))[path]
+            )
+        self.active_file = path
+        pane = cast(TabPane, _get_file_pane(tabs, path))
+        file_view = pane.query_one(ReviewFileView)
+        await file_view.reload_in_place()
+        file_view.jump_to_file_line(line_number)
+        self.active_pane = file_view.active_viewer
 
-    async def _add_missing_file_tabs(self, files: ModifiedFiles) -> None:
-        """Open review tabs for modified files that do not already have a tab."""
-        try:
-            tabs = self.query_one("#review-tabs", TabbedContent)
-        except NoMatches:
-            return
-        titles = _review_tab_titles(files)
-        for path in files:
-            if _get_file_pane(tabs, path) is not None:
-                continue
-            await self._add_file_pane(path, titles[path])
-
-    async def _replace_file_tabs(self, files: ModifiedFiles) -> None:
-        """Make review file tabs match the given modified file list."""
-        try:
-            tabs = self.query_one("#review-tabs", TabbedContent)
-        except NoMatches:
-            return
-        keep_paths = set(files)
+    async def _replace_file_tabs(
+        self, tabs: TabbedContent, files: ModifiedFiles
+    ) -> None:
+        self.review_files = tuple(files)
+        keep_paths = set(self.review_files)
         for pane in list(tabs.query(TabPane)):
-            if pane.id is None or pane.id == NO_CHANGES_PANE_ID:
+            if pane.id == NO_CHANGES_PANE_ID:
                 continue
-            viewer = pane.query_one(ReviewDiffView)
-            if viewer.file_path in keep_paths:
-                continue
-            await tabs.remove_pane(pane.id)
-        await self._add_missing_file_tabs(files)
+            if pane.query_one(ReviewFileView).file_path not in keep_paths:
+                await tabs.remove_pane(pane.id or "")
+        titles = _review_tab_titles(files)
+        for path in self.review_files:
+            if _get_file_pane(tabs, path) is None:
+                await self._add_file_pane(path, titles[path])
 
     async def clear_all_tabs(self) -> None:
         """Remove all file review tabs and show the default empty review tab."""
@@ -334,51 +311,43 @@ class ReviewView(TabPane):
         except Tabs.TabError:
             pass
         tabs.active = NO_CHANGES_PANE_ID
+        self.review_files = ()
+        self.active_file = None
         self.active_pane = None
         # comment: startup refresh can run before the empty placeholder finishes mounting.
         if self.query("#review-empty"):
             self.query_one("#review-empty", ReviewEmpty).focus()
 
-    async def _reviewable_files(
-        self,
-        workspace: Path,
-        *,
-        close_unmodified: bool,
-    ) -> tuple[str | None, ModifiedFiles]:
-        if close_unmodified:
-            message, files = await asyncio.to_thread(_get_modified_files, workspace)
-            self.extra_paths = [path for path in self.extra_paths if path in files]
-            return message, files
-
-        # comment: manually opened files may be deleted outside the app, so drop missing paths.
-        self.extra_paths = [
-            path for path in self.extra_paths if (workspace / path).is_file()
-        ]
-        return await asyncio.to_thread(
-            _get_modified_files,
-            workspace,
-            self.extra_paths,
-        )
-
-    async def refresh_files(self, *, close_unmodified: bool = False) -> None:
-        """Refresh review tabs from git, optionally closing tabs without modifications."""
-        # comment: review refresh can be queued before the nested review tabs finish mounting.
-        try:
-            tabs = self.query_one("#review-tabs", TabbedContent)
-        except NoMatches:
-            return
+    async def refresh_files(self) -> None:
+        """Refresh review tabs from git and close files that are no longer modified."""
+        tabs = self.query_one("#review-tabs", TabbedContent)
 
         active_pane = self.active_pane
         active_path = None if active_pane is None else active_pane.file_path
+        old_files = list(self.review_files)
+        active_index = (
+            old_files.index(active_path)
+            if active_path is not None and active_path in old_files
+            else 0
+        )
         workspace = cast("FaltooChatApp", self.app).workspace
 
-        message, files = await self._reviewable_files(
-            workspace,
-            close_unmodified=close_unmodified,
+        message, files = await asyncio.to_thread(_get_modified_files, workspace)
+        signature = _review_files_signature(workspace, files)
+
+        active_needs_reload = (
+            self.active_pane is not None and self.active_pane.file_view.needs_reload()
         )
+        if (
+            signature == self._review_files_signature
+            and tuple(files) == self.review_files
+            and not active_needs_reload
+        ):
+            return
 
         # comment: when there are no reviewable files, clear file tabs and return to the empty tab.
         if message is not None:
+            self._review_files_signature = signature
             await self.clear_all_tabs()
             self.app.notify(message)
             return
@@ -391,25 +360,20 @@ class ReviewView(TabPane):
         except (NoMatches, Tabs.TabError):
             return
 
-        if close_unmodified:
-            await self._replace_file_tabs(files)
-        else:
-            await self._add_missing_file_tabs(files)
+        await self._replace_file_tabs(tabs, files)
+        self._review_files_signature = signature
 
-        # comment: keep the current file active when it still exists after the refresh.
-        if active_path is not None and self.set_active_tab(active_path):
-            # comment: focusing the same viewer again does not fire a new focus event in Textual.
-            if self.active_pane is active_pane and self.active_pane is not None:
-                # comment: shutdown can unmount the viewer while this async refresh is still running.
-                try:
-                    await self.active_pane.reload_in_place()
-                except NoMatches:
-                    pass
+        if active_path is not None and active_path in self.review_files:
+            self.active_file = active_path
+            if self.active_pane is not None:
+                await self.active_pane.file_view.reload_in_place()
             return
 
         # comment: if nothing was active yet, focus the first available review tab.
-        viewers = list(self.query(ReviewDiffView))
-        if not viewers:
+        if not self.review_files:
+            self.active_file = None
             self.active_pane = None
             return
-        self.set_active_tab(viewers[0].file_path)
+        self.active_file = self.review_files[
+            min(active_index, len(self.review_files) - 1)
+        ]
