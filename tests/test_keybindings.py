@@ -309,6 +309,22 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
             "key_display": None,
         },
         {
+            "key": "O",
+            "action": "review_open_split",
+            "description": "Open Split",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "q",
+            "action": "review_close_split",
+            "description": "Close Split",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
             "key": "a,c",
             "action": "review_add",
             "description": "Add Review",

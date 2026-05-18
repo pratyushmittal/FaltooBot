@@ -174,6 +174,25 @@ class ReviewView(TabPane):
         event.stop()
         await self.cycle_active_file(event.delta)
 
+    def on_review_diff_view_open_split_requested(
+        self, event: ReviewDiffView.OpenSplitRequested
+    ) -> None:
+        event.stop()
+        app = cast("FaltooChatApp", self.app)
+        file_view = event.viewer.file_view
+
+        async def open_result(result: "ProjectSearchResult") -> None:
+            await file_view.open_split(result["path"])
+            if result["line_number"] is not None:
+                file_view.active_viewer.jump_to_file_line(result["line_number"])
+            self.active_pane = file_view.active_viewer
+
+        def on_result(result: "ProjectSearchResult | None") -> None:
+            if result is not None:
+                asyncio.create_task(open_result(result))
+
+        app.push_screen(SearchProject(workspace=app.workspace), on_result)
+
     def add_review(self, review: Review) -> None:
         result = upsert_review(self.reviews, review)
         if result == "ignored":
@@ -236,7 +255,7 @@ class ReviewView(TabPane):
         file_view = pane.query_one(ReviewFileView)
         file_view.focus_active_viewer()
         self.active_pane = file_view.active_viewer
-        if file_view.needs_reload():
+        if not file_view.viewer.loaded:
             self.app.run_worker(
                 file_view.reload_in_place(),
                 group=f"review-load-{path}",
@@ -273,8 +292,10 @@ class ReviewView(TabPane):
         pane = cast(TabPane, _get_file_pane(tabs, path))
         file_view = pane.query_one(ReviewFileView)
         await file_view.reload_in_place()
-        file_view.jump_to_file_line(line_number)
-        self.active_pane = file_view.active_viewer
+        file_view.active_viewer = file_view.viewer
+        file_view.viewer.jump_to_file_line(line_number)
+        file_view.focus_active_viewer()
+        self.active_pane = file_view.viewer
 
     async def _replace_file_tabs(
         self, tabs: TabbedContent, files: ModifiedFiles
@@ -322,8 +343,7 @@ class ReviewView(TabPane):
         """Refresh review tabs from git and close files that are no longer modified."""
         tabs = self.query_one("#review-tabs", TabbedContent)
 
-        active_pane = self.active_pane
-        active_path = None if active_pane is None else active_pane.file_path
+        active_path = self.active_file
         old_files = list(self.review_files)
         active_index = (
             old_files.index(active_path)
@@ -336,7 +356,7 @@ class ReviewView(TabPane):
         signature = _review_files_signature(workspace, files)
 
         active_needs_reload = (
-            self.active_pane is not None and self.active_pane.file_view.needs_reload()
+            self.active_pane is not None and not self.active_pane.loaded
         )
         if (
             signature == self._review_files_signature

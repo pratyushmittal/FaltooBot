@@ -20,6 +20,7 @@ from faltoobot.faltoochat.review import (
 from faltoobot.faltoochat.widgets import (
     ReviewCommentModal,
     ReviewDiffView,
+    ReviewFileView,
     SearchProject,
     Telescope,
 )
@@ -733,6 +734,51 @@ async def test_review_grep_opens_modal_and_jumps_to_selected_line(
             alpha_pane.id or ""
         )
         assert viewer.cursor_location == (6, 0)
+
+
+@pytest.mark.anyio
+async def test_review_open_split_search_loads_selected_file_in_right_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    create_modified_files(workspace)
+
+    async with app.run_test() as pilot:
+        review_tabs = await open_review(app, pilot)
+        alpha_pane = review_pane(review_tabs, "alpha.py")
+        review_tabs.active = alpha_pane.id or ""
+        await pilot.pause(0)
+
+        file_view = alpha_pane.query_one(ReviewFileView)
+        file_view.viewer.focus()
+        await pilot.press("O")
+        await pilot.pause(0)
+
+        modal = app.screen
+        assert isinstance(modal, SearchProject)
+        search_input = modal.query_one("#telescope-input")
+        await pilot.click(search_input)
+        await pilot.press("b", "e", "t", "a")
+        await wait_for_condition(
+            lambda: bool(modal.results) and modal.results[0]["path"] == Path("beta.py")
+        )
+        await pilot.press("enter")
+
+        await wait_for_condition(lambda: app.screen is not modal)
+        await wait_for_condition(
+            lambda: file_view.right_viewer.file_path == Path("beta.py")
+        )
+
+        assert file_view.active_viewer is file_view.right_viewer
+        assert file_view.right_viewer.display is True
+        assert app.query_one(ReviewView).active_pane is file_view.right_viewer
+
+        await pilot.press("q")
+        await pilot.pause(0)
+
+        assert file_view.active_viewer is file_view.viewer
+        assert file_view.right_viewer.display is False
 
 
 @pytest.mark.anyio

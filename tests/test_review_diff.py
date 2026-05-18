@@ -2,24 +2,21 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from rich.segment import Segment
+from rich.style import Style
 from textual.app import App, ComposeResult
 from textual.color import Color
+from textual.strip import Strip
 
 from faltoobot.faltoochat.diff import Diff
 from faltoobot.faltoochat.review_api import reviews_prompt
-from faltoobot.faltoochat.widgets.review_file import (
-    ADDED_LAYOUT,
-    SIDE_BY_SIDE_LAYOUT,
-    UNIFIED_LAYOUT,
-    ReviewFileView,
-    _side_by_side_visible_diff_lines,
-)
+from faltoobot.faltoochat.widgets.review_file import ReviewFileView
 from faltoobot.faltoochat.widgets.review_diff import (
     ADDED_FILTER,
     FULL_FILTER,
-    REMOVED_FILTER,
     ReviewDiffView,
     comment_title,
+    _apply_line_highlight,
     _line_highlight_style,
     _review_range,
     visible_diff_lines,
@@ -27,7 +24,6 @@ from faltoobot.faltoochat.widgets.review_diff import (
 
 
 EXPECTED_GUTTER_WIDTH = 6
-EXPECTED_REVIEW_DIFF_WIDTH = 38
 
 
 class ReviewDiffApp(App[None]):
@@ -75,7 +71,6 @@ class ReviewViewStub:
         self.search_term = ""
         self.search_whole_word = False
         self.line_highlights = True
-        self.layout_mode = "unified"
         self.soft_wrap_enabled = True
 
     def add_review(self, _review) -> None:
@@ -93,17 +88,7 @@ def review_view_stub() -> ReviewViewStub:
 
 
 class ReviewFileViewStub:
-    def update_border_labels(self) -> None:
-        return
-
-    def _sibling(self, _viewer: Any) -> None:
-        return None
-
-    async def reload_in_place(self) -> None:
-        return
-
-    async def stage_visible_rows(self, *_args: Any, **_kwargs: Any) -> None:
-        return
+    pass
 
 
 def review_file_view_stub() -> ReviewFileViewStub:
@@ -200,6 +185,19 @@ def test_review_diff_highlight_colors_match_status_priority(monkeypatch) -> None
     assert removed.bgcolor == base.blend(colors["error_light"], 0.25).rich_color
     assert added.bgcolor == base.blend(colors["success_light"], 0.25).rich_color
     assert staged.bgcolor == base.blend(colors["secondary_light"], 0.18).rich_color
+
+
+def test_review_diff_line_highlight_overlays_cursor_line_background() -> None:
+    strip = Strip([Segment("added", Style(bgcolor="blue"))], 5)
+
+    highlighted = _apply_line_highlight(
+        strip,
+        Style(bgcolor="green"),
+        base_background=Color.from_rich_color(Style(bgcolor="blue").bgcolor),
+    )
+
+    assert highlighted._segments[0].style is not None
+    assert highlighted._segments[0].style.bgcolor == Style(bgcolor="green").bgcolor
 
 
 def test_review_diff_highlights_keep_using_stored_diff_line_ranges(monkeypatch) -> None:
@@ -311,18 +309,16 @@ def test_review_diff_registers_typescript_languages() -> None:
 
 
 @pytest.mark.parametrize(
-    ("filter_mode", "expected_lines", "expected_text", "expected_subtitle"),
+    ("filter_mode", "expected_lines", "expected_text"),
     [
-        (FULL_FILTER, [0, 1, 2, 3], "a = 1\nb = 2\nb = 20\nc = 3", ""),
-        (ADDED_FILTER, [0, 2, 3], "a = 1\nb = 20\nc = 3", "added"),
-        (REMOVED_FILTER, [0, 1, 3], "a = 1\nb = 2\nc = 3", "removed"),
+        (FULL_FILTER, [0, 1, 2, 3], "a = 1\nb = 2\nb = 20\nc = 3"),
+        (ADDED_FILTER, [0, 2, 3], "a = 1\nb = 20\nc = 3"),
     ],
 )
 def test_review_diff_filters_show_expected_lines(
     filter_mode: str,
     expected_lines: list[int],
     expected_text: str,
-    expected_subtitle: str,
 ) -> None:
     diff: Diff = [
         {"is_staged": False, "type": "", "text": "a = 1"},
@@ -340,7 +336,6 @@ def test_review_diff_filters_show_expected_lines(
 
     assert visible_diff_lines(diff, filter_mode) == expected_lines
     assert viewer.filter_mode == filter_mode
-    assert expected_subtitle in {"", ADDED_FILTER, REMOVED_FILTER}
     assert viewer.text == expected_text
 
 
@@ -356,108 +351,138 @@ def test_review_diff_hides_horizontal_scrollbar() -> None:
     assert viewer.styles.scrollbar_size_horizontal == 0
 
 
-def test_review_diff_filters_insert_placeholders_to_align_side_by_side_rows() -> None:
-    diff: Diff = [
-        {"is_staged": False, "type": "", "text": "a = 1"},
-        {"is_staged": False, "type": "+", "text": "inserted"},
-        {"is_staged": False, "type": "", "text": "b = 2"},
-    ]
-
-    added = ReviewDiffView(
-        diff,
-        file_path=Path("alpha.py"),
-        review_view=cast(Any, review_view_stub()),
-        file_view=cast(Any, review_file_view_stub()),
-        filter_mode=ADDED_FILTER,
-    )
-    removed = ReviewDiffView(
-        diff,
-        file_path=Path("alpha.py"),
-        review_view=cast(Any, review_view_stub()),
-        file_view=cast(Any, review_file_view_stub()),
-        filter_mode=REMOVED_FILTER,
-    )
-
-    assert added.visible_diff_lines == [0, 1, 2]
-    assert removed.visible_diff_lines == [0, None, 2]
-    assert removed.text == "a = 1\n\nb = 2"
-
-
 @pytest.mark.anyio
-async def test_review_diff_renders_placeholder_rows_as_hatches(monkeypatch) -> None:
-    viewer = ReviewDiffView(
-        [
-            {"is_staged": False, "type": "", "text": "a = 1"},
-            {"is_staged": False, "type": "+", "text": "inserted"},
-            {"is_staged": False, "type": "", "text": "b = 2"},
-        ],
-        file_path=Path("alpha.py"),
-        review_view=cast(Any, review_view_stub()),
-        file_view=cast(Any, review_file_view_stub()),
-        filter_mode=REMOVED_FILTER,
-        show_line_numbers=True,
-        read_only=True,
-    )
-    monkeypatch.setattr(ReviewDiffView, "on_focus", lambda self, event: None)
-
-    async with ReviewDiffApp(viewer).run_test():
-        strip = viewer.render_line(1)
-
-    assert strip.text.startswith("╲")
-    assert strip.text.strip("╲") == ""
-    assert len(strip.text) == EXPECTED_REVIEW_DIFF_WIDTH
-    assert all(segment.style and segment.style.dim for segment in strip._segments)
-
-
-def test_removed_filter_keeps_staged_added_lines_for_side_by_side_base() -> None:
-    diff: Diff = [
-        {"is_staged": True, "type": "+", "text": "staged base"},
-        {"is_staged": False, "type": "-", "text": "removed unstaged"},
-        {"is_staged": False, "type": "+", "text": "added unstaged"},
-    ]
-
-    assert visible_diff_lines(diff, REMOVED_FILTER) == [0, 1]
-
-
-def test_review_cycle_mode_requests_parent_layout_change(monkeypatch) -> None:
-    viewer = ReviewDiffView(
-        [],
-        file_path=Path("alpha.py"),
-        review_view=cast(Any, review_view_stub()),
-        file_view=cast(Any, review_file_view_stub()),
-    )
-    messages: list[Any] = []
-    monkeypatch.setattr(viewer, "post_message", messages.append)
-
-    viewer.action_review_cycle_mode()
-
-    assert isinstance(messages[-1], ReviewDiffView.CycleLayoutRequested)
-
-
-def test_review_file_cycles_unified_added_and_side_by_side_modes() -> None:
+def test_review_cycle_mode_changes_the_active_diff_only() -> None:
     file_view = ReviewFileView(
         file_path=Path("alpha.py"),
         review_view=cast(Any, review_view_stub()),
     )
 
-    file_view.cycle_layout_mode()
-    assert file_view.layout_mode == ADDED_LAYOUT
-    assert file_view.border_subtitle == "alpha.py · added"
-    assert file_view.left_viewer.filter_mode == ADDED_FILTER
+    file_view.viewer.action_review_cycle_mode()
+
+    assert file_view.viewer.filter_mode == ADDED_FILTER
+    assert file_view.viewer.border_subtitle == "alpha.py · added"
+    assert file_view.right_viewer.filter_mode == FULL_FILTER
+    assert file_view.right_viewer.border_subtitle == "alpha.py · unified"
+
+    file_view.viewer.action_review_cycle_mode()
+
+    assert file_view.viewer.filter_mode == FULL_FILTER
+    assert file_view.viewer.border_subtitle == "alpha.py · unified"
+
+
+def test_review_file_starts_with_split_closed() -> None:
+    file_view = ReviewFileView(
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+
+    file_view.focus_other_viewer()
+
+    assert file_view.active_viewer is file_view.viewer
     assert file_view.right_viewer.display is False
 
-    file_view.cycle_layout_mode()
-    assert file_view.layout_mode == SIDE_BY_SIDE_LAYOUT
-    assert file_view.border_subtitle == "alpha.py · side-by-side"
-    assert file_view.left_viewer.filter_mode == REMOVED_FILTER
-    assert file_view.right_viewer.filter_mode == ADDED_FILTER
+
+@pytest.mark.anyio
+async def test_review_file_open_split_shows_current_file_in_right_pane() -> None:
+    file_view = ReviewFileView(
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    file_view.viewer.set_diff(
+        [
+            {"is_staged": False, "type": "", "text": "context"},
+            {"is_staged": False, "type": "+", "text": "added"},
+        ]
+    )
+
+    await file_view.open_split()
+
+    assert file_view.active_viewer is file_view.right_viewer
     assert file_view.right_viewer.display is True
+    assert file_view.right_viewer.file_path == Path("alpha.py")
+    assert file_view.right_viewer.text == file_view.viewer.text
 
-    file_view.cycle_layout_mode()
-    assert file_view.layout_mode == UNIFIED_LAYOUT
-    assert file_view.border_subtitle == "alpha.py · unified"
-    assert file_view.left_viewer.filter_mode == FULL_FILTER
-    assert file_view.right_viewer.display is False
+
+@pytest.mark.anyio
+async def test_review_file_open_split_recenters_left_pane_after_layout(
+    monkeypatch,
+) -> None:
+    file_view = ReviewFileView(
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    file_view.viewer.set_diff(
+        [
+            {"is_staged": False, "type": "", "text": "context"},
+            {"is_staged": False, "type": "+", "text": "added"},
+        ]
+    )
+    file_view.viewer.move_cursor((1, 0), record_width=False)
+    calls = []
+    monkeypatch.setattr(file_view, "call_after_refresh", lambda callback: callback())
+    monkeypatch.setattr(
+        file_view.viewer,
+        "show_diff_line",
+        lambda diff_line, *, center=False: calls.append((diff_line, center)),
+    )
+
+    await file_view.open_split()
+
+    assert calls == [(1, True)]
+
+
+def test_review_file_close_split_recenters_left_pane_after_layout(monkeypatch) -> None:
+    file_view = ReviewFileView(
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    file_view.viewer.set_diff(
+        [
+            {"is_staged": False, "type": "", "text": "context"},
+            {"is_staged": False, "type": "+", "text": "added"},
+        ]
+    )
+    file_view.viewer.move_cursor((1, 0), record_width=False)
+    file_view.right_viewer.display = True
+    file_view.active_viewer = file_view.right_viewer
+    calls = []
+    monkeypatch.setattr(file_view, "call_after_refresh", lambda callback: callback())
+    monkeypatch.setattr(
+        file_view.viewer,
+        "show_diff_line",
+        lambda diff_line, *, center=False: calls.append((diff_line, center)),
+    )
+
+    file_view.close_split()
+
+    assert calls == [(1, True)]
+
+
+@pytest.mark.anyio
+async def test_review_file_focus_other_viewer_only_switches_focus(monkeypatch) -> None:
+    file_view = ReviewFileView(
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+    file_view.viewer.set_diff(
+        [
+            {"is_staged": False, "type": "", "text": "context"},
+            {"is_staged": False, "type": "+", "text": "added"},
+        ]
+    )
+    await file_view.open_split()
+    monkeypatch.setattr(file_view.viewer, "refresh", pytest.fail)
+    monkeypatch.setattr(file_view.right_viewer, "refresh", pytest.fail)
+    monkeypatch.setattr(file_view.viewer, "current_diff_line", pytest.fail)
+    monkeypatch.setattr(file_view.right_viewer, "show_diff_line", pytest.fail)
+
+    file_view.focus_other_viewer()
+
+    assert file_view.active_viewer is file_view.viewer
+
+    file_view.focus_other_viewer()
+    assert file_view.active_viewer is file_view.right_viewer
 
 
 def test_review_range_maps_filtered_rows_back_to_backing_diff_lines() -> None:
@@ -472,99 +497,14 @@ def test_review_range_maps_filtered_rows_back_to_backing_diff_lines() -> None:
         file_path=Path("app/alpha.py"),
         review_view=cast(Any, review_view_stub()),
         file_view=cast(Any, review_file_view_stub()),
-        filter_mode=REMOVED_FILTER,
+        filter_mode=ADDED_FILTER,
     )
     viewer.selection = type(viewer.selection)((1, 0), (3, 0))
 
-    assert _review_range(viewer) == (1, 4)
-
-
-def test_side_by_side_visible_diff_lines_do_not_pad_wrapped_context() -> None:
-    diff: Diff = [
-        {"is_staged": False, "type": "", "text": "context wraps a lot"},
-        {"is_staged": False, "type": "-", "text": "old"},
-        {"is_staged": False, "type": "+", "text": "new"},
-    ]
-
-    added, removed, added_map, removed_map = _side_by_side_visible_diff_lines(
-        diff,
-        added_width=5,
-        removed_width=5,
-        indent_width=4,
-    )
-
-    assert added == [0, 2]
-    assert removed == [0, 1]
-    assert added_map == [0, 2]
-    assert removed_map == [0, 1]
-
-
-def test_side_by_side_visible_diff_lines_pad_shorter_wrapped_side() -> None:
-    diff: Diff = [
-        {"is_staged": False, "type": "", "text": "start"},
-        {"is_staged": False, "type": "-", "text": "old"},
-        {"is_staged": False, "type": "+", "text": "new value wraps"},
-        {"is_staged": False, "type": "", "text": "end"},
-    ]
-
-    added, removed, added_map, removed_map = _side_by_side_visible_diff_lines(
-        diff,
-        added_width=5,
-        removed_width=5,
-        indent_width=4,
-    )
-
-    assert added == [0, 2, 3]
-    assert removed == [0, 1, None, None, None, 3]
-    assert added_map == [0, 2, 3]
-    assert removed_map == [0, 1, 2, 2, 2, 3]
-
-
-def test_side_by_side_visible_diff_lines_map_staged_padding_to_same_line() -> None:
-    diff: Diff = [
-        {"is_staged": False, "type": "", "text": "start"},
-        {"is_staged": True, "type": "+", "text": "staged value wraps"},
-        {"is_staged": False, "type": "", "text": "end"},
-    ]
-
-    added, removed, added_map, removed_map = _side_by_side_visible_diff_lines(
-        diff,
-        added_width=5,
-        removed_width=20,
-        indent_width=4,
-    )
-
-    assert added == [0, 1, 2]
-    assert removed == [0, 1, None, None, None, None, 2]
-    assert added_map == [0, 1, 2]
-    assert removed_map == [0, 1, 1, 1, 1, 1, 2]
+    assert _review_range(viewer) == (2, 3)
 
 
 @pytest.mark.anyio
-async def test_review_diff_renders_cursor_on_hatched_rows(monkeypatch) -> None:
-    viewer = ReviewDiffView(
-        [
-            {"is_staged": False, "type": "", "text": "a = 1"},
-            {"is_staged": False, "type": "+", "text": "inserted"},
-            {"is_staged": False, "type": "", "text": "b = 2"},
-        ],
-        file_path=Path("alpha.py"),
-        review_view=cast(Any, review_view_stub()),
-        file_view=cast(Any, review_file_view_stub()),
-        filter_mode=REMOVED_FILTER,
-        show_line_numbers=True,
-        show_cursor=True,
-        read_only=True,
-    )
-    monkeypatch.setattr(ReviewDiffView, "on_focus", lambda self, event: None)
-
-    async with ReviewDiffApp(viewer).run_test():
-        viewer.move_cursor((1, 0), record_width=False)
-        strip = viewer.render_line(1)
-
-    assert strip._segments[1].style == viewer._theme.cursor_style
-
-
 def test_review_search_ignores_hidden_deleted_lines() -> None:
     review_view = review_view_stub()
     review_view.search_term = "needle"
