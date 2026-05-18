@@ -321,7 +321,6 @@ def test_bundled_skills_do_not_reference_removed_python_shell_tool() -> None:
     assert "uv run --with" in text
 
 
-
 def test_bundled_google_places_skill() -> None:
     text = (Path(__file__).parents[1] / "faltoobot/skills/google-places.md").read_text(
         encoding="utf-8"
@@ -343,3 +342,19 @@ def test_bundled_google_places_skill() -> None:
     assert "google_places_search" not in text
     assert "google_place_details" not in text
     assert "def plain" not in text
+
+
+def test_bundled_search_flights_skill() -> None:
+    text = (Path(__file__).parents[1] / "faltoobot/skills/flight-search.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "description: Search Google Flights" in text
+    assert "uv run python" in text
+    assert "from fast_flights import FlightData, Passengers, get_flights" in text
+    assert "FlightData(" in text
+    assert "Passengers(" in text
+    assert 'fetch_mode="fallback"' in text
+    assert "round-trip" in text
+    assert "one-way" in text
+    assert "verified" in text
