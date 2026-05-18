@@ -479,7 +479,11 @@ def test_default_review_bindings_snapshot() -> None:
             [
                 binding
                 for binding in _default_keybindings()["review"]
-                if binding.action in {"review_search_project", "review_refresh_files"}
+                if binding.action
+                in {
+                    "review_search_project",
+                    "review_refresh_files",
+                }
             ]
         ),
         "ReviewDiffView": _snapshot(
@@ -487,7 +491,10 @@ def test_default_review_bindings_snapshot() -> None:
                 binding
                 for binding in _default_keybindings()["review"]
                 if binding.action
-                not in {"review_search_project", "review_refresh_files"}
+                not in {
+                    "review_search_project",
+                    "review_refresh_files",
+                }
             ]
         ),
     } == EXPECTED_DEFAULT_REVIEW_BINDINGS

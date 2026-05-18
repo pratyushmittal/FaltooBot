@@ -59,7 +59,7 @@ def test_search_project_caches_project_files(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr(
         "faltoobot.faltoochat.widgets.search_project._file_results",
-        lambda _query, _files: [],
+        lambda _query, _files, **_kwargs: [],
     )
     monkeypatch.setattr(
         "faltoobot.faltoochat.widgets.search_project._ripgrep_results",
@@ -83,6 +83,36 @@ def test_search_project_fuzzy_matches_file_paths() -> None:
 
     assert [item["path"] for _score, item in matches] == [
         Path("announcements/models.py")
+    ]
+
+
+def test_search_project_prioritizes_preferred_file_matches() -> None:
+    matches = _file_results(
+        "views.py",
+        [
+            Path("alpha/views.py"),
+            Path("changed/views.py"),
+            Path("zeta/views.py"),
+        ],
+        preferred_files={Path("changed/views.py")},
+    )
+
+    assert matches[0][1]["path"] == Path("changed/views.py")
+    assert matches[0][1]["title"] == "changed/views.py ●"
+
+
+def test_project_search_shows_preferred_files_first_for_empty_query() -> None:
+    results = _project_search_results(
+        Path("."),
+        "",
+        files=[Path("alpha.py"), Path("changed.py"), Path("beta.py")],
+        preferred_files={Path("changed.py")},
+    )
+
+    assert [(item["path"], item["title"]) for item in results] == [
+        (Path("changed.py"), "changed.py ●"),
+        (Path("alpha.py"), "alpha.py"),
+        (Path("beta.py"), "beta.py"),
     ]
 
 

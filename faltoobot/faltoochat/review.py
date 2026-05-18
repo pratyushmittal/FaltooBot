@@ -191,7 +191,13 @@ class ReviewView(TabPane):
             if result is not None:
                 asyncio.create_task(open_result(result))
 
-        app.push_screen(SearchProject(workspace=app.workspace), on_result)
+        app.push_screen(
+            SearchProject(
+                workspace=app.workspace,
+                preferred_files=list(self.review_files),
+            ),
+            on_result,
+        )
 
     def add_review(self, review: Review) -> None:
         result = upsert_review(self.reviews, review)
@@ -240,7 +246,13 @@ class ReviewView(TabPane):
                 )
             )
 
-        app.push_screen(SearchProject(workspace=workspace), on_result)
+        app.push_screen(
+            SearchProject(
+                workspace=workspace,
+                preferred_files=list(self.review_files),
+            ),
+            on_result,
+        )
 
     def watch_active_file(self, path: Path | None) -> None:
         if path is None:

@@ -7,6 +7,7 @@ from typing import TypedDict
 from .telescope import MAX_RESULTS, Telescope, _fuzzy_score
 
 PREVIEW_CHARS = 120
+OPEN_FILE_SYMBOL = "●"
 
 
 class ProjectSearchResult(TypedDict):
@@ -17,9 +18,15 @@ class ProjectSearchResult(TypedDict):
 
 
 class SearchProject(Telescope[ProjectSearchResult]):
-    def __init__(self, *, workspace: Path) -> None:
+    def __init__(
+        self,
+        *,
+        workspace: Path,
+        preferred_files: list[Path] | None = None,
+    ) -> None:
         self.workspace = workspace
         self._files: list[Path] | None = None
+        self.preferred_files = set(preferred_files or [])
         super().__init__(
             items=self._search_results,
             title="Search files and code",
@@ -40,6 +47,7 @@ class SearchProject(Telescope[ProjectSearchResult]):
             self.workspace,
             query,
             files=self._cached_files(),
+            preferred_files=self.preferred_files,
         )
 
     def _cached_files(self) -> list[Path]:
@@ -53,28 +61,42 @@ def _project_search_results(
     query: str,
     *,
     files: list[Path] | None = None,
+    preferred_files: set[Path] | None = None,
 ) -> list[ProjectSearchResult]:
     needle = query.strip()
     files = _project_files(workspace) if files is None else files
+    preferred_files = preferred_files or set()
 
     if not needle:
         # comment: show files immediately before the user starts typing.
+        ordered = sorted(
+            files,
+            key=lambda path: (path not in preferred_files, str(path)),
+        )
         return [
             {
-                "title": str(path),
+                "title": f"{path} {OPEN_FILE_SYMBOL}"
+                if path in preferred_files
+                else str(path),
                 "path": path,
                 "line_number": None,
                 "text": "",
             }
-            for path in files[:MAX_RESULTS]
+            for path in ordered[:MAX_RESULTS]
         ]
 
     # comment: file paths are fuzzy-matched; code search remains exact grep.
-    file_matches = _file_results(needle, files)
+    file_matches = _file_results(needle, files, preferred_files=preferred_files)
     grep_matches = _ripgrep_results(workspace, needle)
 
     grep_items: list[tuple[int, ProjectSearchResult]] = [
-        (10_000 - index, result) for index, result in enumerate(grep_matches)
+        (
+            10_000 - index,
+            {**result, "title": f"{result['title']} {OPEN_FILE_SYMBOL}"}
+            if result["path"] in preferred_files
+            else result,
+        )
+        for index, result in enumerate(grep_matches)
     ]
     matches = [*file_matches, *grep_items]
 
@@ -148,11 +170,14 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
 def _file_results(
     query: str,
     files: list[Path],
+    *,
+    preferred_files: set[Path] | None = None,
 ) -> list[tuple[int, ProjectSearchResult]]:
     needle = query.strip().lower()
     if not needle or not files:
         return []
 
+    preferred_files = preferred_files or set()
     matches: list[tuple[int, ProjectSearchResult]] = []
     for path in files:
         score = _fuzzy_score(needle, str(path))
@@ -160,9 +185,11 @@ def _file_results(
             continue
         matches.append(
             (
-                100_000 + score,
+                (1_000_000 if path in preferred_files else 100_000) + score,
                 {
-                    "title": str(path),
+                    "title": f"{path} {OPEN_FILE_SYMBOL}"
+                    if path in preferred_files
+                    else str(path),
                     "path": path,
                     "line_number": None,
                     "text": "",
