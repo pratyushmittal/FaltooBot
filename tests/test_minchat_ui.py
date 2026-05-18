@@ -1336,12 +1336,6 @@ async def test_minchat_reparses_streamed_answer_when_finished(
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
     answer = "Here is code:\n\n```py\nfoo = 1\n```"
-    updates: list[str] = []
-    original_update = Markdown.update
-
-    async def record_update(block: Markdown, markdown: str) -> None:
-        updates.append(markdown)
-        await original_update(block, markdown)
 
     async def fake_get_answer_streaming(session: sessions.Session):
         yield type(
@@ -1352,7 +1346,6 @@ async def test_minchat_reparses_streamed_answer_when_finished(
         )()
         yield type("Event", (), {"type": "response.output_text.done"})()
 
-    monkeypatch.setattr(Markdown, "update", record_update)
     monkeypatch.setattr(
         "faltoobot.faltoochat.app.sessions.get_answer_streaming",
         fake_get_answer_streaming,
@@ -1363,12 +1356,17 @@ async def test_minchat_reparses_streamed_answer_when_finished(
         composer.load_text("hello")
         await composer.action_composer_enter()
         await asyncio.wait_for(
-            wait_for_condition(lambda: not app.is_answering and answer in updates),
+            wait_for_condition(lambda: not app.is_answering),
             timeout=3,
         )
         await pilot.pause(0)
 
-        assert app.query_one("#transcript").query(Markdown).last()._markdown == answer
+        block = app.query_one("#transcript").query(Markdown).last()
+        assert block._markdown == answer
+        assert [type(child).__name__ for child in block.children] == [
+            "MarkdownParagraph",
+            "MarkdownFence",
+        ]
 
 
 @pytest.mark.anyio

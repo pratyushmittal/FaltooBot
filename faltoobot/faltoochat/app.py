@@ -71,16 +71,10 @@ def _render_blocks(text: str, classes: str) -> list[Markdown]:
     return blocks
 
 
-async def _finish_answer_stream(
-    answer_stream: Any | None,
-    block: Markdown | None = None,
-    raw_text: str = "",
-) -> None:
+async def _finish_answer_stream(answer_stream: Any | None) -> None:
     if answer_stream is None:
         return
     await answer_stream.stop()
-    if block is not None:
-        await block.update(raw_text)
 
 
 async def _write_stream_chunk(
@@ -563,7 +557,7 @@ class FaltooChatApp(App[None]):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
-                    await _finish_answer_stream(answer_stream, block, raw_text)
+                    await _finish_answer_stream(answer_stream)
                     answer_stream, block, raw_text = None, None, ""
                 continue
 
@@ -573,7 +567,7 @@ class FaltooChatApp(App[None]):
             )
 
             if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
-                await _finish_answer_stream(answer_stream, block, raw_text)
+                await _finish_answer_stream(answer_stream)
                 answer_stream, block, raw_text = None, None, ""
                 await transcript.mount(*_render_blocks(text, classes))
                 if follow:
@@ -581,7 +575,7 @@ class FaltooChatApp(App[None]):
                 continue
 
             if block is None or is_new or classes not in block.classes:
-                await _finish_answer_stream(answer_stream, block, raw_text)
+                await _finish_answer_stream(answer_stream)
                 answer_stream, raw_text = None, ""
                 block = Markdown("", classes=classes)
                 await transcript.mount(block)
@@ -598,7 +592,7 @@ class FaltooChatApp(App[None]):
             if follow:
                 transcript.anchor()
 
-        await _finish_answer_stream(answer_stream, block, raw_text)
+        await _finish_answer_stream(answer_stream)
 
     async def _add_user_turn(
         self,
