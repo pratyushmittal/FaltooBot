@@ -7,7 +7,13 @@ from textual.color import Color
 
 from faltoobot.faltoochat.diff import Diff
 from faltoobot.faltoochat.review_api import reviews_prompt
-from faltoobot.faltoochat.widgets.review_file import _side_by_side_visible_diff_lines
+from faltoobot.faltoochat.widgets.review_file import (
+    ADDED_LAYOUT,
+    SIDE_BY_SIDE_LAYOUT,
+    UNIFIED_LAYOUT,
+    ReviewFileView,
+    _side_by_side_visible_diff_lines,
+)
 from faltoobot.faltoochat.widgets.review_diff import (
     ADDED_FILTER,
     FULL_FILTER,
@@ -426,6 +432,29 @@ def test_review_cycle_mode_requests_parent_layout_change(monkeypatch) -> None:
     viewer.action_review_cycle_mode()
 
     assert isinstance(messages[-1], ReviewDiffView.CycleLayoutRequested)
+
+
+def test_review_file_cycles_unified_added_and_side_by_side_modes() -> None:
+    file_view = ReviewFileView(
+        file_path=Path("alpha.py"),
+        review_view=cast(Any, review_view_stub()),
+    )
+
+    file_view.cycle_layout_mode()
+    assert file_view.layout_mode == ADDED_LAYOUT
+    assert file_view.left_viewer.filter_mode == ADDED_FILTER
+    assert file_view.right_viewer.display is False
+
+    file_view.cycle_layout_mode()
+    assert file_view.layout_mode == SIDE_BY_SIDE_LAYOUT
+    assert file_view.left_viewer.filter_mode == REMOVED_FILTER
+    assert file_view.right_viewer.filter_mode == ADDED_FILTER
+    assert file_view.right_viewer.display is True
+
+    file_view.cycle_layout_mode()
+    assert file_view.layout_mode == UNIFIED_LAYOUT
+    assert file_view.left_viewer.filter_mode == FULL_FILTER
+    assert file_view.right_viewer.display is False
 
 
 def test_review_range_maps_filtered_rows_back_to_backing_diff_lines() -> None:

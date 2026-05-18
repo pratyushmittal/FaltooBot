@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..review import ReviewView
 
 UNIFIED_LAYOUT = "unified"
+ADDED_LAYOUT = "added"
 SIDE_BY_SIDE_LAYOUT = "side-by-side"
 
 
@@ -138,7 +139,9 @@ class ReviewFileView(Static):
             self.update_border_labels()
             return
         self.left_viewer.set_filter_mode(
-            FULL_FILTER, force=force, preserve_cursor=False
+            ADDED_FILTER if self.layout_mode == ADDED_LAYOUT else FULL_FILTER,
+            force=force,
+            preserve_cursor=False,
         )
         self.right_viewer.display = False
         self.right_viewer.can_focus = False
@@ -234,11 +237,8 @@ class ReviewFileView(Static):
             viewer.scroll_top_to_diff_line(top_diff_line)
 
     def cycle_layout_mode(self, *, focus: bool = False) -> None:
-        self.layout_mode = (
-            SIDE_BY_SIDE_LAYOUT
-            if self.layout_mode == UNIFIED_LAYOUT
-            else UNIFIED_LAYOUT
-        )
+        modes = (UNIFIED_LAYOUT, ADDED_LAYOUT, SIDE_BY_SIDE_LAYOUT)
+        self.layout_mode = modes[(modes.index(self.layout_mode) + 1) % len(modes)]
         self.apply_layout_mode(focus=focus)
 
     def apply_layout_mode(self, *, focus: bool = False) -> None:
