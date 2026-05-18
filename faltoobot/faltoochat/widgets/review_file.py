@@ -126,7 +126,7 @@ class ReviewFileView(Static):
         if not hasattr(self, "left_viewer"):
             return
         self.border_title = comment_title(self.left_viewer)
-        self.border_subtitle = str(self.file_path)
+        self.border_subtitle = f"{self.file_path} · {self.layout_mode}"
 
     def _apply_layout_mode(self, *, force: bool = False) -> None:
         self.set_class(self.layout_mode == SIDE_BY_SIDE_LAYOUT, "side-by-side")

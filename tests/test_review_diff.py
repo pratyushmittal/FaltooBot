@@ -442,17 +442,20 @@ def test_review_file_cycles_unified_added_and_side_by_side_modes() -> None:
 
     file_view.cycle_layout_mode()
     assert file_view.layout_mode == ADDED_LAYOUT
+    assert file_view.border_subtitle == "alpha.py · added"
     assert file_view.left_viewer.filter_mode == ADDED_FILTER
     assert file_view.right_viewer.display is False
 
     file_view.cycle_layout_mode()
     assert file_view.layout_mode == SIDE_BY_SIDE_LAYOUT
+    assert file_view.border_subtitle == "alpha.py · side-by-side"
     assert file_view.left_viewer.filter_mode == REMOVED_FILTER
     assert file_view.right_viewer.filter_mode == ADDED_FILTER
     assert file_view.right_viewer.display is True
 
     file_view.cycle_layout_mode()
     assert file_view.layout_mode == UNIFIED_LAYOUT
+    assert file_view.border_subtitle == "alpha.py · unified"
     assert file_view.left_viewer.filter_mode == FULL_FILTER
     assert file_view.right_viewer.display is False
 
