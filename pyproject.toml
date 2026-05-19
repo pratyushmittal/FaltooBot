@@ -9,19 +9,17 @@ description = "WhatsApp-first LLM bot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "neonize==0.3.17.post0",
+  "neonize==0.3.18.post0",
   "openai>=2.32.0",
   "playwright>=1.58.0",
   "pillow>=12.2.0",
   "rich>=14.3.4",
   "textual[syntax]>=8.2.3",
-  'pyobjc-framework-Cocoa>=11.1; sys_platform == "darwin"',
   "tree-sitter-lua>=0.5.0",
   "tree-sitter-typescript>=0.23.2",
   "google-genai>=1.73.1",
   "textual-speedups>=0.2.1",
   "certifi>=2026.4.22",
-  "google-maps-places>=0.8.0",
   "fast-flights>=2.2",
   "websockets>=16.0",
 ]

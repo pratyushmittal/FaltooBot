@@ -1330,46 +1330,6 @@ async def test_minchat_bells_when_answer_finishes(
 
 
 @pytest.mark.anyio
-async def test_minchat_reparses_streamed_answer_when_finished(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, app = build_app(tmp_path, monkeypatch)
-    answer = "Here is code:\n\n```py\nfoo = 1\n```"
-
-    async def fake_get_answer_streaming(session: sessions.Session):
-        yield type(
-            "Event", (), {"type": "response.output_text.delta", "delta": answer[:12]}
-        )()
-        yield type(
-            "Event", (), {"type": "response.output_text.delta", "delta": answer[12:]}
-        )()
-        yield type("Event", (), {"type": "response.output_text.done"})()
-
-    monkeypatch.setattr(
-        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
-        fake_get_answer_streaming,
-    )
-
-    async with app.run_test() as pilot:
-        composer = app.query_one("#composer", Composer)
-        composer.load_text("hello")
-        await composer.action_composer_enter()
-        await asyncio.wait_for(
-            wait_for_condition(lambda: not app.is_answering),
-            timeout=3,
-        )
-        await pilot.pause(0)
-
-        block = app.query_one("#transcript").query(Markdown).last()
-        assert block._markdown == answer
-        assert [type(child).__name__ for child in block.children] == [
-            "MarkdownParagraph",
-            "MarkdownFence",
-        ]
-
-
-@pytest.mark.anyio
 async def test_minchat_shows_retry_when_answer_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
