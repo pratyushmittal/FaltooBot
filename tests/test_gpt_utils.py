@@ -1,5 +1,6 @@
 import asyncio
 import json
+import ssl
 import threading
 import time
 from enum import Enum
@@ -978,6 +979,8 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
         "response.output_text.delta",
         "response.completed",
     ]
+    ssl_context = connect_calls[0].pop("ssl")
+    assert isinstance(ssl_context, ssl.SSLContext)
     assert connect_calls == [
         {
             "uri": "wss://api.openai.com/v1/responses",
@@ -1302,6 +1305,8 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
         )
     ]
 
+    ssl_context = connect_calls[0].pop("ssl")
+    assert isinstance(ssl_context, ssl.SSLContext)
     assert connect_calls == [
         {
             "uri": "wss://chatgpt.com/backend-api/codex/responses",

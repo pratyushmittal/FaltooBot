@@ -1,4 +1,5 @@
 import json
+import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, cast
 
@@ -9,6 +10,7 @@ from openai.types.responses import (
     ResponseOutputItem,
     ResponsesServerEvent,
 )
+import certifi
 from websockets.asyncio.client import connect as websocket_connect
 
 from faltoobot.config import Config
@@ -147,6 +149,7 @@ async def streaming_reply(  # noqa: C901, PLR0913
             default_headers,
             _request_extra_headers(config, prompt_cache_key),
         ),
+        ssl=ssl.create_default_context(cafile=certifi.where()),
     ) as ws:
         while True:
             response_output: list[ResponseOutputItem] = []
