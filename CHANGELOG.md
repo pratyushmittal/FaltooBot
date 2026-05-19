@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.5.0 — 2026-05-19
+
+### Added
+- Review split view can now open a second file beside the current diff with `Shift+O`, switch panes with `o`, and close the split with `q`.
+- Review diffs can now switch to an added-lines-only view.
+
+### Changed
+- Project search now prioritizes already-open review files.
+- Refreshed locked dependencies.
+
 ## 6.4.1 — 2026-05-16
 
 ### Fixed
