@@ -2,7 +2,6 @@ from .keybinding_modals import BindingsErrorModal, KeybindingsModal
 from .queue import QueueWidget
 from .review_comment_modal import ReviewCommentModal
 from .review_diff import ReviewDiffView
-from .review_file import ReviewFileView
 from .search_file import SearchFile
 from .search_project import SearchProject
 from .session_picker import SessionPicker
@@ -16,7 +15,6 @@ __all__ = [
     "QueueWidget",
     "ReviewCommentModal",
     "ReviewDiffView",
-    "ReviewFileView",
     "SearchFile",
     "SearchProject",
     "SessionPicker",

@@ -1,7 +1,6 @@
 import subprocess
 from pathlib import Path
 from typing import Any
-from collections.abc import Collection
 
 from .diff import Diff
 
@@ -39,23 +38,19 @@ def apply_selected_diff_lines(
     diff: Diff,
     file_path: Path,
     workspace: Path,
-    selected_indexes: Collection[int],
+    selection: tuple[int, int],
     *,
     is_staged: bool,
 ) -> str | None:
-    """Apply selected backing diff lines to the git index by staging or unstaging them."""
+    """Apply the selected diff lines to the git index by staging or unstaging them."""
     if not diff:
         return "No diff available."
-    selected_indexes = set(selected_indexes)
-    entries = (
-        _unstage_entries(diff)
-        if is_staged
-        else _stage_entries_for_selection(diff, selected_indexes)
-    )
+    start, end = selection
+    entries = _unstage_entries(diff) if is_staged else _stage_entries(diff, start, end)
     selected_entries = [
         entry
         for entry in entries
-        if entry["full_index"] in selected_indexes
+        if start <= entry["full_index"] <= end
         and entry["line"]["type"] in {"+", "-"}
         and entry["line"]["is_staged"] == is_staged
     ]
@@ -177,16 +172,9 @@ def _ensure_index_entry(workspace: Path, file_path: Path) -> None:
 
 
 def _stage_entries(diff: Diff, start: int, end: int) -> list[dict[str, Any]]:
-    selected = set(range(start, end + 1))
-    return _stage_entries_for_selection(diff, selected)
-
-
-def _stage_entries_for_selection(
-    diff: Diff, selected_indexes: set[int]
-) -> list[dict[str, Any]]:
     selected = {
         index
-        for index in selected_indexes
+        for index in range(start, end + 1)
         if diff[index]["type"] in {"+", "-"} and not diff[index]["is_staged"]
     }
     entries: list[dict[str, Any]] = []

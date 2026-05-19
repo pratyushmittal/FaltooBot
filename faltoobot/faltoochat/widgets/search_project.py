@@ -7,7 +7,7 @@ from typing import TypedDict
 from .telescope import MAX_RESULTS, Telescope, _fuzzy_score
 
 PREVIEW_CHARS = 120
-OPEN_FILE_SYMBOL = "●"
+OPEN_FILE_SYMBOL = "·"
 
 
 class ProjectSearchResult(TypedDict):
@@ -69,10 +69,8 @@ def _project_search_results(
 
     if not needle:
         # comment: show files immediately before the user starts typing.
-        ordered = sorted(
-            files,
-            key=lambda path: (path not in preferred_files, str(path)),
-        )
+        preferred = [path for path in files if path in preferred_files]
+        ordered = preferred + [path for path in files if path not in preferred_files]
         return [
             {
                 "title": f"{path} {OPEN_FILE_SYMBOL}"
@@ -92,9 +90,11 @@ def _project_search_results(
     grep_items: list[tuple[int, ProjectSearchResult]] = [
         (
             10_000 - index,
-            {**result, "title": f"{result['title']} {OPEN_FILE_SYMBOL}"}
-            if result["path"] in preferred_files
-            else result,
+            (
+                {**result, "title": f"{result['title']} {OPEN_FILE_SYMBOL}"}
+                if result["path"] in preferred_files
+                else result
+            ),
         )
         for index, result in enumerate(grep_matches)
     ]

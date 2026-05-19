@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
@@ -10,10 +11,9 @@ import tree_sitter_typescript
 from textual import events
 from textual.app import SuspendNotSupported
 from textual.binding import Binding
-from textual.message import Message
 from textual.color import Color
 from textual.strip import Strip
-from textual.widgets import TextArea
+from textual.widgets import TabbedContent, TabPane, TextArea
 from textual.widgets.text_area import TextAreaTheme
 
 
@@ -27,49 +27,21 @@ from ..editor_utils import (
     previous_word_location,
     word_under_cursor,
 )
-from ..git import apply_selected_diff_lines, stage_file
+from ..git import apply_selected_diff_lines, get_selected_change_state, stage_file
 from ..review_api import FILE_COMMENT_LINE, get_review
 from ..terminal import open_in_editor
 
 from .review_comment_modal import ReviewCommentModal
+from .search_project import SearchProject
 from .text_input_modal import TextInputModal
 
 if TYPE_CHECKING:
     from ..app import FaltooChatApp
-    from ..review import ReviewView
-    from .review_file import ReviewFileView
+    from ..review import ProjectSearchResult, ReviewView
 
-FULL_FILTER = "full"
-ADDED_FILTER = "added"
-
-LANGUAGES_BY_SUFFIX = {
-    ".c": "c",
-    ".cc": "cpp",
-    ".cpp": "cpp",
-    ".css": "css",
-    ".go": "go",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".html": "html",
-    ".java": "java",
-    ".js": "javascript",
-    ".json": "json",
-    ".jsx": "javascript",
-    ".lua": "lua",
-    ".md": "markdown",
-    ".py": "python",
-    ".rb": "ruby",
-    ".rs": "rust",
-    ".sh": "bash",
-    ".sql": "sql",
-    ".toml": "toml",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".txt": None,
-    ".xml": "xml",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-}
+TAB_SWITCH_COOLDOWN = 0.2
+DIFF_MODE = "diff"
+ADD_MODE = "add"
 
 
 class DisplayRowContext(TypedDict):
@@ -81,44 +53,6 @@ class DisplayRowContext(TypedDict):
 
 
 class ReviewDiffView(TextArea):
-    DEFAULT_CSS = """
-    ReviewDiffView {
-        border: round $panel;
-        scrollbar-size-horizontal: 0;
-        scrollbar-size-vertical: 0;
-    }
-
-    ReviewDiffView:focus {
-        border: round $primary;
-    }
-    """
-
-    class FocusedPane(Message):
-        def __init__(self, viewer: "ReviewDiffView") -> None:
-            super().__init__()
-            self.viewer = viewer
-
-    class FocusOtherPaneRequested(Message):
-        pass
-
-    class OpenSplitRequested(Message):
-        def __init__(self, viewer: "ReviewDiffView") -> None:
-            super().__init__()
-            self.viewer = viewer
-
-    class CloseSplitRequested(Message):
-        pass
-
-    class RefreshRequested(Message):
-        def __init__(self, viewer: "ReviewDiffView") -> None:
-            super().__init__()
-            self.viewer = viewer
-
-    class FileTabCycleRequested(Message):
-        def __init__(self, delta: int) -> None:
-            super().__init__()
-            self.delta = delta
-
     DEFAULT_BINDINGS = [
         Binding(
             "j,ctrl+n", "review_cursor_down", "Cursor Down", priority=True, show=False
@@ -210,29 +144,24 @@ class ReviewDiffView(TextArea):
         *,
         file_path: Path,
         review_view: "ReviewView",
-        filter_mode: str = FULL_FILTER,
-        file_view: "ReviewFileView",
         **kwargs,
     ) -> None:
-        requested_language = LANGUAGES_BY_SUFFIX.get(file_path.suffix.lower())
+        requested_language = kwargs.pop("language", None)
         line_highlights = kwargs.pop("line_highlights", True)
         self.indent_guides = kwargs.pop("indent_guides", True)
         self.file_path = file_path
         self.review_view = review_view
-        self.file_view = file_view
         self.diff = diff
-        self.loaded = bool(diff)
-        self.filter_mode = filter_mode
+        self.mode = kwargs.pop("mode", DIFF_MODE)
         self.visible_diff_lines: list[int] = []
-        self._diff_line_by_visible_row: list[int] = []
-        self._visible_row_by_diff_line: dict[int, int] = {}
+        self.last_tab_switch_at = 0.0
+        self.line_highlights = line_highlights
         self.line_selection_anchor: int | None = None
         self.line_selection_cursor: int | None = None
         self.previous_cursor_locations: list[tuple[int, int]] = []
         self.missing_language_package: str | None = None
         kwargs.setdefault("soft_wrap", True)
         super().__init__("", language=None, **kwargs)
-        self.line_highlights = line_highlights
         self.styles.scrollbar_size_horizontal = 0
         _use_review_theme(self, dark=False)
         self._load_diff_text()
@@ -264,17 +193,39 @@ class ReviewDiffView(TextArea):
             return 0
         return super().gutter_width + 1
 
+    def on_show(self, _event: events.Show) -> None:
+        self.focus()
+
     def on_focus(self, _event: events.Focus) -> None:
         self.review_view.active_pane = self
-        self.post_message(self.FocusedPane(self))
+        self.app.run_worker(
+            self.reload_in_place(),
+            group=f"review-load-{self.file_path}",
+            exclusive=True,
+        )
+
+    async def reload_in_place(self) -> None:
+        # comment: loading a file tab starts empty, so refresh the diff in place and then restore the
+        # visible cursor and scroll position after the diff text is ready.
+        if await self.review_view.close_stale_file(self.file_path):
+            return
+        workspace = cast("FaltooChatApp", self.app).workspace
+        cursor = self.cursor_location
+        selection = self.selection
+        scroll_x, scroll_y = self.scroll_offset
+        self.diff = await asyncio.to_thread(get_diff, workspace / self.file_path)
+        self._load_diff_text()
+        if self.selection.is_empty:
+            self.line_selection_anchor = None
+            self.line_selection_cursor = None
+        target_line = min(cursor[0], self.document.line_count - 1)
+        target_column = min(cursor[1], len(self.document.get_line(target_line)))
+        self.move_cursor((target_line, target_column))
+        self.selection = selection
+        self.scroll_to(scroll_x, scroll_y, animate=False, immediate=True)
 
     def render_line(self, y: int):
-        highlight_cursor_line = self.highlight_cursor_line
-        self.highlight_cursor_line = highlight_cursor_line and self.has_focus
-        try:
-            strip = super().render_line(y)
-        finally:
-            self.highlight_cursor_line = highlight_cursor_line
+        strip = super().render_line(y)
         absolute_y = self.scroll_offset[1] + y
         if (context := self._display_row_context(absolute_y)) is None:
             return strip
@@ -307,9 +258,9 @@ class ReviewDiffView(TextArea):
             )
             strip = Strip.join([gutter, strip])
 
-        if context["line_type"] == "-":
-            strip = strip.apply_style(Style(dim=True))
-        return strip
+        if context["line_type"] != "-":
+            return strip
+        return strip.apply_style(Style(dim=True))
 
     def _display_line_info(self, line_index: int) -> tuple[int, int] | None:
         try:
@@ -322,7 +273,7 @@ class ReviewDiffView(TextArea):
         if line_info is None or line_info[0] >= len(self.visible_diff_lines):
             return None
         document_line, section_offset = line_info
-        diff_line = self.visible_diff_lines[document_line]
+        diff_line = self._visible_diff_line(document_line)
         line_type = self.diff[diff_line]["type"]
         line_number = None
         if not section_offset and line_type != "-":
@@ -384,120 +335,12 @@ class ReviewDiffView(TextArea):
     def jump_to_file_line(self, line_number: int) -> None:
         if not self.diff:
             return
-        self.show_diff_line(
-            _diff_line_for_file_line(self.diff, line_number), center=True
+        target_line = self._display_line(
+            _diff_line_for_file_line(self.diff, line_number)
         )
-
-    def set_diff(self, diff: Diff) -> None:
-        self.diff = diff
-        self.loaded = True
-        self._load_diff_text()
-        self._update_border_title()
-
-    async def reload_in_place(self) -> None:
-        workspace = cast("FaltooChatApp", self.app).workspace
-        diff_line = self.current_diff_line() if self.visible_diff_lines else 0
-        top_diff_line = self.top_visible_diff_line() if self.visible_diff_lines else 0
-
-        self.diff = await asyncio.to_thread(get_diff, workspace / self.file_path)
-        self.loaded = True
-        self._load_diff_text(preserve_cursor=False)
-        if self._visible_row_by_diff_line:
-            self.show_diff_line(diff_line)
-            self.scroll_top_to_diff_line(top_diff_line)
-        self.selection = type(self.selection).cursor(self.cursor_location)
-        self.line_selection_anchor = None
-        self.line_selection_cursor = None
-        self._update_border_title()
-
-    def set_filter_mode(
-        self,
-        filter_mode: str,
-        *,
-        force: bool = False,
-        preserve_cursor: bool = True,
-        center: bool = False,
-    ) -> None:
-        if self.filter_mode == filter_mode and not force:
-            return
-        self.filter_mode = filter_mode
-        self._load_diff_text(center=center, preserve_cursor=preserve_cursor)
-
-    def set_visible_diff_lines(self, visible_diff_lines: list[int]) -> None:
-        self.visible_diff_lines = visible_diff_lines
-        self._diff_line_by_visible_row = list(visible_diff_lines)
-        self._visible_row_by_diff_line = {
-            line: index for index, line in enumerate(visible_diff_lines)
-        }
-        self.load_text(
-            "\n".join(self.diff[index]["text"] for index in visible_diff_lines)
-        )
-        self._update_border_title()
-
-    def current_diff_line(self) -> int:
-        return self._visible_diff_line(self.cursor_location[0])
-
-    def show_diff_line(
-        self,
-        diff_line: int,
-        *,
-        column: int = 0,
-        center: bool = False,
-    ) -> None:
-        self._jump_to_diff_line(diff_line, column=column, center=center)
-        if center:
-            if not self.is_mounted:
-                return
-            height = (
-                self.file_view.content_size.height
-                or max(0, self.file_view.size.height - 2)
-                or max(0, self.app.size.height - 2)
-                or max(0, self.screen.size.height - 2)
-                or self.scrollable_content_region.size.height
-                or self.size.height
-            )
-            self.scroll_to(
-                self.scroll_offset[0],
-                max(0, self._first_display_row(self.cursor_location[0]) - height // 2),
-                animate=False,
-                immediate=True,
-                force=True,
-            )
-            return
+        self._jump_cursor((target_line, 0))
         if self.is_mounted:
-            self.scroll_cursor_visible(center=False, animate=False)
-
-    def _jump_to_diff_line(
-        self,
-        diff_line: int,
-        *,
-        column: int = 0,
-        center: bool = False,
-    ) -> None:
-        target_line = self._display_line(diff_line)
-        target_column = min(column, len(self.document.get_line(target_line)))
-        self._jump_cursor((target_line, target_column), center=center)
-
-    def _first_display_row(self, document_line: int) -> int:
-        offsets = self.wrapped_document._line_index_to_offsets
-        if document_line < len(offsets) and offsets[document_line]:
-            return offsets[document_line][0]
-        return max(0, len(self.wrapped_document._offset_to_line_info) - 1)
-
-    def top_visible_diff_line(self) -> int:
-        context = self._display_row_context(int(self.scroll_offset[1]))
-        if context is None:
-            return self.current_diff_line()
-        return self._visible_diff_line(context["document_line"])
-
-    def scroll_top_to_diff_line(self, diff_line: int) -> None:
-        target_line = self._display_line(diff_line)
-        self.scroll_to(
-            self.scroll_offset[0],
-            self._first_display_row(target_line),
-            animate=False,
-            immediate=True,
-        )
+            self.scroll_cursor_visible(animate=False)
 
     def _move_cursor_lines(self, delta: int) -> None:
         line, column = self.cursor_location
@@ -553,37 +396,40 @@ class ReviewDiffView(TextArea):
             self.line_selection_anchor,
         )
 
-    def _update_border_title(self) -> None:
-        self.border_title = comment_title(self)
-        mode = "added" if self.filter_mode == ADDED_FILTER else "unified"
-        self.border_subtitle = f"{self.file_path} · {mode}"
+    def _update_mode_subtitle(self) -> None:
+        self.border_subtitle = (
+            str(self.file_path)
+            if self.mode == DIFF_MODE
+            else f"{self.file_path} · {self.mode}"
+        )
 
     def _visible_diff_line(self, line_index: int) -> int:
-        line_index = max(0, min(line_index, len(self._diff_line_by_visible_row) - 1))
-        return self._diff_line_by_visible_row[line_index]
+        """Return the backing diff line for a document row."""
+        if not self.visible_diff_lines:
+            return 0
+        line_index = max(0, min(line_index, len(self.visible_diff_lines) - 1))
+        return self.visible_diff_lines[line_index]
 
     def _display_line(self, diff_line: int) -> int:
-        if diff_line in self._visible_row_by_diff_line:
-            return self._visible_row_by_diff_line[diff_line]
-        for current in sorted(self._visible_row_by_diff_line):
+        """Return the visible editor row for a backing diff line."""
+        if not self.visible_diff_lines:
+            return 0
+        for line_index, current in enumerate(self.visible_diff_lines):
             if current >= diff_line:
-                return self._visible_row_by_diff_line[current]
+                return line_index
         return len(self.visible_diff_lines) - 1
 
-    def _load_diff_text(
-        self, *, center: bool = False, preserve_cursor: bool = True
-    ) -> None:
+    def _load_diff_text(self, *, center: bool = False) -> None:
         diff_line = (
             self._visible_diff_line(self.cursor_location[0])
             if self.visible_diff_lines
             else 0
         )
-        self.set_visible_diff_lines(visible_diff_lines(self.diff, self.filter_mode))
-        if (
-            not preserve_cursor
-            or not self.visible_diff_lines
-            or self.document.line_count == 0
-        ):
+        self.visible_diff_lines = _visible_diff_lines(self.diff, self.mode)
+        self._update_mode_subtitle()
+        self.load_text(_diff_text(self.diff, self.visible_diff_lines))
+        self.border_title = _comment_title(self)
+        if self.document.line_count == 0:
             return
         self.move_cursor(
             (self._display_line(diff_line), 0),
@@ -592,23 +438,8 @@ class ReviewDiffView(TextArea):
         )
 
     def action_review_cycle_mode(self) -> None:
-        self.set_filter_mode(
-            ADDED_FILTER if self.filter_mode == FULL_FILTER else FULL_FILTER,
-            preserve_cursor=True,
-            center=True,
-        )
-
-    def action_review_focus_other_pane(self) -> None:
-        self.post_message(self.FocusOtherPaneRequested())
-
-    def action_review_open_split(self) -> None:
-        self.post_message(self.OpenSplitRequested(self))
-
-    def action_review_close_split(self) -> None:
-        self.post_message(self.CloseSplitRequested())
-
-    def action_review_toggle_wrap(self) -> None:
-        self.app.notify("Line wrapping is always enabled.")
+        self.mode = ADD_MODE if self.mode == DIFF_MODE else DIFF_MODE
+        self._load_diff_text(center=True)
 
     def action_review_toggle_line_highlights(self) -> None:
         self.review_view.set_display_preferences(
@@ -629,21 +460,64 @@ class ReviewDiffView(TextArea):
         if location := previous_word_location(self.text, self.cursor_location):
             self._jump_cursor(location, center=False)
 
-    def action_review_next_file_tab(self) -> None:
-        self.post_message(self.FileTabCycleRequested(1))
+    async def action_review_next_file_tab(self) -> None:
+        if self._tab_switch_blocked():
+            return
+        await self._cycle_file_tab(1)
 
-    def action_review_previous_file_tab(self) -> None:
-        self.post_message(self.FileTabCycleRequested(-1))
+    async def action_review_previous_file_tab(self) -> None:
+        if self._tab_switch_blocked():
+            return
+        await self._cycle_file_tab(-1)
+
+    def _tab_switch_blocked(self) -> bool:
+        now = time.monotonic()
+        # comment: holding Tab generates repeated key events, but file tabs should move one step at a time.
+        if now - self.last_tab_switch_at < TAB_SWITCH_COOLDOWN:
+            return True
+        self.last_tab_switch_at = now
+        return False
+
+    async def _cycle_file_tab(self, delta: int) -> None:
+        tabs = self.screen.query_one("#review-tabs", TabbedContent)
+        pane_ids = [
+            pane.id
+            for pane in tabs.query(TabPane)
+            if pane.id is not None and pane.query(ReviewDiffView)
+        ]
+        while pane_ids:
+            current_index = (
+                pane_ids.index(tabs.active) if tabs.active in pane_ids else 0
+            )
+            next_id = pane_ids[(current_index + delta) % len(pane_ids)]
+            viewer = tabs.get_pane(next_id).query_one(ReviewDiffView)
+            if not await self.review_view.close_stale_file(viewer.file_path):
+                tabs.active = next_id
+                viewer.focus()
+                return
+            pane_ids = [
+                pane.id
+                for pane in tabs.query(TabPane)
+                if pane.id is not None and pane.query(ReviewDiffView)
+            ]
 
     def action_review_next_modification(self) -> None:
-        target_line = next_modification(self.diff, self.current_diff_line())
-        if target_line is not None:
-            self.show_diff_line(target_line, center=True)
+        line = next_modification(
+            self.diff, self._visible_diff_line(self.cursor_location[0])
+        )
+        if line is None:
+            return
+        target = self._display_line(line)
+        self._jump_cursor((target, 0), center=True)
 
     def action_review_previous_modification(self) -> None:
-        target_line = previous_modification(self.diff, self.current_diff_line())
-        if target_line is not None:
-            self.show_diff_line(target_line, center=True)
+        line = previous_modification(
+            self.diff, self._visible_diff_line(self.cursor_location[0])
+        )
+        if line is None:
+            return
+        target = self._display_line(line)
+        self._jump_cursor((target, 0), center=True)
 
     def action_review_jump_next(self) -> None:
         if not self.review_view.search_term:
@@ -675,10 +549,40 @@ class ReviewDiffView(TextArea):
         ):
             self._jump_cursor(location, center=True)
 
-    def action_review_refresh_current_file(self) -> None:
-        self.post_message(self.RefreshRequested(self))
+    async def action_review_refresh_current_file(self) -> None:
+        await self.reload_in_place()
+
+    def action_review_focus_other_pane(self) -> None:
+        self.review_view.focus_other_split()
+
+    def action_review_open_split(self) -> None:
+        app = cast("FaltooChatApp", self.app)
+
+        async def on_result(result: "ProjectSearchResult | None") -> None:
+            if result is not None:
+                await self.review_view.open_split(
+                    result["path"],
+                    line_number=result["line_number"],
+                )
+
+        tabs = self.screen.query_one("#review-tabs", TabbedContent)
+        app.push_screen(
+            SearchProject(
+                workspace=app.workspace,
+                preferred_files=[
+                    viewer.file_path
+                    for pane in tabs.query(TabPane)
+                    for viewer in pane.query(ReviewDiffView)
+                ],
+            ),
+            on_result,
+        )
+
+    async def action_review_close_split(self) -> None:
+        await self.review_view.close_split()
 
     async def action_review_edit_file(self) -> None:
+        await self.reload_in_place()
         workspace = cast("FaltooChatApp", self.app).workspace
         line_number = _file_line_for_diff_line(
             self.diff,
@@ -698,10 +602,11 @@ class ReviewDiffView(TextArea):
         if not used_terminal_editor:
             return
         await self.review_view.refresh_files()
-        await self.file_view.reload_in_place()
+        await self.reload_in_place()
         self.jump_to_file_line(line_number)
 
     async def action_review_search_word_under_cursor(self) -> None:
+        await self.reload_in_place()
         term = word_under_cursor(
             self.diff[self._visible_diff_line(self.cursor_location[0])]["text"],
             self.cursor_location[1],
@@ -714,6 +619,8 @@ class ReviewDiffView(TextArea):
         self.action_review_jump_next()
 
     async def action_review_search(self) -> None:
+        await self.reload_in_place()
+
         def on_term(term: str | None) -> None:
             if term is None:
                 return
@@ -722,10 +629,7 @@ class ReviewDiffView(TextArea):
             self.action_review_jump_next()
 
         self.app.push_screen(
-            TextInputModal(
-                initial_value=self.review_view.search_term,
-                title=f"Search {self.file_path.name}",
-            ),
+            TextInputModal(initial_value=self.review_view.search_term),
             on_term,
         )
 
@@ -741,12 +645,14 @@ class ReviewDiffView(TextArea):
         self.review_view.search_whole_word = False
 
     async def action_review_add(self) -> None:
+        await self.reload_in_place()
         start, end = _review_range(self)
         await self._add_review(start, end)
 
     async def action_review_add_file(self) -> None:
-        # comment: deleted/empty tabs can briefly have no diff rows to attach a file comment to.
+        await self.reload_in_place()
         if not self.diff:
+            # comment: deleted/empty tabs can briefly have no diff rows to attach a file comment to.
             return
         await self._add_review(0, len(self.diff) - 1, file_comment=True)
 
@@ -791,8 +697,7 @@ class ReviewDiffView(TextArea):
                     "comment": comment,
                 }
             )
-            self._update_border_title()
-            self.refresh()
+            await self.reload_in_place()
 
         self.app.push_screen(
             ReviewCommentModal(
@@ -806,28 +711,22 @@ class ReviewDiffView(TextArea):
         )
 
     async def action_review_stage_lines(self) -> None:
-        selected_diff_lines = {
-            self.visible_diff_lines[row]
-            for row in _selected_visible_rows(self)
-            if 0 <= row < len(self.visible_diff_lines)
-        }
-        states = {
-            self.diff[index]["is_staged"]
-            for index in selected_diff_lines
-            if self.diff[index]["type"] in {"+", "-"}
-        }
-        if not states:
+        await self.reload_in_place()
+        start, end = _review_range(self)
+        workspace = cast("FaltooChatApp", self.app).workspace
+        target = get_selected_change_state(
+            self.diff, self._visible_diff_line(self.cursor_location[0]), start, end
+        )
+        if target is None:
             self.app.notify(
                 "No modified lines to stage or unstage here.", severity="warning"
             )
             return
-        target = False if False in states else True
-        workspace = cast("FaltooChatApp", self.app).workspace
         if error := apply_selected_diff_lines(
             self.diff,
             self.file_path,
             workspace,
-            selected_diff_lines,
+            (start, end),
             is_staged=target,
         ):
             self.app.notify(error, severity="warning")
@@ -837,7 +736,24 @@ class ReviewDiffView(TextArea):
         self.line_selection_cursor = None
         await self.reload_in_place()
 
+    def _next_review_file_path(self) -> Path | None:
+        tabs = self.screen.query_one("#review-tabs", TabbedContent)
+        file_paths = [
+            pane.query_one(ReviewDiffView).file_path
+            for pane in tabs.query(TabPane)
+            if pane.id is not None and pane.query(ReviewDiffView)
+        ]
+        if self.file_path not in file_paths:
+            return None
+        current_index = file_paths.index(self.file_path)
+        if current_index + 1 < len(file_paths):
+            return file_paths[current_index + 1]
+        if current_index > 0:
+            return file_paths[current_index - 1]
+        return None
+
     async def action_review_stage_file(self) -> None:
+        next_path = self._next_review_file_path()
         workspace = cast("FaltooChatApp", self.app).workspace
         if error := await asyncio.to_thread(stage_file, workspace, self.file_path):
             self.app.notify(error, severity="warning")
@@ -845,7 +761,13 @@ class ReviewDiffView(TextArea):
         self.selection = type(self.selection).cursor(self.cursor_location)
         self.line_selection_anchor = None
         self.line_selection_cursor = None
-        await self.review_view.refresh_files()
+        # comment: staging the whole file usually removes it from the unstaged review list, so
+        # refresh and close tabs that no longer belong in review.
+        # comment: whole-file staging removes the current tab, so move the review view's
+        # active pane to the neighbor first and let refresh_files preserve it.
+        if next_path is not None:
+            self.review_view.set_active_tab(next_path)
+        await self.review_view.refresh_files(close_unmodified=True)
 
     async def action_review_submit_reviews(self) -> None:
         await self.review_view.submit_reviews()
@@ -862,8 +784,6 @@ def _use_review_theme(view: ReviewDiffView, *, dark: bool) -> None:
     view.register_theme(
         TextAreaTheme(
             name=review_theme_name,
-            cursor_line_style=theme.cursor_line_style,
-            cursor_line_gutter_style=theme.cursor_line_gutter_style,
             syntax_styles=theme.syntax_styles,
         )
     )
@@ -900,11 +820,15 @@ def _language_package(language: str) -> str:
     }.get(language, f"tree-sitter-{language}")
 
 
-def visible_diff_lines(diff: Diff, filter_mode: str) -> list[int]:
-    """Return backing diff line indexes visible in the current filter."""
-    if filter_mode == ADDED_FILTER:
+def _visible_diff_lines(diff: Diff, mode: str) -> list[int]:
+    """Return backing diff line indexes for rows visible in the current mode."""
+    if mode == ADD_MODE:
         return [index for index, line in enumerate(diff) if line["type"] != "-"]
     return list(range(len(diff)))
+
+
+def _diff_text(diff: Diff, visible_diff_lines: list[int]) -> str:
+    return "\n".join(diff[index]["text"] for index in visible_diff_lines)
 
 
 def _leading_spaces(text: str, indent_width: int) -> int:
@@ -1009,7 +933,6 @@ def _content_base_style(view: ReviewDiffView, document_line: int) -> Style:
     if (
         theme
         and view.highlight_cursor_line
-        and view.has_focus
         and view.cursor_location[0] == document_line
     ):
         return theme.cursor_line_style or view.rich_style
@@ -1020,7 +943,7 @@ def _content_base_style(view: ReviewDiffView, document_line: int) -> Style:
 
 def _gutter_base_style(view: ReviewDiffView, document_line: int) -> Style:
     theme = view._theme
-    if theme and view.has_focus and view.cursor_location[0] == document_line:
+    if theme and view.cursor_location[0] == document_line:
         return theme.cursor_line_gutter_style or view.rich_style
     if theme:
         return theme.gutter_style or view.rich_style
@@ -1045,19 +968,6 @@ def _line_selection(
     return selection_type(
         (anchor_line, 0), (current_line, _line_end(view, current_line))
     )
-
-
-def _selected_visible_rows(view: ReviewDiffView) -> set[int]:
-    if (
-        view.line_selection_anchor is not None
-        and view.line_selection_cursor is not None
-    ):
-        start, end = sorted((view.line_selection_anchor, view.line_selection_cursor))
-    elif view.selection.is_empty:
-        start = end = view.cursor_location[0]
-    else:
-        start, end = sorted((view.selection.start[0], view.selection.end[0]))
-    return set(range(start, end + 1))
 
 
 def _review_range(view: ReviewDiffView) -> tuple[int, int]:
@@ -1150,7 +1060,7 @@ def _gutter_symbol(view: ReviewDiffView, diff_line: int) -> str:
     return line["type"] or " "
 
 
-def comment_title(view: ReviewDiffView) -> str:
+def _comment_title(view: ReviewDiffView) -> str:
     count = sum(
         1 for review in view.review_view.reviews if review["filename"] == view.file_path
     )

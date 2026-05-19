@@ -115,7 +115,7 @@ def test_stage_lines_replaces_staged_additions_changed_unstaged(tmp_path: Path) 
         get_diff(file_path),
         Path("alpha.py"),
         workspace,
-        {1, 2},
+        (1, 2),
         is_staged=False,
     )
 
@@ -134,7 +134,7 @@ def test_stage_lines_works_for_untracked_file(tmp_path: Path) -> None:
         diff,
         Path("alpha.py"),
         workspace,
-        set(range(len(diff))),
+        (0, len(diff) - 1),
         is_staged=False,
     )
 

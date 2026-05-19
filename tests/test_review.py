@@ -20,13 +20,13 @@ from faltoobot.faltoochat.review import (
 from faltoobot.faltoochat.widgets import (
     ReviewCommentModal,
     ReviewDiffView,
-    ReviewFileView,
     SearchProject,
     Telescope,
 )
 from faltoobot.faltoochat.widgets.search_file import SearchFile as SearchFileModal
 
 EXPECTED_REVIEW_FILES = 2
+EXPECTED_SPLIT_VIEWERS = 2
 
 
 def test_review_missing_workspace_returns_git_error(tmp_path: Path) -> None:
@@ -750,8 +750,8 @@ async def test_review_open_split_search_loads_selected_file_in_right_pane(
         review_tabs.active = alpha_pane.id or ""
         await pilot.pause(0)
 
-        file_view = alpha_pane.query_one(ReviewFileView)
-        file_view.viewer.focus()
+        viewer = alpha_pane.query_one(ReviewDiffView)
+        viewer.focus()
         await pilot.press("O")
         await pilot.pause(0)
 
@@ -767,18 +767,19 @@ async def test_review_open_split_search_loads_selected_file_in_right_pane(
 
         await wait_for_condition(lambda: app.screen is not modal)
         await wait_for_condition(
-            lambda: file_view.right_viewer.file_path == Path("beta.py")
+            lambda: len(alpha_pane.query(ReviewDiffView)) == EXPECTED_SPLIT_VIEWERS
         )
+        viewers = list(alpha_pane.query(ReviewDiffView))
+        right_viewer = viewers[-1]
 
-        assert file_view.active_viewer is file_view.right_viewer
-        assert file_view.right_viewer.display is True
-        assert app.query_one(ReviewView).active_pane is file_view.right_viewer
+        assert right_viewer.file_path == Path("beta.py")
+        assert app.query_one(ReviewView).active_pane is right_viewer
 
         await pilot.press("q")
         await pilot.pause(0)
 
-        assert file_view.active_viewer is file_view.viewer
-        assert file_view.right_viewer.display is False
+        assert list(alpha_pane.query(ReviewDiffView)) == [viewer]
+        assert app.query_one(ReviewView).active_pane is viewer
 
 
 @pytest.mark.anyio

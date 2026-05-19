@@ -98,7 +98,7 @@ def test_search_project_prioritizes_preferred_file_matches() -> None:
     )
 
     assert matches[0][1]["path"] == Path("changed/views.py")
-    assert matches[0][1]["title"] == "changed/views.py ●"
+    assert matches[0][1]["title"] == "changed/views.py ·"
 
 
 def test_project_search_shows_preferred_files_first_for_empty_query() -> None:
@@ -110,7 +110,7 @@ def test_project_search_shows_preferred_files_first_for_empty_query() -> None:
     )
 
     assert [(item["path"], item["title"]) for item in results] == [
-        (Path("changed.py"), "changed.py ●"),
+        (Path("changed.py"), "changed.py ·"),
         (Path("alpha.py"), "alpha.py"),
         (Path("beta.py"), "beta.py"),
     ]
