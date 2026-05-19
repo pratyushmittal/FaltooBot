@@ -384,7 +384,7 @@ requires-dist = [
     { name = "fast-flights", specifier = ">=2.2" },
     { name = "google-genai", specifier = ">=1.73.1" },
     { name = "google-maps-places", specifier = ">=0.8.0" },
-    { name = "neonize", specifier = ">=0.3.16.post0" },
+    { name = "neonize", specifier = "==0.3.17.post0" },
     { name = "openai", specifier = ">=2.32.0" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "playwright", specifier = ">=1.58.0" },
