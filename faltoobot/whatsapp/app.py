@@ -41,6 +41,9 @@ async def on_exit() -> None:
 
 
 async def _start_polling_notifications() -> None:
+    recovered = notify_queue.recover_processing_notifications()
+    if recovered:
+        logger.warning("Recovered %s stale notify-queue item(s)", recovered)
     while not notifications_stop.is_set():
         for path, notification in notify_queue.claim_notifications(
             lambda item: item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
@@ -78,9 +81,22 @@ async def _start_polling_notifications() -> None:
                             turn=turn,
                         )
             except Exception:
+                logger.exception(
+                    "Notify-queue item %s failed; requeueing and continuing",
+                    notification.get("id", path.name),
+                )
                 notify_queue.requeue_notification(path)
-                raise
+                try:
+                    await asyncio.wait_for(notifications_stop.wait(), timeout=5.0)
+                except TimeoutError:
+                    pass
+                continue
             else:
+                logger.info(
+                    "Handled notify-queue item %s for %s",
+                    notification.get("id", path.name),
+                    notification.get("chat_key"),
+                )
                 notify_queue.ack_notification(path)
         try:
             await asyncio.wait_for(notifications_stop.wait(), timeout=1.0)
