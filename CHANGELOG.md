@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.5.1 — 2026-05-20
+
+### Fixed
+- WebSocket streaming now uses the bundled certificate store to avoid SSL verification failures on macOS Python installs.
+
 ## 6.5.0 — 2026-05-19
 
 ### Added
