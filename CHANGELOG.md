@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.5.2 — 2026-05-20
+
+### Fixed
+- WebSocket streaming now accepts larger response events, avoiding `message too big` disconnects.
+
 ## 6.5.1 — 2026-05-20
 
 ### Fixed
