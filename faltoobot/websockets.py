@@ -32,6 +32,7 @@ from faltoobot.gpt_utils import (
 )
 
 RESPONSES_WEBSOCKET_URL = "wss://api.openai.com/v1/responses"
+WEBSOCKET_MAX_SIZE_BYTES = 16 * 1024 * 1024
 
 
 async def _auth_headers(
@@ -149,6 +150,7 @@ async def streaming_reply(  # noqa: C901, PLR0913
             default_headers,
             _request_extra_headers(config, prompt_cache_key),
         ),
+        max_size=WEBSOCKET_MAX_SIZE_BYTES,
         ssl=ssl.create_default_context(cafile=certifi.where()),
     ) as ws:
         while True:

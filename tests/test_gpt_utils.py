@@ -985,6 +985,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
         {
             "uri": "wss://api.openai.com/v1/responses",
             "additional_headers": {"Authorization": "Bearer test-key"},
+            "max_size": 16 * 1024 * 1024,
         }
     ]
     assert websocket.sent[0]["type"] == "response.create"
@@ -1318,5 +1319,6 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
                 "thread_id": "session-123",
                 "x-client-request-id": "session-123",
             },
+            "max_size": 16 * 1024 * 1024,
         }
     ]
