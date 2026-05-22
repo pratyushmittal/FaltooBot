@@ -471,8 +471,13 @@ class ReviewView(TabPane):
         else:
             await self._add_missing_file_tabs(files)
 
-        # comment: keep the current file active when it still exists after the refresh.
-        if active_path is not None and self.set_active_tab(active_path):
+        # comment: keep the current file active only if the user did not switch tabs while
+        # this async refresh was running.
+        if (
+            active_path is not None
+            and self.active_pane is active_pane
+            and self.set_active_tab(active_path)
+        ):
             # comment: focusing the same viewer again does not fire a new focus event in Textual.
             if self.active_pane is active_pane and self.active_pane is not None:
                 # comment: shutdown can unmount the viewer while this async refresh is still running.
