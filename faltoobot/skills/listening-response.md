@@ -12,16 +12,16 @@ The unique identifier for your current chat is `{chat_key}`.
 The basic interface is:
 
 ```bash
-printf 'Morning news is ready.' | faltoobot notify "{chat_key}" --source="cron:morning-news"
+printf 'Morning news is ready.' | faltoochat notify "{chat_key}" --source="cron:morning-news"
 ```
 
 You can also pass the message inline:
 
 ```bash
-faltoobot notify "{chat_key}" "Morning news is ready." --source="cron:morning-news"
+faltoochat notify "{chat_key}" "Morning news is ready." --source="cron:morning-news"
 ```
 
-If you do not pass a message argument, `faltoobot notify` reads the message body from stdin. Use `--source` to tell the bot why the notification arrived, for example `cron:morning-news`, `sub-agent:log-review`, or `hn-monitor.py`.
+If you do not pass a message argument, `faltoochat notify` reads the message body from stdin. Use `--source` to tell the bot why the notification arrived, for example `cron:morning-news`, `sub-agent:log-review`, or `hn-monitor.py`.
 
 
 ## Cron Job Example
@@ -29,7 +29,7 @@ If you do not pass a message argument, `faltoobot notify` reads the message body
 Send a morning news digest every day at 8 AM:
 
 ```cron
-0 8 * * * cd /path/to/project && faltoochat "Get top news items" --workspace=./morning-news 2>&1 | faltoobot notify "{chat_key}" --source="cron:morning-news"
+0 8 * * * cd /path/to/project && faltoochat "Get top news items" --workspace=./morning-news --notify="{chat_key}" --source="cron:morning-news"
 ```
 
 Other good cron use-cases:
@@ -47,12 +47,14 @@ You can use `faltoochat` both for one-off sub-agent tasks and from cron jobs usi
 
 Spawned subtasks for PRs, reviews, and other coding tasks should prefer background/async execution instead of blocking the main thread.
 
-You can run a background `faltoochat` task and forward its final output back into this chat through `faltoobot notify`.
+You can run a background one-shot `faltoochat` task and notify this chat with `--notify="{chat_key}"`. These notifications include the sub-agent session id, so follow-up questions can continue the sub-agent conversation.
+Use `faltoochat "question" --session-id=<session_id> --notify="{chat_key}"` for the user's and your own follow-up questions on the task.
+`faltoochat --notify` also delivers error notifications; if an error looks transient, ask the sub-agent to retry with the same `--session-id`.
 
 For example, ask it to review a pull request in a separate workspace:
 
 ```bash
-nohup sh -c 'faltoochat "Review this PR: https://github.com/some-org/some-repo/pull/1554 and summarize the main issues." --workspace=./pr-review --new-session 2>&1 | faltoobot notify "{chat_key}" --source="sub-agent:pr-review"' &
+nohup faltoochat "Review this PR: https://github.com/some-org/some-repo/pull/1554 and summarize the main issues." --workspace=./pr-review --new-session --notify="{chat_key}" --source="sub-agent:pr-review" &
 ```
 
 ## Python API Example
@@ -74,6 +76,7 @@ PY
 ## Practical Reminders
 
 - Use `nohup ... &` when launching background work from the shell.
+- Use `--notify="{chat_key}"` for one-shot sub-agent tasks so session metadata and stderr are preserved.
 - Put `2>&1` before the pipe when you also want stderr to reach `faltoobot notify`.
 - Include enough detail in the notification message so you can act on it when it arrives.
 - Prefer notifications for async completion or monitoring events; prefer normal chat turns for immediate back-and-forth.

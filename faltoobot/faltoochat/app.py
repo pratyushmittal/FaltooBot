@@ -1,5 +1,9 @@
 import argparse
 import asyncio
+import os
+import sys
+import tempfile
+import traceback
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, Iterable
@@ -923,7 +927,26 @@ def _workspace_from_args(workspace: str | None) -> Path:
     return path
 
 
+def _parse_notify_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="faltoochat notify")
+    parser.add_argument("chat_key", help="chat key to notify")
+    parser.add_argument(
+        "message", nargs="?", help="notification message, or read from stdin"
+    )
+    parser.add_argument(
+        "--source",
+        default="notify",
+        help="identifier explaining why this notification was sent",
+    )
+    args = parser.parse_args(sys.argv[2:])
+    args.command = "notify"
+    return args
+
+
 def parse_args() -> argparse.Namespace:
+    if sys.argv[1:2] == ["notify"]:
+        return _parse_notify_args()
+
     parser = argparse.ArgumentParser(prog="faltoochat")
     parser.add_argument(
         "--version",
@@ -931,21 +954,74 @@ def parse_args() -> argparse.Namespace:
         version=f"%(prog)s {package_version('faltoobot')}",
     )
     parser.add_argument("prompt", nargs="?", help="optional prompt to submit on launch")
-    parser.add_argument(
+    session_group = parser.add_mutually_exclusive_group()
+    session_group.add_argument(
         "--new-session",
         action="store_true",
         help="start a fresh session",
     )
+    session_group.add_argument(
+        "--session-id",
+        help="resume an existing session id",
+    )
     parser.add_argument("--workspace", help="workspace path to use for this chat")
+    parser.add_argument("--notify", help="enqueue one-shot output for this chat key")
+    parser.add_argument(
+        "--source",
+        help="notification source to use with --notify",
+    )
+    args = parser.parse_args()
+    args.command = "chat"
+    return args
 
-    return parser.parse_args()
+
+def _run_one_shot_with_stderr(
+    session: sessions.Session, prompt: str
+) -> tuple[str, str, bool]:
+    saved_stderr = os.dup(2)
+    output = ""
+    failed = False
+    with tempfile.TemporaryFile() as stderr_file:
+        try:
+            sys.stderr.flush()
+            os.dup2(stderr_file.fileno(), 2)
+            try:
+                output = asyncio.run(_run_one_shot(session, prompt))
+            except Exception:
+                failed = True
+                os.write(2, traceback.format_exc().encode("utf-8"))
+            finally:
+                sys.stderr.flush()
+        finally:
+            os.dup2(saved_stderr, 2)
+            os.close(saved_stderr)
+        stderr_file.seek(0)
+        stderr = stderr_file.read().decode("utf-8", errors="replace").strip()
+        return output, stderr, failed
 
 
 def main() -> int:
     args = parse_args()
+    if args.command == "notify":
+        message = notify_queue.parse_message(args.message, sys.stdin)
+        notification_id = notify_queue.enqueue_notification(
+            args.chat_key,
+            message,
+            source=str(args.source),
+        )
+        print(notification_id)
+        return 0
+
     workspace = _workspace_from_args(args.workspace)
-    session_id = str(uuid4()) if args.new_session else None
+    session_id = str(uuid4()) if args.new_session else args.session_id
     chat_key = sessions.get_dir_chat_key(workspace, is_sub_agent=bool(args.prompt))
+    if args.session_id:
+        try:
+            exists = sessions.Session(chat_key, args.session_id).messages_path.exists()
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if not exists:
+            raise SystemExit(f"Session not found: {args.session_id}")
     session = sessions.get_session(
         chat_key=chat_key,
         session_id=session_id,
@@ -953,6 +1029,22 @@ def main() -> int:
     )
     try:
         if args.prompt:
+            if args.notify:
+                output, stderr, failed = _run_one_shot_with_stderr(session, args.prompt)
+                message = output.strip()
+                if stderr:
+                    message = (
+                        f"{message}\n\n## stderr\n{stderr}"
+                        if message
+                        else f"## stderr\n{stderr}"
+                    )
+                notify_queue.enqueue_notification(
+                    args.notify,
+                    message or "(no output)",
+                    source=args.source or "sub-agent:faltoochat",
+                    session_id=session.session_id,
+                )
+                return 1 if failed else 0
             output = asyncio.run(_run_one_shot(session, args.prompt))
             if output:
                 print(output)
