@@ -3,7 +3,7 @@ from pathlib import Path
 from faltoobot import changelog
 
 
-def test_private_changelog_between_returns_matching_versions(
+def test_changelog_between_returns_matching_versions(
     tmp_path: Path, monkeypatch
 ) -> None:
     path = tmp_path / "CHANGELOG.md"
@@ -17,7 +17,7 @@ def test_private_changelog_between_returns_matching_versions(
     )
     monkeypatch.setattr(changelog, "_changelog_path", lambda: path)
 
-    assert changelog._changelog_between("6.0.0", "6.1.0") == (
+    assert changelog.changelog_between("6.0.0", "6.1.0") == (
         "## 6.1.0 — 2026-05-09\n\n### Changed\n- New thing"
     )
 

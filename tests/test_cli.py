@@ -177,6 +177,7 @@ def test_run_update_command_records_original_version_after_reexec(
     config = make_config(tmp_path)
     versions = iter(["6.1.0", "6.1.0"])
     recorded_updates: list[tuple[str, str]] = []
+    notifications: list[dict[str, object]] = []
 
     monkeypatch.setenv(cli.PREVIOUS_VERSION_ENV, "6.0.0")
     monkeypatch.setattr(cli, "build_config", lambda: config)
@@ -189,10 +190,29 @@ def test_run_update_command_records_original_version_after_reexec(
     monkeypatch.setattr(
         cli, "record_update", lambda old, new: recorded_updates.append((old, new))
     )
+    monkeypatch.setattr(
+        cli, "changelog_between", lambda old, new: "## 6.1.0\n- Added thing"
+    )
+    monkeypatch.setattr(
+        cli.notify_queue,
+        "enqueue_notification",
+        lambda chat_key, message, **kwargs: (
+            notifications.append({"chat_key": chat_key, "message": message, **kwargs})
+            or "notify-1"
+        ),
+    )
 
     result = cli.run_update_command(config)
 
     assert recorded_updates == [("6.0.0", "6.1.0")]
+    assert notifications == [
+        {
+            "chat_key": "global",
+            "message": "## 6.1.0\n- Added thing",
+            "source": "update:faltoobot",
+            "global_notification": True,
+        }
+    ]
     assert cli.PREVIOUS_VERSION_ENV not in cli.os.environ
     assert result == config
 

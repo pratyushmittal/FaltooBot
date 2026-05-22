@@ -64,43 +64,65 @@ async def on_exit() -> None:
     await client.stop()
 
 
+async def _process_notification_for_chat(
+    chat_key: str, notification: notify_queue.Notification
+) -> None:
+    user, server = chat_key.split("@", 1)
+    # comment: notify-queue items only store the string chat key. We rebuild the
+    # JID object here because typing presence and the final reply both need it.
+    chat_jid = build_jid(user, server)
+    async with chat_locks[chat_key]:
+        session = get_session(chat_key=chat_key)
+        turn: runtime.Turn = {
+            "event": None,
+            "chat": chat_jid,
+            "message_ids": [notification["id"]],
+            "prompt": notify_queue.format_notification_message(notification),
+            "quoted_message_text": "",
+            "attachments": [],
+            "audio": None,
+        }
+        stored = await append_user_turn(
+            session,
+            question=turn["prompt"],
+            attachments=turn["attachments"] or None,
+            message_ids=turn["message_ids"],
+        )
+        if stored:
+            await runtime.process_turn_locked(
+                client,
+                session,
+                config=config,
+                turn=turn,
+            )
+
+
 async def _start_polling_notifications() -> None:
     while not notifications_stop.is_set():
         for path, notification in notify_queue.claim_notifications(
-            lambda item: item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
+            lambda item: (
+                bool(item.get("is_global"))
+                or item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
+            )
         ):
             try:
-                chat_key = notification["chat_key"]
-                user, server = chat_key.split("@", 1)
-                # comment: notify-queue items only store the string chat key. We rebuild the
-                # JID object here because typing presence and the final reply both need it.
-                chat_jid = build_jid(user, server)
-                async with chat_locks[chat_key]:
-                    session = get_session(chat_key=chat_key)
-                    turn: runtime.Turn = {
-                        "event": None,
-                        "chat": chat_jid,
-                        "message_ids": [notification["id"]],
-                        "prompt": notify_queue.format_notification_message(
-                            notification
-                        ),
-                        "quoted_message_text": "",
-                        "attachments": [],
-                        "audio": None,
-                    }
-                    stored = await append_user_turn(
-                        session,
-                        question=turn["prompt"],
-                        attachments=turn["attachments"] or None,
-                        message_ids=turn["message_ids"],
+                targets = [notification["chat_key"]]
+                if notification.get("is_global"):
+                    saved_chats = (
+                        {
+                            item.name
+                            for item in config.sessions_dir.iterdir()
+                            if item.is_dir()
+                            and item.name.endswith(("@lid", "@s.whatsapp.net", "@g.us"))
+                        }
+                        if config.sessions_dir.exists()
+                        else set()
                     )
-                    if stored:
-                        await runtime.process_turn_locked(
-                            client,
-                            session,
-                            config=config,
-                            turn=turn,
-                        )
+                    targets = sorted(
+                        config.allow_group_chats | config.allowed_chats | saved_chats
+                    )
+                for chat_key in targets:
+                    await _process_notification_for_chat(chat_key, notification)
             except Exception:
                 notify_queue.requeue_notification(path)
                 raise

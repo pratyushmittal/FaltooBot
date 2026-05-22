@@ -111,3 +111,25 @@ def test_format_notification_message_includes_session_id() -> None:
     assert "session_id: session-1" in message
     assert "follow-up" not in message
     assert "--session-id" not in message
+
+
+def test_notify_queue_preserves_global_flag(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+
+    notify_queue.enqueue_notification("global", "updated", global_notification=True)
+    claimed = notify_queue.claim_notifications(lambda item: bool(item.get("is_global")))
+
+    assert len(claimed) == 1
+    assert claimed[0][1]["is_global"] is True
+
+
+def test_notify_queue_rejects_non_bool_global(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+    pending = tmp_path / ".faltoobot" / "notify-queue" / "pending"
+    pending.mkdir(parents=True)
+    (pending / "notify.json").write_text(
+        '{"id":"notify_1","chat_key":"global","message":"hi","created_at":"now","is_global":"yes"}\n',
+        encoding="utf-8",
+    )
+
+    assert notify_queue.claim_notifications(lambda item: True) == []

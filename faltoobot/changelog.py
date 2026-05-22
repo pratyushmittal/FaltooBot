@@ -56,7 +56,7 @@ def _section_version(line: str) -> str | None:
     return value or None
 
 
-def _changelog_between(previous_version: str, current_version: str) -> str:
+def changelog_between(previous_version: str, current_version: str) -> str:
     path = _changelog_path()
     if path is None:
         return f"Updated Faltoobot from {previous_version} to {current_version}."
@@ -116,4 +116,4 @@ def consume_changelog_update() -> str:
     current = data.get("current_version") if isinstance(data, dict) else None
     if not isinstance(previous, str) or not isinstance(current, str):
         return ""
-    return _changelog_between(previous, current)
+    return changelog_between(previous, current)

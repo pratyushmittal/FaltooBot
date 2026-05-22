@@ -2600,3 +2600,82 @@ async def test_send_text_keeps_non_standalone_media_markdown_as_text(
     assert client.sent_messages == expected_messages
     assert client.sent_images == []
     assert client.sent_documents == []
+
+
+@pytest.mark.anyio
+async def test_start_polling_global_notification_targets_configured_whatsapp_chats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored: list[str] = []
+    processed: list[str] = []
+    expected_targets = 3
+
+    monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
+    monkeypatch.setattr(
+        whatsapp_app,
+        "config",
+        make_config(
+            tmp_path,
+            allowed_chats={"15555550123@s.whatsapp.net"},
+            allow_group_chats={"120363000000000000@g.us"},
+        ),
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    (
+        tmp_path / "home" / ".faltoobot" / "sessions" / "19999999999@s.whatsapp.net"
+    ).mkdir(parents=True)
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "claim_notifications",
+        lambda matches: [
+            (
+                tmp_path / "notify.json",
+                {
+                    "id": "notify_1",
+                    "chat_key": "global",
+                    "message": "Faltoobot updated",
+                    "created_at": "2026-04-05T00:00:00+00:00",
+                    "is_global": True,
+                },
+            )
+        ],
+    )
+
+    async def fake_store_turn_locked(*args: object, **kwargs: Any) -> bool:
+        stored.append(str(kwargs["question"]))
+        return True
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+        processed.append(Jid2String(cast(runtime.Turn, kwargs["turn"])["chat"]))
+        if len(processed) == expected_targets:
+            whatsapp_app.notifications_stop.set()
+
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "ack_notification",
+        lambda path: processed.append("ack"),
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "requeue_notification",
+        lambda path: processed.append("requeue"),
+    )
+
+    await whatsapp_app._start_polling_notifications()
+
+    assert stored == [
+        "# Background update\n\n## message\nFaltoobot updated",
+        "# Background update\n\n## message\nFaltoobot updated",
+        "# Background update\n\n## message\nFaltoobot updated",
+    ]
+    assert processed == [
+        "120363000000000000@g.us",
+        "15555550123@s.whatsapp.net",
+        "19999999999@s.whatsapp.net",
+        "ack",
+    ]
