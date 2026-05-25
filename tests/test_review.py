@@ -728,6 +728,7 @@ async def test_review_grep_opens_modal_and_jumps_to_selected_line(
         await pilot.pause(0)
 
         await wait_for_condition(lambda: app.screen is not modal)
+        await wait_for_workers(app, pilot)
         await wait_for_condition(lambda: viewer.cursor_location == (6, 0))
 
         assert app.query_one("#review-tabs", TabbedContent).active == (

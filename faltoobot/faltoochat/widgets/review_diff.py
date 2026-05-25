@@ -193,9 +193,6 @@ class ReviewDiffView(TextArea):
             return 0
         return super().gutter_width + 1
 
-    def on_show(self, _event: events.Show) -> None:
-        self.focus()
-
     def on_focus(self, _event: events.Focus) -> None:
         self.review_view.active_pane = self
         self.app.run_worker(
