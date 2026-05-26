@@ -1,3 +1,5 @@
+import os
+import time
 from pathlib import Path
 
 from faltoobot import notify_queue
@@ -43,6 +45,25 @@ def test_notify_queue_requeues_claimed_notifications(
     )
     assert len(claimed_again) == 1
     notify_queue.ack_notification(claimed_again[0][0])
+
+
+def test_recover_processing_notifications_only_recovers_stale_items(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+    notify_queue.enqueue_notification("code@demo", "old")
+    old_path, _old = notify_queue.claim_notifications(lambda _item: True)[0]
+    old_mtime = time.time() - 600
+    os.utime(old_path, (old_mtime, old_mtime))
+
+    notify_queue.enqueue_notification("code@demo", "fresh")
+    fresh_path, _fresh = notify_queue.claim_notifications(lambda _item: True)[0]
+
+    assert notify_queue.recover_processing_notifications(older_than_seconds=300) == 1
+
+    recovered = notify_queue.claim_notifications(lambda item: item["message"] == "old")
+    assert len(recovered) == 1
+    assert fresh_path.exists()
 
 
 def test_format_notification_message_uses_expected_layout() -> None:

@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from time import time
 from pathlib import Path
 from typing import NotRequired, TextIO, TypedDict
 from uuid import uuid4
@@ -132,6 +133,32 @@ def claim_notifications(
             continue
         claimed.append((claimed_path, claimed_notification))
     return claimed
+
+
+def recover_processing_notifications(*, older_than_seconds: float = 300.0) -> int:
+    """Move stale claimed notifications back to pending."""
+    processing = _processing_dir()
+    if not processing.is_dir():
+        # comment: normal before the first notification is claimed.
+        return 0
+
+    pending = _pending_dir()
+    pending.mkdir(parents=True, exist_ok=True)
+    cutoff = time() - older_than_seconds
+    recovered = 0
+
+    for path in sorted(processing.glob("*.json")):
+        try:
+            if path.stat().st_mtime > cutoff:
+                # comment: a live poller may still be handling recently claimed files.
+                continue
+            path.replace(pending / path.name)
+        except OSError:
+            # comment: queue files can disappear or be temporarily inaccessible.
+            continue
+        recovered += 1
+
+    return recovered
 
 
 def ack_notification(path: Path) -> None:
