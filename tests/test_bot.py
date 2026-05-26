@@ -2611,12 +2611,12 @@ async def test_send_text_keeps_non_standalone_media_markdown_as_text(
 
 
 @pytest.mark.anyio
-async def test_start_polling_global_notification_targets_configured_whatsapp_chats(
+async def test_start_polling_global_notification_targets_allowed_chats(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stored: list[str] = []
     processed: list[str] = []
-    expected_targets = 3
+    expected_targets = 1
 
     monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
     monkeypatch.setattr(
@@ -2644,7 +2644,6 @@ async def test_start_polling_global_notification_targets_configured_whatsapp_cha
                     "chat_key": "global",
                     "message": "Faltoobot updated",
                     "created_at": "2026-04-05T00:00:00+00:00",
-                    "is_global": True,
                 },
             )
         ],
@@ -2676,14 +2675,5 @@ async def test_start_polling_global_notification_targets_configured_whatsapp_cha
 
     await whatsapp_app._start_polling_notifications()
 
-    assert stored == [
-        "# Background update\n\n## message\nFaltoobot updated",
-        "# Background update\n\n## message\nFaltoobot updated",
-        "# Background update\n\n## message\nFaltoobot updated",
-    ]
-    assert processed == [
-        "120363000000000000@g.us",
-        "15555550123@s.whatsapp.net",
-        "19999999999@s.whatsapp.net",
-        "ack",
-    ]
+    assert stored == ["# Background update\n\n## message\nFaltoobot updated"]
+    assert processed == ["15555550123@s.whatsapp.net", "ack"]

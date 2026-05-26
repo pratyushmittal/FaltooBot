@@ -24,6 +24,7 @@ def test_changelog_between_returns_matching_versions(
 
 def test_record_and_consume_changelog_update(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / ".faltoobot"
+    notifications: list[dict[str, object]] = []
     path = tmp_path / "CHANGELOG.md"
     path.write_text(
         "# Changelog\n\n## 6.1.0 — 2026-05-09\n\n- Updated\n",
@@ -31,9 +32,24 @@ def test_record_and_consume_changelog_update(tmp_path: Path, monkeypatch) -> Non
     )
     monkeypatch.setattr(changelog, "app_root", lambda: root)
     monkeypatch.setattr(changelog, "_changelog_path", lambda: path)
+    monkeypatch.setattr(
+        changelog.notify_queue,
+        "enqueue_notification",
+        lambda chat_key, message, **kwargs: (
+            notifications.append({"chat_key": chat_key, "message": message, **kwargs})
+            or "notify-1"
+        ),
+    )
 
     changelog.record_update("6.0.0", "6.1.0")
 
+    assert notifications == [
+        {
+            "chat_key": "global",
+            "message": "## 6.1.0 — 2026-05-09\n\n- Updated",
+            "source": "faltoobot update",
+        }
+    ]
     assert "## 6.1.0" in changelog.consume_changelog_update()
     assert changelog.consume_changelog_update() == ""
 

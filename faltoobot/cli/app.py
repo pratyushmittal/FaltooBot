@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.text import Text
 
 from faltoobot import notify_queue
-from faltoobot.changelog import changelog_between, record_update
+from faltoobot.changelog import record_update
 from faltoobot.cli import browser as browser_runtime
 from faltoobot.config import (
     APP_LABEL,
@@ -536,13 +536,6 @@ def run_update_command(config: Config | None = None) -> Config | None:
         config, previous_version=upgrade_from_version, current_version=current_version
     )
     record_update(upgrade_from_version, current_version)
-    if upgrade_from_version != current_version:
-        notify_queue.enqueue_notification(
-            "global",
-            changelog_between(upgrade_from_version, current_version),
-            source="update:faltoobot",
-            global_notification=True,
-        )
     final_config = build_config()
 
     # comment: reinstall stops the old service, rewrites files, then starts it again.

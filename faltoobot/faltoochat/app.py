@@ -927,26 +927,36 @@ def _workspace_from_args(workspace: str | None) -> Path:
     return path
 
 
-def _parse_notify_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="faltoochat notify")
-    parser.add_argument("chat_key", help="chat key to notify")
-    parser.add_argument(
-        "message", nargs="?", help="notification message, or read from stdin"
-    )
-    parser.add_argument(
-        "--source",
-        default="notify",
-        help="identifier explaining why this notification was sent",
-    )
-    args = parser.parse_args(sys.argv[2:])
-    args.command = "notify"
-    return args
+def _find_session_by_id(session_id: str) -> sessions.Session | None:
+    try:
+        sessions.Session("session-check", session_id)
+    except ValueError as exc:
+        # comment: session id comes from CLI input and must be a safe path segment.
+        raise SystemExit(str(exc)) from exc
+
+    root = sessions.app_root() / "sessions"
+    if not root.exists():
+        # comment: missing sessions are normal when a stale follow-up id is reused.
+        return None
+    matches = []
+    for chat_root in root.iterdir():
+        if not chat_root.is_dir():
+            # comment: session roots are directories; skip stray files safely.
+            continue
+        messages_path = chat_root / session_id / sessions.MESSAGES_FILE
+        if messages_path.exists():
+            matches.append(messages_path)
+    matches.sort()
+    if not matches:
+        # comment: missing sessions are normal when a stale follow-up id is reused.
+        return None
+    if len(matches) > 1:
+        # comment: named sessions can collide across workspaces; --workspace disambiguates.
+        raise SystemExit(f"Session id is ambiguous: {session_id}. Pass --workspace.")
+    return sessions.Session(matches[0].parents[1].name, session_id)
 
 
 def parse_args() -> argparse.Namespace:
-    if sys.argv[1:2] == ["notify"]:
-        return _parse_notify_args()
-
     parser = argparse.ArgumentParser(prog="faltoochat")
     parser.add_argument(
         "--version",
@@ -965,23 +975,25 @@ def parse_args() -> argparse.Namespace:
         help="resume an existing session id",
     )
     parser.add_argument("--workspace", help="workspace path to use for this chat")
-    parser.add_argument("--notify", help="enqueue one-shot output for this chat key")
+    parser.add_argument(
+        "--notify",
+        help="send one-shot output to this chat key instead of printing it",
+    )
     parser.add_argument(
         "--source",
         help="notification source to use with --notify",
     )
-    args = parser.parse_args()
-    args.command = "chat"
-    return args
+    return parser.parse_args()
 
 
 def _run_one_shot_with_stderr(
     session: sessions.Session, prompt: str
 ) -> tuple[str, str, bool]:
-    saved_stderr = os.dup(2)
+    """Run one-shot chat and capture fd-level stderr for --notify output."""
     output = ""
     failed = False
     with tempfile.TemporaryFile() as stderr_file:
+        saved_stderr = os.dup(2)
         try:
             sys.stderr.flush()
             os.dup2(stderr_file.fileno(), 2)
@@ -995,38 +1007,55 @@ def _run_one_shot_with_stderr(
         finally:
             os.dup2(saved_stderr, 2)
             os.close(saved_stderr)
+
         stderr_file.seek(0)
         stderr = stderr_file.read().decode("utf-8", errors="replace").strip()
         return output, stderr, failed
 
 
-def main() -> int:
-    args = parse_args()
-    if args.command == "notify":
-        message = notify_queue.parse_message(args.message, sys.stdin)
-        notification_id = notify_queue.enqueue_notification(
-            args.chat_key,
-            message,
-            source=str(args.source),
+def _validate_notify_args(args: argparse.Namespace) -> None:
+    if args.notify and not args.prompt:
+        # comment: --notify only has output to send in one-shot prompt mode.
+        raise SystemExit("--notify requires a prompt")
+    if args.source and not args.notify:
+        # comment: --source only annotates queued notifications.
+        raise SystemExit("--source requires --notify")
+
+
+def _session_from_args(args: argparse.Namespace) -> sessions.Session:
+    session_id = str(uuid4()) if args.new_session else args.session_id
+    if args.session_id and args.workspace is None:
+        session_ref = _find_session_by_id(args.session_id)
+        if session_ref is None:
+            # comment: stale follow-up ids should fail before creating a new session.
+            raise SystemExit(f"Session not found: {args.session_id}")
+        return sessions.get_session(
+            chat_key=session_ref.chat_key,
+            session_id=session_ref.session_id,
         )
-        print(notification_id)
-        return 0
 
     workspace = _workspace_from_args(args.workspace)
-    session_id = str(uuid4()) if args.new_session else args.session_id
     chat_key = sessions.get_dir_chat_key(workspace, is_sub_agent=bool(args.prompt))
     if args.session_id:
         try:
             exists = sessions.Session(chat_key, args.session_id).messages_path.exists()
         except ValueError as exc:
+            # comment: session id comes from CLI input and must be a safe path segment.
             raise SystemExit(str(exc)) from exc
         if not exists:
+            # comment: --workspace pins which chat root should contain the session.
             raise SystemExit(f"Session not found: {args.session_id}")
-    session = sessions.get_session(
+    return sessions.get_session(
         chat_key=chat_key,
         session_id=session_id,
         workspace=workspace,
     )
+
+
+def main() -> int:
+    args = parse_args()
+    _validate_notify_args(args)
+    session = _session_from_args(args)
     try:
         if args.prompt:
             if args.notify:

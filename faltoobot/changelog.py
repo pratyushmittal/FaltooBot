@@ -2,6 +2,8 @@ import json
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from urllib.request import urlopen
+
+from faltoobot import notify_queue
 from faltoobot.config import app_root
 from faltoobot.migrate import _version_tuple
 
@@ -100,6 +102,11 @@ def record_update(previous_version: str, current_version: str) -> None:
         )
         + "\n",
         encoding="utf-8",
+    )
+    notify_queue.enqueue_notification(
+        "global",
+        changelog_between(previous_version, current_version),
+        source="faltoobot update",
     )
 
 

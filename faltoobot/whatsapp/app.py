@@ -101,26 +101,14 @@ async def _start_polling_notifications() -> None:
     while not notifications_stop.is_set():
         for path, notification in notify_queue.claim_notifications(
             lambda item: (
-                bool(item.get("is_global"))
+                item["chat_key"] == "global"
                 or item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
             )
         ):
             try:
                 targets = [notification["chat_key"]]
-                if notification.get("is_global"):
-                    saved_chats = (
-                        {
-                            item.name
-                            for item in config.sessions_dir.iterdir()
-                            if item.is_dir()
-                            and item.name.endswith(("@lid", "@s.whatsapp.net", "@g.us"))
-                        }
-                        if config.sessions_dir.exists()
-                        else set()
-                    )
-                    targets = sorted(
-                        config.allow_group_chats | config.allowed_chats | saved_chats
-                    )
+                if notification["chat_key"] == "global":
+                    targets = sorted(config.allowed_chats)
                 for chat_key in targets:
                     await _process_notification_for_chat(chat_key, notification)
             except Exception:

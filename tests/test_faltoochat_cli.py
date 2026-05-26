@@ -188,6 +188,53 @@ def test_faltoochat_session_id_uses_existing_session(
     assert seen["session_id"] == "session-1"
 
 
+def test_faltoochat_session_id_without_workspace_finds_saved_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    app_root = tmp_path / "home"
+    messages_path = (
+        app_root / "sessions/sub-agent@project-abc123/session-1/messages.json"
+    )
+    messages_path.parent.mkdir(parents=True)
+    messages_path.write_text("{}", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(chat_app.sessions, "app_root", lambda: app_root)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "faltoochat",
+            "Follow up",
+            "--session-id=session-1",
+        ],
+    )
+    monkeypatch.setattr(
+        chat_app.sessions,
+        "get_session",
+        lambda *, chat_key, session_id=None, workspace=None: (
+            seen.update(
+                {"chat_key": chat_key, "session_id": session_id, "workspace": workspace}
+            )
+            or SimpleNamespace(chat_key=chat_key, session_id=session_id)
+        ),
+    )
+
+    async def fake_run_one_shot(session, prompt: str) -> str:
+        return "Follow-up answer."
+
+    monkeypatch.setattr(chat_app, "_run_one_shot", fake_run_one_shot)
+
+    assert chat_app.main() == 0
+    assert seen == {
+        "chat_key": "sub-agent@project-abc123",
+        "session_id": "session-1",
+        "workspace": None,
+    }
+
+
 def test_faltoochat_session_id_fails_when_missing(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     messages_path = tmp_path / "missing.json"
@@ -217,28 +264,26 @@ def test_faltoochat_session_id_fails_when_missing(tmp_path: Path, monkeypatch) -
         raise AssertionError("expected SystemExit")
 
 
-def test_faltoochat_notify_command_enqueues_notification(monkeypatch, capsys) -> None:
-    enqueued: list[dict[str, object]] = []
+def test_faltoochat_notify_requires_prompt(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["faltoochat", "--notify=code@main"])
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["faltoochat", "notify", "code@main", "hello", "--source=script:test"],
-    )
-    monkeypatch.setattr(
-        chat_app.notify_queue,
-        "enqueue_notification",
-        lambda chat_key, message, **kwargs: (
-            enqueued.append({"chat_key": chat_key, "message": message, **kwargs})
-            or "notify-1"
-        ),
-    )
+    try:
+        chat_app.main()
+    except SystemExit as exc:
+        assert str(exc) == "--notify requires a prompt"
+    else:
+        raise AssertionError("expected SystemExit")
 
-    assert chat_app.main() == 0
-    assert enqueued == [
-        {"chat_key": "code@main", "message": "hello", "source": "script:test"}
-    ]
-    assert capsys.readouterr().out.strip() == "notify-1"
+
+def test_faltoochat_source_requires_notify(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["faltoochat", "Prompt", "--source=cron:test"])
+
+    try:
+        chat_app.main()
+    except SystemExit as exc:
+        assert str(exc) == "--source requires --notify"
+    else:
+        raise AssertionError("expected SystemExit")
 
 
 def test_faltoochat_notify_includes_fd_stderr(

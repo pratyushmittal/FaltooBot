@@ -989,7 +989,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
                 "OpenAI-Beta": "responses_websockets=2026-02-06",
             },
             "max_size": 16 * 1024 * 1024,
-            "open_timeout": 15.0,
+            "open_timeout": 60.0,
         }
     ]
     assert websocket.sent[0]["type"] == "response.create"
@@ -1325,6 +1325,6 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
                 "x-client-request-id": "session-123",
             },
             "max_size": 16 * 1024 * 1024,
-            "open_timeout": 15.0,
+            "open_timeout": 60.0,
         }
     ]
