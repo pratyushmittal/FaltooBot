@@ -87,8 +87,8 @@ def _request_extra_headers(
     if not uses_chatgpt_oauth(config):
         return None
     return {
-        "session_id": prompt_cache_key,
-        "thread_id": prompt_cache_key,
+        "session-id": prompt_cache_key,
+        "thread-id": prompt_cache_key,
         "x-client-request-id": prompt_cache_key,
     }
 

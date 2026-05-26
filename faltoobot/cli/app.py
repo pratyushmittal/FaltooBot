@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ctypes.util
 import os
 import plistlib
 import shlex
@@ -42,6 +43,9 @@ LOG_STYLES = {
 LINUX_SERVICE_NAME = "faltoobot.service"
 SERVICE_COMMAND = "whatsapp-service"
 PREVIOUS_VERSION_ENV = "FALTOOBOT_PREVIOUS_VERSION"
+LINUX_LIBMAGIC_PACKAGE = "libmagic1"
+DARWIN_LIBMAGIC_PACKAGE = "libmagic"
+
 CRONTAB_DEFAULT_PATH_PARTS = [
     "/usr/bin",
     "/bin",
@@ -66,6 +70,56 @@ def _uv_bin() -> str:
 def _run_cmd(*args: str) -> None:
     """Run a command and stream its output directly to the terminal."""
     subprocess.run(list(args), check=True, text=True)
+
+
+def _sudo_prefix() -> list[str] | None:
+    if os.geteuid() == 0:
+        # comment: root can install system packages without sudo.
+        return []
+    sudo = shutil.which("sudo")
+    if not sudo:
+        # comment: minimal servers/containers may not include sudo.
+        return None
+    result = _run_capture(sudo, "-n", "true", check=False)
+    return [sudo, "-n"] if result.returncode == 0 else None
+
+
+def _install_with_apt(package: str) -> None:
+    prefix = _sudo_prefix()
+    if prefix is None:
+        # comment: avoid prompting for sudo password from update/service setup.
+        raise SystemExit(
+            f"Install system dependency manually: sudo apt-get install -y {package}"
+        )
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    subprocess.run([*prefix, "apt-get", "update"], check=True, text=True, env=env)
+    subprocess.run(
+        [*prefix, "apt-get", "install", "-y", package], check=True, text=True, env=env
+    )
+
+
+def _install_with_brew(package: str) -> None:
+    brew = shutil.which("brew")
+    if not brew:
+        # comment: macOS installs need Homebrew unless the user installs libmagic manually.
+        raise SystemExit(f"Install system dependency manually: brew install {package}")
+    _run_cmd(brew, "install", package)
+
+
+def _ensure_system_dependencies() -> list[str]:
+    if ctypes.util.find_library("magic"):
+        # comment: python-magic can import when the shared libmagic library is present.
+        return []
+    if sys.platform == "linux" and shutil.which("apt-get"):
+        _install_with_apt(LINUX_LIBMAGIC_PACKAGE)
+        return [LINUX_LIBMAGIC_PACKAGE]
+    if sys.platform == "darwin":
+        _install_with_brew(DARWIN_LIBMAGIC_PACKAGE)
+        return [DARWIN_LIBMAGIC_PACKAGE]
+    raise SystemExit(
+        "Missing system dependency: libmagic. "
+        f"On Ubuntu/Debian, run `sudo apt-get install -y {LINUX_LIBMAGIC_PACKAGE}`."
+    )
 
 
 def _reexec_current_command() -> NoReturn:
@@ -464,7 +518,13 @@ def run_update_command(config: Config | None = None) -> Config | None:
         _reexec_current_command()
         return None
 
-    console.print("[dim]No required system dependencies to install.[/]")
+    system_changes = _ensure_system_dependencies()
+    if system_changes:
+        console.print(
+            f"[green]Installed system dependencies:[/] {', '.join(system_changes)}"
+        )
+    else:
+        console.print("[dim]No required system dependencies to install.[/]")
 
     # comment: build_config creates ~/.faltoobot/config.toml with defaults when missing.
     config = build_config()

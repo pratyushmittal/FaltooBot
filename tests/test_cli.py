@@ -106,6 +106,46 @@ def test_run_systemctl_sets_runtime_dir(monkeypatch) -> None:
     assert runtime_dir == f"/run/user/{cli.os.getuid()}"
 
 
+def test_ensure_system_dependencies_installs_libmagic_on_linux(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(cli.ctypes.util, "find_library", lambda name: None)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: "/usr/bin/apt-get" if name == "apt-get" else None,
+    )
+    monkeypatch.setattr(cli, "_install_with_apt", lambda package: calls.append(package))
+
+    assert cli._ensure_system_dependencies() == ["libmagic1"]
+    assert calls == ["libmagic1"]
+
+
+def test_ensure_system_dependencies_skips_when_libmagic_exists(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.ctypes.util, "find_library", lambda name: "/usr/lib/libmagic.so"
+    )
+
+    assert cli._ensure_system_dependencies() == []
+
+
+def test_ensure_system_dependencies_explains_manual_linux_install(monkeypatch) -> None:
+    monkeypatch.setattr(cli.ctypes.util, "find_library", lambda name: None)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    try:
+        cli._ensure_system_dependencies()
+    except SystemExit as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected SystemExit")
+
+    assert "libmagic" in message
+    assert "sudo apt-get install -y libmagic1" in message
+
+
 def test_render_log_line_uses_level_colors() -> None:
     assert cli._render_log_line("2026-03-17 INFO faltoobot: ok").style == "cyan"
     assert (
@@ -131,6 +171,7 @@ def test_run_update_command_upgrades_then_bootstraps(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     crontab: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_crontab_path", lambda: crontab.append("ran") or True
@@ -172,6 +213,7 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     reinstalls: list[str] = []
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
@@ -206,6 +248,7 @@ def test_run_update_command_records_original_version_after_reexec(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
     monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
     monkeypatch.setattr(cli, "_service_installed", lambda config: False)
@@ -289,6 +332,7 @@ def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
     monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
     monkeypatch.setattr(cli, "_service_installed", lambda config: False)

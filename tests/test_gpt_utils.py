@@ -704,8 +704,8 @@ async def test_get_streaming_reply_adds_codex_session_headers_for_oauth(
 
     assert client.responses.calls[0]["prompt_cache_key"] == "session-123"
     assert client.responses.calls[0]["extra_headers"] == {
-        "session_id": "session-123",
-        "thread_id": "session-123",
+        "session-id": "session-123",
+        "thread-id": "session-123",
         "x-client-request-id": "session-123",
     }
     assert client.closed is True
@@ -984,8 +984,12 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     assert connect_calls == [
         {
             "uri": "wss://api.openai.com/v1/responses",
-            "additional_headers": {"Authorization": "Bearer test-key"},
+            "additional_headers": {
+                "Authorization": "Bearer test-key",
+                "OpenAI-Beta": "responses_websockets=2026-02-06",
+            },
             "max_size": 16 * 1024 * 1024,
+            "open_timeout": 15.0,
         }
     ]
     assert websocket.sent[0]["type"] == "response.create"
@@ -1313,12 +1317,14 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
             "uri": "wss://chatgpt.com/backend-api/codex/responses",
             "additional_headers": {
                 "Authorization": "Bearer oauth-token",
+                "OpenAI-Beta": "responses_websockets=2026-02-06",
                 "chatgpt-account-id": "acct_123",
                 "originator": "codex_cli_rs",
-                "session_id": "session-123",
-                "thread_id": "session-123",
+                "session-id": "session-123",
+                "thread-id": "session-123",
                 "x-client-request-id": "session-123",
             },
             "max_size": 16 * 1024 * 1024,
+            "open_timeout": 15.0,
         }
     ]
