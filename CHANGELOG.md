@@ -2,6 +2,22 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.0.0 — 2026-05-26
+
+### Breaking
+- WhatsApp now blocks all chats when `bot.allowed_chats` is empty. Add allowed direct chats explicitly before upgrading if you used the old open-by-default behavior.
+
+### Added
+- Background notifications can now use `faltoochat --notify` to send sub-agent results back to WhatsApp or Faltoochat, including follow-up session ids.
+
+### Changed
+- OpenAI WebSocket streaming is disabled by default again; set `openai.websocket = true` to opt in.
+- Update/setup now installs required `libmagic` system dependencies on supported Linux/macOS environments.
+
+### Fixed
+- WhatsApp notification polling now recovers stuck queue items and keeps running after a notification failure.
+- Review search selections keep the selected file and line active after refresh.
+
 ## 6.5.2 — 2026-05-20
 
 ### Fixed

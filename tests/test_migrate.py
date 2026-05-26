@@ -112,7 +112,7 @@ def test_disable_default_openai_websocket_moves_old_default(tmp_path: Path) -> N
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
     changed = disable_default_openai_websocket(
-        config, previous_version="6.5.2", current_version="6.5.3"
+        config, previous_version="6.5.2", current_version="7.0.0"
     )
 
     assert changed
@@ -126,7 +126,7 @@ def test_migrate_main_disables_default_openai_websocket(tmp_path: Path) -> None:
     config.config_file.parent.mkdir(parents=True)
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
-    assert main(config, previous_version="6.5.2", current_version="6.5.3") == [
+    assert main(config, previous_version="6.5.2", current_version="7.0.0") == [
         "migration:disable-default-openai-websocket"
     ]
 
@@ -140,5 +140,5 @@ def test_migrate_main_does_not_disable_websocket_after_default_flip(
     config.config_file.parent.mkdir(parents=True)
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
-    assert main(config, previous_version="6.5.3", current_version="6.5.4") == []
+    assert main(config, previous_version="7.0.0", current_version="7.0.1") == []
     assert "websocket = true" in config.config_file.read_text(encoding="utf-8")

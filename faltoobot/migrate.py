@@ -58,7 +58,7 @@ def disable_default_openai_websocket(
     previous_version: str | None,
     current_version: str | None,
 ) -> bool:
-    if not _upgrading_across(previous_version, current_version, "6.5.3"):
+    if not _upgrading_across(previous_version, current_version, "7.0.0"):
         # comment: keep the default flip tied to this release only.
         return False
     path = config.config_file
