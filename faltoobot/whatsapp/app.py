@@ -9,7 +9,13 @@ from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
 from neonize.utils.jid import Jid2String, build_jid
 
 from faltoobot import notify_queue
-from faltoobot.config import Config, build_config, normalize_chat
+from faltoobot.config import (
+    Config,
+    build_config,
+    load_toml,
+    merge_config,
+    normalize_chat,
+)
 from faltoobot.sessions import append_user_turn, get_session
 
 from . import login, runtime
@@ -28,6 +34,24 @@ chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 debounce_timers: dict[str, asyncio.TimerHandle] = {}
 pending_albums: dict[str, runtime.PendingAlbum] = {}
 notifications_stop = asyncio.Event()
+_allowlists_config_marker: tuple[str, int] | None = None
+
+
+def _refresh_bot_allowlists() -> None:
+    global _allowlists_config_marker
+    path = config.config_file
+    if not path.exists():
+        # comment: tests and first-run setups may provide an in-memory config only.
+        return
+    marker = (path.as_posix(), path.stat().st_mtime_ns)
+    if marker == _allowlists_config_marker:
+        # comment: most messages arrive without config edits, so skip reparsing.
+        return
+    bot = merge_config(load_toml(path))["bot"]
+    # comment: allowlists are often edited while the WhatsApp service is running.
+    config.allow_group_chats = set(bot["allow_group_chats"])
+    config.allowed_chats = set(bot["allowed_chats"])
+    _allowlists_config_marker = marker
 
 
 async def on_exit() -> None:
@@ -40,46 +64,56 @@ async def on_exit() -> None:
     await client.stop()
 
 
+async def _process_notification_for_chat(
+    chat_key: str, notification: notify_queue.Notification
+) -> None:
+    user, server = chat_key.split("@", 1)
+    # comment: notify-queue items only store the string chat key. We rebuild the
+    # JID object here because typing presence and the final reply both need it.
+    chat_jid = build_jid(user, server)
+    async with chat_locks[chat_key]:
+        session = get_session(chat_key=chat_key)
+        turn: runtime.Turn = {
+            "event": None,
+            "chat": chat_jid,
+            "message_ids": [notification["id"]],
+            "prompt": notify_queue.format_notification_message(notification),
+            "quoted_message_text": "",
+            "attachments": [],
+            "audio": None,
+        }
+        stored = await append_user_turn(
+            session,
+            question=turn["prompt"],
+            attachments=turn["attachments"] or None,
+            message_ids=turn["message_ids"],
+        )
+        if stored:
+            await runtime.process_turn_locked(
+                client,
+                session,
+                config=config,
+                turn=turn,
+            )
+
+
 async def _start_polling_notifications() -> None:
     recovered = notify_queue.recover_processing_notifications()
     if recovered:
         logger.warning("Recovered %s stale notify-queue item(s)", recovered)
     while not notifications_stop.is_set():
         for path, notification in notify_queue.claim_notifications(
-            lambda item: item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
+            lambda item: (
+                item["chat_key"] == "global"
+                or item["chat_key"].endswith(("@lid", "@s.whatsapp.net", "@g.us"))
+            )
         ):
             try:
-                chat_key = notification["chat_key"]
-                user, server = chat_key.split("@", 1)
-                # comment: notify-queue items only store the string chat key. We rebuild the
-                # JID object here because typing presence and the final reply both need it.
-                chat_jid = build_jid(user, server)
-                async with chat_locks[chat_key]:
-                    session = get_session(chat_key=chat_key)
-                    turn: runtime.Turn = {
-                        "event": None,
-                        "chat": chat_jid,
-                        "message_ids": [notification["id"]],
-                        "prompt": notify_queue.format_notification_message(
-                            notification
-                        ),
-                        "quoted_message_text": "",
-                        "attachments": [],
-                        "audio": None,
-                    }
-                    stored = await append_user_turn(
-                        session,
-                        question=turn["prompt"],
-                        attachments=turn["attachments"] or None,
-                        message_ids=turn["message_ids"],
-                    )
-                    if stored:
-                        await runtime.process_turn_locked(
-                            client,
-                            session,
-                            config=config,
-                            turn=turn,
-                        )
+                targets = [notification["chat_key"]]
+                if notification["chat_key"] == "global":
+                    targets = sorted(config.allowed_chats)
+                for chat_key in targets:
+                    await _process_notification_for_chat(chat_key, notification)
             except Exception:
                 logger.exception(
                     "Notify-queue item %s failed; requeueing and continuing",
@@ -131,6 +165,7 @@ async def _handle_debounce_timer(
 
 
 async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
+    _refresh_bot_allowlists()
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     chat_key = normalize_chat(chat_jid)
@@ -150,7 +185,9 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
         if turn is None:
             return
-        stored = turn["prompt"] in runtime.SLASH_COMMANDS or await append_user_turn(
+        stored = bool(
+            runtime.get_slash_command(turn["prompt"])
+        ) or await append_user_turn(
             session,
             question=turn["prompt"],
             attachments=turn["attachments"] or None,

@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, TypeAlias, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.css.query import NoMatches
 from textual.widgets import Static, TabbedContent, TabPane, Tabs
-
 
 from .git import get_unstaged_files, is_git_workspace
 from .review_api import Review, Reviews, review_to_message_item, upsert_review
@@ -51,10 +51,7 @@ LANGUAGES_BY_SUFFIX = {
 
 
 NO_CHANGES_PANE_ID = "no-changes"
-
-
-def _syntax_highlight_theme(app_theme: str) -> str:
-    return "github_light" if "light" in app_theme else "vscode_dark"
+SPLIT_VIEWER_COUNT = 2
 
 
 def _get_tab_id(path: Path) -> str:
@@ -128,6 +125,11 @@ class ReviewView(TabPane):
         content-align: center middle;
     }
 
+    #review-file-split {
+        width: 1fr;
+        height: 1fr;
+    }
+
     ReviewDiffView {
         width: 1fr;
         height: 1fr;
@@ -154,22 +156,28 @@ class ReviewView(TabPane):
             with TabPane("Review", id=NO_CHANGES_PANE_ID):
                 yield ReviewEmpty("No modified files yet.", id="review-empty")
 
+    def _diff_viewer(self, path: Path, *, id: str) -> ReviewDiffView:
+        return ReviewDiffView(
+            [],
+            file_path=path,
+            review_view=self,
+            language=LANGUAGES_BY_SUFFIX.get(path.suffix.lower()),
+            soft_wrap=self.soft_wrap_enabled,
+            line_highlights=self.line_highlights,
+            read_only=True,
+            show_cursor=True,
+            show_line_numbers=True,
+            highlight_cursor_line=True,
+            id=id,
+        )
+
     async def _add_file_pane(self, path: Path, title: str) -> None:
         await self.query_one("#review-tabs", TabbedContent).add_pane(
             TabPane(
                 title,
-                ReviewDiffView(
-                    [],
-                    file_path=path,
-                    review_view=self,
-                    language=LANGUAGES_BY_SUFFIX.get(path.suffix.lower()),
-                    theme=_syntax_highlight_theme(self.app.theme),
-                    soft_wrap=self.soft_wrap_enabled,
-                    line_highlights=self.line_highlights,
-                    read_only=True,
-                    show_cursor=True,
-                    show_line_numbers=True,
-                    highlight_cursor_line=True,
+                Horizontal(
+                    self._diff_viewer(path, id="review-file-viewer"),
+                    id="review-file-split",
                 ),
                 id=_get_tab_id(path),
             )
@@ -230,17 +238,26 @@ class ReviewView(TabPane):
         app = cast("FaltooChatApp", self.app)
         workspace = app.workspace
 
-        def on_result(result: "ProjectSearchResult | None") -> None:
+        async def on_result(result: "ProjectSearchResult | None") -> None:
             if result is None:
                 return
-            asyncio.create_task(
-                self.open_file(
-                    result["path"],
-                    line_number=result["line_number"],
-                )
+            await self.open_file(
+                result["path"],
+                line_number=result["line_number"],
             )
 
-        app.push_screen(SearchProject(workspace=workspace), on_result)
+        tabs = self.query_one("#review-tabs", TabbedContent)
+        app.push_screen(
+            SearchProject(
+                workspace=workspace,
+                preferred_files=[
+                    viewer.file_path
+                    for pane in tabs.query(TabPane)
+                    for viewer in pane.query(ReviewDiffView)
+                ],
+            ),
+            on_result,
+        )
 
     def set_active_tab(self, path: Path) -> bool:
         tabs = self.query_one("#review-tabs", TabbedContent)
@@ -249,9 +266,60 @@ class ReviewView(TabPane):
             self.active_pane = None
             return False
         self.active_pane = pane.query_one(ReviewDiffView)
-        tabs.active = _get_tab_id(path)
+        tabs.show_tab(_get_tab_id(path))
         self.active_pane.focus()
         return True
+
+    def _active_tab_pane(self) -> TabPane | None:
+        tabs = self.query_one("#review-tabs", TabbedContent)
+        return next(
+            (pane for pane in tabs.query(TabPane) if pane.id == tabs.active),
+            None,
+        )
+
+    def _active_tab_viewers(self) -> list[ReviewDiffView]:
+        pane = self._active_tab_pane()
+        return [] if pane is None else list(pane.query(ReviewDiffView))
+
+    async def open_split(self, path: Path, *, line_number: int | None = None) -> None:
+        pane = self._active_tab_pane()
+        # comment: review tabs can still be mounting when a split action is triggered.
+        if pane is None:
+            return
+        viewers = list(pane.query(ReviewDiffView))
+        # comment: the empty review tab has no diff viewer to split.
+        if not viewers:
+            return
+        # comment: replace the existing right split instead of adding a third pane.
+        if len(viewers) > 1:
+            await viewers[-1].remove()
+
+        right = self._diff_viewer(path, id="review-file-right")
+        await pane.query_one("#review-file-split", Horizontal).mount(right)
+        await right.reload_in_place()
+        if line_number is not None:
+            right.jump_to_file_line(line_number)
+        self.active_pane = right
+        right.focus()
+
+    def focus_other_split(self) -> None:
+        viewers = self._active_tab_viewers()
+        # comment: single-pane tabs have no alternate split to focus.
+        if len(viewers) < SPLIT_VIEWER_COUNT:
+            return
+        target = viewers[0] if self.active_pane is viewers[-1] else viewers[-1]
+        self.active_pane = target
+        target.focus()
+
+    async def close_split(self) -> None:
+        viewers = self._active_tab_viewers()
+        # comment: single-pane tabs have no split to close.
+        if len(viewers) < SPLIT_VIEWER_COUNT:
+            return
+        right = viewers[-1]
+        self.active_pane = viewers[0]
+        await right.remove()
+        self.active_pane.focus()
 
     async def close_stale_file(self, path: Path) -> bool:
         workspace = cast("FaltooChatApp", self.app).workspace

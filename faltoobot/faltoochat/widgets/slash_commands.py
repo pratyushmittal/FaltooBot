@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 
 SLASH_COMMANDS = {
+    "/compact": "compact this session history",
     "/name": "name the current session",
     "/reset": "start a fresh session",
     "/resume": "resume another session",
@@ -40,6 +41,47 @@ async def _rename_session(app: "FaltooChatApp", name: str) -> None:
         return
     await app.show_local_answer(
         f"`Saved session name: {name}`" if name else "`Cleared session name.`"
+    )
+
+
+def _open_name_modal(app: "FaltooChatApp") -> None:
+    async def on_result(name: str | None) -> None:
+        if name is not None:
+            await _rename_session(app, name)
+        app.focus_composer()
+
+    app.push_screen(
+        TextInputModal(
+            initial_value=app.session.session_id,
+            title="Name session",
+            placeholder="Enter a session name",
+            allow_empty=True,
+        ),
+        on_result,
+    )
+
+
+def _open_resume_picker(app: "FaltooChatApp") -> None:
+    async def on_result(result: dict[str, str] | None) -> None:
+        if result is None:
+            app.focus_composer()
+            return
+        transcript = app.query_one("#transcript")
+        transcript.loading = True
+        try:
+            app.session = sessions.get_session(
+                chat_key=app.session.chat_key,
+                session_id=result["id"],
+            )
+            app.workspace = Path(sessions.get_messages(app.session)["workspace"])
+            await app.load_recent_messages()
+            await app.queue().refresh_queue()
+        finally:
+            transcript.loading = False
+
+    app.push_screen(
+        SessionPicker(chat_key=app.session.chat_key),
+        on_result,
     )
 
 
@@ -86,27 +128,18 @@ class SlashCommandsOptionList(OptionList):
 
     async def _handle_builtin_command(self, command: str) -> bool:
         app = cast("FaltooChatApp", self.app)
+
         match command:
-            case "/name":
-
-                async def on_result(name: str | None) -> None:
-                    if name is not None:
-                        await _rename_session(app, name)
-                    app.focus_composer()
-
-                app.push_screen(
-                    TextInputModal(
-                        initial_value=app.session.session_id,
-                        title="Name session",
-                        placeholder="Enter a session name",
-                        allow_empty=True,
-                    ),
-                    on_result,
+            case "/compact":
+                compacted = await sessions.compact_message_history(app.session)
+                await app.load_messages()
+                await app.show_local_answer(
+                    "`Memory compacted.`" if compacted else "`Nothing to compact.`"
                 )
-                return True
+            case "/name":
+                _open_name_modal(app)
             case "/tree":
                 open_in_default_editor(app.session.messages_path)
-                return True
             case "/reset":
                 workspace = app.workspace
                 app.session = sessions.get_session(
@@ -117,33 +150,8 @@ class SlashCommandsOptionList(OptionList):
                 app.workspace = workspace
                 await app.load_messages()
                 await app.queue().refresh_queue()
-                return True
             case "/resume":
-
-                async def on_result(result: dict[str, str] | None) -> None:
-                    if result is None:
-                        app.focus_composer()
-                        return
-                    transcript = app.query_one("#transcript")
-                    transcript.loading = True
-                    try:
-                        app.session = sessions.get_session(
-                            chat_key=app.session.chat_key,
-                            session_id=result["id"],
-                        )
-                        app.workspace = Path(
-                            sessions.get_messages(app.session)["workspace"]
-                        )
-                        await app.load_recent_messages()
-                        await app.queue().refresh_queue()
-                    finally:
-                        transcript.loading = False
-
-                app.push_screen(
-                    SessionPicker(chat_key=app.session.chat_key),
-                    on_result,
-                )
-                return True
+                _open_resume_picker(app)
             case "/status":
                 await app.show_local_answer(
                     config_status_text(
@@ -153,9 +161,9 @@ class SlashCommandsOptionList(OptionList):
                         workspace=app.workspace,
                     )
                 )
-                return True
             case _:
                 return False
+        return True
 
     async def handle_text(
         self,

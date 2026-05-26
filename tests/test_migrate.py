@@ -2,6 +2,7 @@ from pathlib import Path
 
 from faltoobot.config import Config, default_config, render_config
 from faltoobot.migrate import (
+    disable_default_openai_websocket,
     main,
     remove_session_last_used_files,
     update_default_openai_model,
@@ -101,3 +102,43 @@ def test_migrate_main_updates_default_openai_model(tmp_path: Path) -> None:
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
     assert main(config) == ["migration:update-default-openai-model"]
+
+
+def test_disable_default_openai_websocket_moves_old_default(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data = default_config()
+    data["openai"]["websocket"] = True
+    config.config_file.parent.mkdir(parents=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    changed = disable_default_openai_websocket(
+        config, previous_version="6.5.2", current_version="6.5.3"
+    )
+
+    assert changed
+    assert "websocket = false" in config.config_file.read_text(encoding="utf-8")
+
+
+def test_migrate_main_disables_default_openai_websocket(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data = default_config()
+    data["openai"]["websocket"] = True
+    config.config_file.parent.mkdir(parents=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    assert main(config, previous_version="6.5.2", current_version="6.5.3") == [
+        "migration:disable-default-openai-websocket"
+    ]
+
+
+def test_migrate_main_does_not_disable_websocket_after_default_flip(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    data = default_config()
+    data["openai"]["websocket"] = True
+    config.config_file.parent.mkdir(parents=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+    assert main(config, previous_version="6.5.3", current_version="6.5.4") == []
+    assert "websocket = true" in config.config_file.read_text(encoding="utf-8")

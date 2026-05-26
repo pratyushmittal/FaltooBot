@@ -17,6 +17,7 @@ class Review(TypedDict):
 
 
 Reviews: TypeAlias = list[Review]
+FILE_COMMENT_LINE = 0
 
 
 def _reviews_by_filename(reviews: Reviews) -> dict[Path, Reviews]:
@@ -40,21 +41,27 @@ def reviews_prompt(reviews: Reviews) -> str:
             line_number_end = review.get(
                 "file_line_number_end", review["line_number_end"]
             )
-            lines.extend(
-                [
-                    f"### Line `{line_number_start}-{line_number_end}`",
-                    "",
-                    "Code:",
-                    "",
-                    "```",
-                    review["code"],
-                    "```",
-                    "",
-                    "Comment:",
-                    review["comment"],
-                    "",
-                ]
+            is_file_comment = (
+                line_number_start == FILE_COMMENT_LINE
+                and line_number_end == FILE_COMMENT_LINE
             )
+            if is_file_comment:
+                # comment: file comments intentionally have no line range or code in the prompt.
+                lines.extend(["### File comment", ""])
+            else:
+                lines.extend(
+                    [
+                        f"### Line `{line_number_start}-{line_number_end}`",
+                        "",
+                        "Code:",
+                        "",
+                        "```",
+                        review["code"],
+                        "```",
+                        "",
+                    ]
+                )
+            lines.extend(["Comment:", review["comment"], ""])
         if index < len(filenames) - 1:
             lines.extend(["---", ""])
     return "\n".join(lines).strip()

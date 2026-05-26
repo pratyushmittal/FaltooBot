@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, TypedDict, cast
 from uuid import uuid4
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.responses import (
     ResponseCompletedEvent,
     ResponseOutputMessage,
@@ -17,15 +17,19 @@ from openai.types.responses import (
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
     MessageHistory,
+    STANDALONE_COMPACTION_KEY,
     StreamingReplyItem,
     Tool,
+    get_openai_client,
     get_streaming_reply,
+    trim_input,
 )
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
+from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
 MESSAGES_FILE = "messages.json"
 WORKSPACE_DIR = "workspace"
@@ -230,6 +234,55 @@ def get_last_usage(session: Session) -> dict[str, Any] | None:
     return None
 
 
+async def compact_message_history(session: Session) -> bool:
+    config = build_config()
+    messages_json = get_messages(session)
+    if not messages_json["messages"]:
+        # comment: nothing to compact for a new/empty session.
+        return False
+
+    workspace = Path(messages_json["workspace"])
+    instructions = get_system_instructions(config, session.chat_key, workspace)
+    input_items = trim_input(
+        messages_json["messages"],
+        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+    )
+    client = get_openai_client(config)
+    try:
+        compacted = await client.responses.compact(
+            model=config.openai_model,
+            input=cast(Any, input_items),
+            instructions=instructions or omit,
+            prompt_cache_key=messages_json["id"],
+        )
+    finally:
+        await client.close()
+
+    output: MessageHistory = []
+    for raw_item in compacted.output:
+        item = raw_item.to_dict() if hasattr(raw_item, "to_dict") else raw_item
+        if not isinstance(item, dict):
+            # comment: compaction output should be a response input item.
+            raise TypeError(f"Expected compacted item dict, got {type(item).__name__}")
+        if item.get("type") == "compaction":
+            # comment: standalone compact output must be replayed as one canonical window.
+            item = {**item, STANDALONE_COMPACTION_KEY: True}
+        output.append(item)
+    if not output:
+        # comment: avoid losing history if the compaction endpoint returns no window.
+        return False
+
+    messages_json["system_prompt"] = instructions
+    # comment: create an archive snapshot file before replacing messages.json.
+    _write_text_atomic(
+        session.session_dir / f"messages.archive.{uuid4().hex}.json",
+        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
+    )
+    messages_json["messages"] = output
+    set_messages(session, messages_json)
+    return True
+
+
 def set_messages(session: Session, messages_json: MessagesJson) -> None:
     _write_text_atomic(
         session.messages_path,
@@ -326,6 +379,37 @@ async def append_user_turn(
     return True
 
 
+async def _get_streaming_reply(
+    *,
+    config: Config,
+    instructions: str,
+    input: MessageHistory,
+    tools: list[Tool],
+    prompt_cache_key: str | None,
+) -> AsyncIterator[StreamingReplyItem]:
+    if getattr(config, "openai_websocket", False) and (
+        config.openai_api_key or config.openai_oauth
+    ):
+        async for item in websocket_streaming_reply(
+            config,
+            instructions=instructions,
+            input=input,
+            tools=tools,
+            prompt_cache_key=prompt_cache_key,
+        ):
+            yield item
+        return
+
+    async for item in get_streaming_reply(
+        config,
+        instructions=instructions,
+        input=input,
+        tools=tools,
+        prompt_cache_key=prompt_cache_key,
+    ):
+        yield item
+
+
 async def get_answer_streaming(
     session: Session,
 ) -> AsyncIterator[StreamingReplyItem]:
@@ -344,13 +428,14 @@ async def get_answer_streaming(
     if available_skills:
         tools.append(load_skill_tool)
 
-    instructions = messages_json["system_prompt"]
-    if not instructions:
-        instructions = get_system_instructions(config, chat_key, workspace)
+    instructions = get_system_instructions(config, chat_key, workspace)
+    if messages_json["system_prompt"] != instructions:
+        # comment: keep a debug snapshot without trusting stale prompts from older app versions.
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
-    async for event in get_streaming_reply(
+    async for event in _get_streaming_reply(
+        config=config,
         instructions=instructions,
         input=messages_json["messages"],
         tools=tools,

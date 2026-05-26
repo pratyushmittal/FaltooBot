@@ -4,9 +4,10 @@ import subprocess
 from pathlib import Path
 from typing import TypedDict
 
-from .telescope import MAX_RESULTS, Telescope
+from .telescope import MAX_RESULTS, Telescope, _fuzzy_score
 
 PREVIEW_CHARS = 120
+OPEN_FILE_SYMBOL = "·"
 
 
 class ProjectSearchResult(TypedDict):
@@ -17,9 +18,15 @@ class ProjectSearchResult(TypedDict):
 
 
 class SearchProject(Telescope[ProjectSearchResult]):
-    def __init__(self, *, workspace: Path) -> None:
+    def __init__(
+        self,
+        *,
+        workspace: Path,
+        preferred_files: list[Path] | None = None,
+    ) -> None:
         self.workspace = workspace
         self._files: list[Path] | None = None
+        self.preferred_files = set(preferred_files or [])
         super().__init__(
             items=self._search_results,
             title="Search files and code",
@@ -40,6 +47,7 @@ class SearchProject(Telescope[ProjectSearchResult]):
             self.workspace,
             query,
             files=self._cached_files(),
+            preferred_files=self.preferred_files,
         )
 
     def _cached_files(self) -> list[Path]:
@@ -53,26 +61,45 @@ def _project_search_results(
     query: str,
     *,
     files: list[Path] | None = None,
+    preferred_files: set[Path] | None = None,
 ) -> list[ProjectSearchResult]:
     needle = query.strip()
     files = _project_files(workspace) if files is None else files
+    preferred_files = preferred_files or set()
+
     if not needle:
+        # comment: show files immediately before the user starts typing.
+        preferred = [path for path in files if path in preferred_files]
+        ordered = preferred + [path for path in files if path not in preferred_files]
         return [
             {
-                "title": str(path),
+                "title": f"{path} {OPEN_FILE_SYMBOL}"
+                if path in preferred_files
+                else str(path),
                 "path": path,
                 "line_number": None,
                 "text": "",
             }
-            for path in files[:MAX_RESULTS]
+            for path in ordered[:MAX_RESULTS]
         ]
 
-    file_matches = _ripgrep_file_results(workspace, needle, files)
+    # comment: file paths are fuzzy-matched; code search remains exact grep.
+    file_matches = _file_results(needle, files, preferred_files=preferred_files)
     grep_matches = _ripgrep_results(workspace, needle)
+
     grep_items: list[tuple[int, ProjectSearchResult]] = [
-        (10_000 - index, result) for index, result in enumerate(grep_matches)
+        (
+            10_000 - index,
+            (
+                {**result, "title": f"{result['title']} {OPEN_FILE_SYMBOL}"}
+                if result["path"] in preferred_files
+                else result
+            ),
+        )
+        for index, result in enumerate(grep_matches)
     ]
     matches = [*file_matches, *grep_items]
+
     matches.sort(key=lambda item: (-item[0], item[1]["title"]))
     return [item for _score, item in matches[:MAX_RESULTS]]
 
@@ -140,46 +167,37 @@ def _ripgrep_results(workspace: Path, query: str) -> list[ProjectSearchResult]:
     return matches
 
 
-def _ripgrep_file_results(
-    workspace: Path,
+def _file_results(
     query: str,
     files: list[Path],
+    *,
+    preferred_files: set[Path] | None = None,
 ) -> list[tuple[int, ProjectSearchResult]]:
-    if not files:
-        return []
-    process = _start_rg(
-        ["rg", "--smart-case", "--fixed-strings", query],
-        workspace,
-        input="\n".join(str(path) for path in files),
-    )
-    if process is None or process.stdout is None:
+    needle = query.strip().lower()
+    if not needle or not files:
         return []
 
+    preferred_files = preferred_files or set()
     matches: list[tuple[int, ProjectSearchResult]] = []
-    try:
-        for index, line in enumerate(process.stdout):
-            path = line.rstrip("\n")
-            if not path:
-                continue
-            matches.append(
-                (
-                    100_000 - index,
-                    {
-                        "title": path,
-                        "path": Path(path),
-                        "line_number": None,
-                        "text": "",
-                    },
-                )
+    for path in files:
+        score = _fuzzy_score(needle, str(path))
+        if score is None:
+            continue
+        matches.append(
+            (
+                (1_000_000 if path in preferred_files else 100_000) + score,
+                {
+                    "title": f"{path} {OPEN_FILE_SYMBOL}"
+                    if path in preferred_files
+                    else str(path),
+                    "path": path,
+                    "line_number": None,
+                    "text": "",
+                },
             )
-            if len(matches) >= MAX_RESULTS:
-                process.kill()
-                break
-    finally:
-        process.wait()
-    if process.returncode not in {0, 1} and len(matches) < MAX_RESULTS:
-        return []
-    return matches
+        )
+    matches.sort(key=lambda item: (-item[0], item[1]["title"]))
+    return matches[:MAX_RESULTS]
 
 
 def _run_rg(

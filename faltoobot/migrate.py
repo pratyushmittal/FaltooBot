@@ -7,6 +7,23 @@ from faltoobot.config import (
 )
 
 
+def _version_tuple(version: str | None) -> tuple[int, ...]:
+    if not version:
+        return ()
+    return tuple(int(part) for part in version.split(".") if part.isdigit())
+
+
+def _upgrading_across(
+    previous_version: str | None,
+    current_version: str | None,
+    target_version: str,
+) -> bool:
+    previous = _version_tuple(previous_version)
+    current = _version_tuple(current_version)
+    target = _version_tuple(target_version)
+    return bool(previous and current and previous < target <= current)
+
+
 def remove_session_last_used_files(config: Config) -> bool:
     sessions_dir = config.sessions_dir
     if not sessions_dir.exists():
@@ -35,7 +52,34 @@ def update_default_openai_model(config: Config) -> bool:
     return True
 
 
-def main(config: Config | None = None) -> list[str]:
+def disable_default_openai_websocket(
+    config: Config,
+    *,
+    previous_version: str | None,
+    current_version: str | None,
+) -> bool:
+    if not _upgrading_across(previous_version, current_version, "6.5.3"):
+        # comment: keep the default flip tied to this release only.
+        return False
+    path = config.config_file
+    if not path.exists():
+        # comment: fresh installs will be created with websocket disabled.
+        return False
+    data = merge_config(load_toml(path))
+    if data["openai"]["websocket"] is not True:
+        # comment: false configs are already using the safer SDK streaming path.
+        return False
+    data["openai"]["websocket"] = False
+    path.write_text(render_config(data), encoding="utf-8")
+    return True
+
+
+def main(
+    config: Config | None = None,
+    *,
+    previous_version: str | None = None,
+    current_version: str | None = None,
+) -> list[str]:
     config = config or build_config()
     changes: list[str] = []
     # comment: keep update summaries quiet when idempotent migrations have no work.
@@ -43,4 +87,8 @@ def main(config: Config | None = None) -> list[str]:
         changes.append("migration:remove-session-last-used")
     if update_default_openai_model(config):
         changes.append("migration:update-default-openai-model")
+    if disable_default_openai_websocket(
+        config, previous_version=previous_version, current_version=current_version
+    ):
+        changes.append("migration:disable-default-openai-websocket")
     return changes

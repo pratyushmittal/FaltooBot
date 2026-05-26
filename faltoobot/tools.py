@@ -26,6 +26,35 @@ def _clipped_text(value: str | bytes | None) -> str:
     return (value or "")[:MAX_SHELL_OUTPUT]
 
 
+def _append_path(path: str, value: str) -> str:
+    parts = [part for part in value.split(os.pathsep) if part]
+    if path not in parts:
+        parts.append(path)
+    return os.pathsep.join(parts)
+
+
+def _uv_tool_bin_dir() -> str:
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "dir", "--bin"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return result.stdout.strip()
+
+
+def _tool_path_dirs() -> list[str]:
+    paths = [str(Path.home() / ".local" / "bin")]
+    uv_bin = _uv_tool_bin_dir()
+    if uv_bin:
+        # comment: uv may use a custom tool-bin directory outside ~/.local/bin.
+        paths.append(uv_bin)
+    return paths
+
+
 def _tool_env_overrides() -> dict[str, str]:
     env: dict[str, str] = {}
     config = build_config()
@@ -40,6 +69,11 @@ def _tool_env_overrides() -> dict[str, str]:
 
 def _tool_env() -> dict[str, str]:
     env = dict(os.environ)
+    path = env.get("PATH", "")
+    # comment: services may start with a minimal PATH, but agents need uv tools.
+    for bin_dir in _tool_path_dirs():
+        path = _append_path(bin_dir, path)
+    env["PATH"] = path
     env.update(_tool_env_overrides())
     return env
 

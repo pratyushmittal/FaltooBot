@@ -14,6 +14,7 @@ class Notification(TypedDict):
     message: str
     created_at: str
     source: NotRequired[str]
+    session_id: NotRequired[str]
 
 
 ClaimedNotification = tuple[Path, Notification]
@@ -43,12 +44,17 @@ def _read_notification(path: Path) -> Notification | None:
     message = payload.get("message")
     created_at = payload.get("created_at")
     source = payload.get("source")
+    session_id = payload.get("session_id")
     if not all(
         isinstance(value, str) and value
         for value in (notification_id, chat_key, message, created_at)
     ):
         return None
-    if source is not None and not isinstance(source, str):
+    # comment: optional metadata must stay stringly typed because it is rendered into prompts.
+    if any(
+        value is not None and not isinstance(value, str)
+        for value in (source, session_id)
+    ):
         return None
     notification: Notification = {
         "id": notification_id,
@@ -58,6 +64,8 @@ def _read_notification(path: Path) -> Notification | None:
     }
     if source is not None:
         notification["source"] = source
+    if session_id is not None:
+        notification["session_id"] = session_id
     return notification
 
 
@@ -74,7 +82,11 @@ def parse_message(message: str | None, stdin: TextIO) -> str:
 
 
 def enqueue_notification(
-    chat_key: str, message: str, *, source: str | None = None
+    chat_key: str,
+    message: str,
+    *,
+    source: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     notification_id = f"notify_{uuid4().hex}"
     notification: Notification = {
@@ -85,6 +97,8 @@ def enqueue_notification(
     }
     if source:
         notification["source"] = source
+    if session_id:
+        notification["session_id"] = session_id
     pending = _pending_dir()
     pending.mkdir(parents=True, exist_ok=True)
     path = pending / f"{notification_id}.json"
@@ -168,5 +182,8 @@ def format_notification_message(notification: Notification) -> str:
     source = notification.get("source")
     if source:
         lines.extend([f"source: {source}", ""])
+    session_id = notification.get("session_id")
+    if session_id:
+        lines.extend([f"sub-agent follow-up id: {session_id}", ""])
     lines.extend(["## message", notification["message"]])
     return "\n".join(lines).strip()

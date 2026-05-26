@@ -1,5 +1,9 @@
 import argparse
 import asyncio
+import os
+import sys
+import tempfile
+import traceback
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, Iterable
@@ -12,6 +16,7 @@ from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
 from textual.widget import Widget
+from textual.worker import Worker
 from textual.widgets import (
     Footer,
     Markdown,
@@ -23,9 +28,13 @@ from textual.widgets import (
 )
 
 from faltoobot import notify_queue, sessions
+from faltoobot.changelog import available_update_notice, consume_changelog_update
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
-from faltoobot.faltoochat.terminal import textual_theme_from_terminal
+from faltoobot.faltoochat.terminal import (
+    set_terminal_title,
+    textual_theme_from_terminal,
+)
 from faltoobot.gpt_utils import MessageItem
 from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
@@ -40,7 +49,7 @@ from .messages_rendering import (
 )
 from .paste import pasted_image_path, save_clipboard_image
 from .placeholders import get_random_placeholder
-from .review import ReviewView, _syntax_highlight_theme
+from .review import ReviewView
 from .stream import get_event_text
 from .widgets import (
     BindingsErrorModal,
@@ -53,6 +62,7 @@ from .widgets import (
 
 STARTUP_MESSAGES_LIMIT = 100
 AUTO_SCROLL_RESUME_LINES = 3
+COMPOSER_TITLE_REFRESH_SECONDS = 7.0
 
 
 def _render_blocks(text: str, classes: str) -> list[Markdown]:
@@ -65,9 +75,10 @@ def _render_blocks(text: str, classes: str) -> list[Markdown]:
     return blocks
 
 
-async def _stop_answer_stream(answer_stream: Any | None) -> None:
-    if answer_stream is not None:
-        await answer_stream.stop()
+async def _finish_answer_stream(answer_stream: Any | None) -> None:
+    if answer_stream is None:
+        return
+    await answer_stream.stop()
 
 
 async def _write_stream_chunk(
@@ -82,6 +93,7 @@ async def _write_stream_chunk(
         await block.update(visible_thinking_text(block_raw_text))
         return block_raw_text
     if classes == "answer" and answer_stream is not None:
+        block_raw_text += text
         await answer_stream.write(text)
         return block_raw_text
     await block.append(text)
@@ -99,6 +111,7 @@ class FaltooChatApp(App[None]):
             priority=True,
             show=False,
         ),
+        Binding("ctrl+c", "cancel_response", "Cancel Response", priority=True),
         Binding(
             "ctrl+p",
             "command_palette",
@@ -295,7 +308,11 @@ class FaltooChatApp(App[None]):
         self.session = session
         self.workspace = Path(sessions.get_messages(session)["workspace"])
         self.is_answering = False
+        self.active_stream_worker: Worker[None] | None = None
         self._is_polling_notifications = False
+        self.transcript: VerticalScroll
+        self.composer: Composer
+        self.chat_shell: ChatShell
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         """Return commands shown in Textual's command palette (Ctrl+P) for the active screen."""
@@ -314,28 +331,33 @@ class FaltooChatApp(App[None]):
         if not self._persist_theme_changes:
             return
         save_textual_theme(theme_name)
-        syntax_theme = _syntax_highlight_theme(theme_name)
         for viewer in self.query(ReviewDiffView):
-            # comment: a plain refresh won't switch the syntax palette because the
-            # TextArea theme name is stored on the widget and only initialized once.
-            viewer.theme = syntax_theme
-            viewer.refresh()
+            viewer.refresh_review_theme()
 
     def tabs(self) -> TabbedContent:
         return self.query_one("#tabs", TabbedContent)
 
     def focus_composer(self) -> None:
-        self.set_focus(self.query_one("#composer", Composer), scroll_visible=False)
+        self.set_focus(self.composer, scroll_visible=False)
+
+    def refresh_terminal_title(self) -> None:
+        title = self.workspace.name or str(self.workspace)
+        if self.is_answering:
+            title = f"{title} ・answering"
+        self.title = title
+        set_terminal_title(title)
 
     def refresh_composer_title(self) -> None:
-        self.query_one("#composer", Composer).border_title = get_workspace_label(
-            self.workspace
-        )
+        title = get_workspace_label(self.workspace)
+        if self.composer.border_title == title:
+            # comment: polling often finds the same git branch, so avoid redundant redraws.
+            return
+        self.composer.border_title = title
 
     def action_show_chat_tab(self) -> None:
         self.refresh_composer_title()
         self.tabs().active = "chat-tab"
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         self.call_after_refresh(transcript.scroll_end, animate=False)
         if self.screen.is_modal:
             # comment: focus inside the active modal instead of closing it.
@@ -374,7 +396,7 @@ class FaltooChatApp(App[None]):
         with Vertical(id="shell"):
             with TabbedContent(initial="chat-tab", id="tabs"):
                 with TabPane("Chat", id="chat-tab"):
-                    with Vertical(id="chat-shell"):
+                    with ChatShell(id="chat-shell"):
                         yield VerticalScroll(id="transcript")
                         with Center():
                             with Vertical(id="footer"):
@@ -395,13 +417,31 @@ class FaltooChatApp(App[None]):
             yield Footer()
 
     async def on_mount(self) -> None:
+        self.transcript = self.query_one("#transcript", VerticalScroll)
+        self.composer = self.query_one("#composer", Composer)
+        self.chat_shell = self.query_one("#chat-shell", ChatShell)
+        self.refresh_terminal_title()
         self.refresh_composer_title()
         self.query_one("#slash-commands", SlashCommandsOptionList).hide_commands()
         await self.load_recent_messages()
+        if text := consume_changelog_update():
+            await self.transcript.mount(Markdown(text, classes="tool"))
+            self.transcript.anchor()
+        self.run_worker(self._show_available_update_notice(), exclusive=False)
         await self.queue().refresh_queue()
         if self._binding_errors:
             self.push_screen(BindingsErrorModal(self._binding_errors))
         self.set_interval(1.0, self._poll_notifications)
+        self.set_interval(COMPOSER_TITLE_REFRESH_SECONDS, self.refresh_composer_title)
+
+    async def _show_available_update_notice(self) -> None:
+        text = await asyncio.to_thread(
+            available_update_notice, package_version("faltoobot")
+        )
+        if not text:
+            return
+        await self.transcript.mount(Markdown(text, classes="tool"))
+        self.transcript.anchor()
 
     def _poll_notifications(self) -> None:
         # comment: timer ticks can overlap while an earlier notification drain is still running.
@@ -436,7 +476,8 @@ class FaltooChatApp(App[None]):
             await self.queue().add_to_queue(message_item)
             return
         self.is_answering = True
-        transcript = self.query_one("#transcript", VerticalScroll)
+        self.refresh_terminal_title()
+        transcript = self.transcript
         try:
             stored = await self._add_user_turn(transcript, message_item)
         except asyncio.CancelledError:
@@ -447,11 +488,15 @@ class FaltooChatApp(App[None]):
             stored = False
         if stored:
             # exclusive=True tells Textual to cancel all previous workers before starting the new one
-            self.run_worker(self._start_streaming(transcript), exclusive=True)
+            self.active_stream_worker = self.run_worker(
+                self._start_streaming(transcript),
+                exclusive=True,
+            )
             return
         # comment: duplicate notification ids can skip storing and therefore skip streaming.
         self.is_answering = False
-        composer = self.query_one("#composer", Composer)
+        self.refresh_terminal_title()
+        composer = self.composer
         composer.border_subtitle = ""
         if self.tabs().active == "chat-tab":
             composer.focus()
@@ -465,7 +510,7 @@ class FaltooChatApp(App[None]):
         recent_limit: int | None = None,
     ) -> None:
         messages_json = sessions.get_messages(self.session)
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         blocks = []
         messages = messages_json["messages"]
         if recent_limit is not None and len(messages) > recent_limit:
@@ -495,14 +540,14 @@ class FaltooChatApp(App[None]):
             immediate=True,
         )
 
-        composer = self.query_one("#composer", Composer)
+        composer = self.composer
         composer.focus()
 
     async def action_load_all_messages(self) -> None:
         await self.load_messages()
 
     async def show_local_answer(self, text: str) -> None:
-        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript = self.transcript
         await transcript.mount(Markdown(text, classes="answer"))
         transcript.anchor()
 
@@ -516,7 +561,7 @@ class FaltooChatApp(App[None]):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
-                    await _stop_answer_stream(answer_stream)
+                    await _finish_answer_stream(answer_stream)
                     answer_stream, block, raw_text = None, None, ""
                 continue
 
@@ -526,15 +571,15 @@ class FaltooChatApp(App[None]):
             )
 
             if classes == "tool" and SHELL_COMMAND_SEPARATOR in text:
-                await _stop_answer_stream(answer_stream)
+                await _finish_answer_stream(answer_stream)
                 answer_stream, block, raw_text = None, None, ""
                 await transcript.mount(*_render_blocks(text, classes))
                 if follow:
                     transcript.anchor()
                 continue
 
-            if block is None or is_new:
-                await _stop_answer_stream(answer_stream)
+            if block is None or is_new or classes not in block.classes:
+                await _finish_answer_stream(answer_stream)
                 answer_stream, raw_text = None, ""
                 block = Markdown("", classes=classes)
                 await transcript.mount(block)
@@ -551,7 +596,7 @@ class FaltooChatApp(App[None]):
             if follow:
                 transcript.anchor()
 
-        await _stop_answer_stream(answer_stream)
+        await _finish_answer_stream(answer_stream)
 
     async def _add_user_turn(
         self,
@@ -574,18 +619,21 @@ class FaltooChatApp(App[None]):
 
     async def _start_streaming(self, transcript: VerticalScroll) -> None:
         completed = False
-        composer = self.query_one("#composer", Composer)
-        composer.border_subtitle = "answering"
+        composer = self.composer
+        composer.border_subtitle = "answering · Ctrl+C to stop"
         try:
             await self._stream_events(transcript)
         except asyncio.CancelledError:
-            raise
+            # comment: user/app cancellations leave messages.json unchanged.
+            pass
         except Exception as error:
             await self._show_retry_error(error)
         else:
             completed = True
         finally:
             self.is_answering = False
+            self.active_stream_worker = None
+            self.refresh_terminal_title()
             if completed:
                 self.bell()
             composer.border_subtitle = ""
@@ -595,6 +643,19 @@ class FaltooChatApp(App[None]):
         if completed:
             await self.queue().submit_next_message()
 
+    def action_cancel_response(self) -> None:
+        worker = self.active_stream_worker
+        # comment: Ctrl+C can arrive while a message is being stored, before streaming starts.
+        if worker is None and self.is_answering:
+            self.notify("No response running", severity="information")
+            return
+        # comment: when idle, keep the usual Ctrl+C exits app behavior.
+        if worker is None:
+            self.exit()
+            return
+        self.composer.border_subtitle = "cancelling..."
+        worker.cancel()
+
     async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
         message = str(error).strip() or repr(error)
         # comment: Static parses Rich markup, so escape untrusted exception text before appending our Retry link.
@@ -602,8 +663,9 @@ class FaltooChatApp(App[None]):
         # comment: add/store failures are not retryable because no assistant turn was started.
         if retry:
             content += "\n\n[@click=app.retry_failed_message()]Retry[/]"
-        transcript = self.query_one("#transcript", VerticalScroll)
-        await transcript.mount(Static(content, classes="unknown"))
+        transcript = self.transcript
+        classes = "unknown retry-error" if retry else "unknown"
+        await transcript.mount(Static(content, classes=classes))
         transcript.anchor()
 
     async def action_retry_failed_message(self) -> None:
@@ -614,9 +676,16 @@ class FaltooChatApp(App[None]):
                 severity="warning",
             )
             return
+        transcript = self.transcript
+        for block in list(transcript.query(Static).filter(".retry-error")):
+            await block.remove()
+        self.focus_composer()
         self.is_answering = True
-        transcript = self.query_one("#transcript", VerticalScroll)
-        self.run_worker(self._start_streaming(transcript), exclusive=True)
+        self.refresh_terminal_title()
+        self.active_stream_worker = self.run_worker(
+            self._start_streaming(transcript),
+            exclusive=True,
+        )
 
 
 class AttachmentCheckbox(Checkbox):
@@ -649,19 +718,85 @@ class AttachmentList(Vertical):
             return
         if isinstance(event.checkbox, AttachmentCheckbox):
             event.stop()
-            self.app.query_one("#composer", Composer).remove_attachment_at(
-                event.checkbox.index
+            self.app.composer.remove_attachment_at(event.checkbox.index)
+
+
+class ChatShell(Vertical):
+    BINDINGS = [
+        Binding(
+            "alt+up", "transcript_previous_message", "Previous Message", priority=True
+        ),
+        Binding("alt+down", "transcript_next_message", "Next Message", priority=True),
+    ]
+    BINDING_GROUP_TITLE = "Chat"
+
+    app = getters.app(FaltooChatApp)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._selected_transcript_message_id: int | None = None
+
+    def _selected_transcript_message_y(
+        self,
+        transcript: VerticalScroll,
+        messages: list[Widget],
+    ) -> int | float | None:
+        """Return selected message y if current scroll still matches it."""
+        for message in messages:
+            if id(message) != self._selected_transcript_message_id:
+                continue
+            selected_scroll_y = min(message.virtual_region.y, transcript.max_scroll_y)
+            if transcript.scroll_y == selected_scroll_y:
+                # comment: use the real message top when Textual had to clamp the scroll.
+                return message.virtual_region.y
+            break
+        return None
+
+    def _scroll_transcript_message(self, delta: int) -> None:
+        transcript = self.app.transcript
+        messages = [
+            message
+            for message in transcript.children
+            if message.has_class("user") or message.has_class("answer")
+        ]
+        if not messages:
+            return
+
+        current_y = self._selected_transcript_message_y(transcript, messages)
+        if current_y is None:
+            current_y = transcript.scroll_y
+        if delta < 0:
+            target = next(
+                (
+                    message
+                    for message in reversed(messages)
+                    if message.virtual_region.y < current_y
+                ),
+                messages[0],
             )
+        else:
+            target = next(
+                (
+                    message
+                    for message in messages
+                    if message.virtual_region.y > current_y
+                ),
+                messages[-1],
+            )
+        self._selected_transcript_message_id = id(target)
+        transcript.scroll_to(y=target.virtual_region.y, animate=False, immediate=True)
+
+    def action_transcript_previous_message(self) -> None:
+        self._scroll_transcript_message(-1)
+
+    def action_transcript_next_message(self) -> None:
+        self._scroll_transcript_message(1)
 
 
 class Composer(TextArea):
     BINDINGS = [
         Binding("enter", "composer_enter", "Submit", priority=True),
         Binding("shift+enter", "newline", "New line", priority=True),
-        Binding(
-            "alt+up", "transcript_previous_message", "Previous Message", priority=True
-        ),
-        Binding("alt+down", "transcript_next_message", "Next Message", priority=True),
         Binding("@", "mention_file", "Mention File", priority=True, show=False),
     ]
     BINDING_GROUP_TITLE = "Chat"
@@ -672,7 +807,6 @@ class Composer(TextArea):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.attachments: list[sessions.Attachment] = []
-        self._selected_transcript_message_id: int | None = None
 
     def set_attachments(self, attachments: list[sessions.Attachment]) -> None:
         self.attachments = list(attachments)
@@ -761,70 +895,12 @@ class Composer(TextArea):
         message_item = get_local_user_message_item(question, attachments)
         await self.app.handle_message(message_item)
 
-    def _selected_transcript_message_y(
-        self,
-        transcript: VerticalScroll,
-        messages: list[Widget],
-    ) -> int | float | None:
-        """Return selected message y if current scroll still matches it."""
-        for message in messages:
-            if id(message) != self._selected_transcript_message_id:
-                continue
-            selected_scroll_y = min(message.virtual_region.y, transcript.max_scroll_y)
-            if transcript.scroll_y == selected_scroll_y:
-                # comment: use the real message top when Textual had to clamp the scroll.
-                return message.virtual_region.y
-            break
-        return None
-
-    def _scroll_transcript_message(self, delta: int) -> None:
-        transcript = self.app.query_one("#transcript", VerticalScroll)
-        messages = [
-            message
-            for message in transcript.children
-            if message.has_class("user") or message.has_class("answer")
-        ]
-        if not messages:
-            return
-
-        current_y = self._selected_transcript_message_y(transcript, messages)
-        if current_y is None:
-            current_y = transcript.scroll_y
-        if delta < 0:
-            target = next(
-                (
-                    message
-                    for message in reversed(messages)
-                    if message.virtual_region.y < current_y
-                ),
-                messages[0],
-            )
-        else:
-            target = next(
-                (
-                    message
-                    for message in messages
-                    if message.virtual_region.y > current_y
-                ),
-                messages[-1],
-            )
-        self._selected_transcript_message_id = id(target)
-        transcript.scroll_to(y=target.virtual_region.y, animate=False, immediate=True)
-
-    def action_transcript_previous_message(self) -> None:
-        self._scroll_transcript_message(-1)
-
-    def action_transcript_next_message(self) -> None:
-        self._scroll_transcript_message(1)
-
     def action_newline(self) -> None:
         self.insert("\n")
 
     def action_mention_file(self) -> None:
         def on_result(result: Path | None) -> None:
-            if result is None:
-                return
-            self.insert(f"`{result}` ")
+            self.insert("@" if result is None else f"`{result}` ")
             self.focus()
 
         self.app.push_screen(
@@ -851,6 +927,35 @@ def _workspace_from_args(workspace: str | None) -> Path:
     return path
 
 
+def _find_session_by_id(session_id: str) -> sessions.Session | None:
+    try:
+        sessions.Session("session-check", session_id)
+    except ValueError as exc:
+        # comment: session id comes from CLI input and must be a safe path segment.
+        raise SystemExit(str(exc)) from exc
+
+    root = sessions.app_root() / "sessions"
+    if not root.exists():
+        # comment: missing sessions are normal when a stale follow-up id is reused.
+        return None
+    matches = []
+    for chat_root in root.iterdir():
+        if not chat_root.is_dir():
+            # comment: session roots are directories; skip stray files safely.
+            continue
+        messages_path = chat_root / session_id / sessions.MESSAGES_FILE
+        if messages_path.exists():
+            matches.append(messages_path)
+    matches.sort()
+    if not matches:
+        # comment: missing sessions are normal when a stale follow-up id is reused.
+        return None
+    if len(matches) > 1:
+        # comment: named sessions can collide across workspaces; --workspace disambiguates.
+        raise SystemExit(f"Session id is ambiguous: {session_id}. Pass --workspace.")
+    return sessions.Session(matches[0].parents[1].name, session_id)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="faltoochat")
     parser.add_argument(
@@ -859,28 +964,116 @@ def parse_args() -> argparse.Namespace:
         version=f"%(prog)s {package_version('faltoobot')}",
     )
     parser.add_argument("prompt", nargs="?", help="optional prompt to submit on launch")
-    parser.add_argument(
+    session_group = parser.add_mutually_exclusive_group()
+    session_group.add_argument(
         "--new-session",
         action="store_true",
         help="start a fresh session",
     )
+    session_group.add_argument(
+        "--session-id",
+        help="resume an existing session id",
+    )
     parser.add_argument("--workspace", help="workspace path to use for this chat")
-
+    parser.add_argument(
+        "--notify",
+        help="send one-shot output to this chat key instead of printing it",
+    )
+    parser.add_argument(
+        "--source",
+        help="notification source to use with --notify",
+    )
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def _run_one_shot_with_stderr(
+    session: sessions.Session, prompt: str
+) -> tuple[str, str, bool]:
+    """Run one-shot chat and capture fd-level stderr for --notify output."""
+    output = ""
+    failed = False
+    with tempfile.TemporaryFile() as stderr_file:
+        saved_stderr = os.dup(2)
+        try:
+            sys.stderr.flush()
+            os.dup2(stderr_file.fileno(), 2)
+            try:
+                output = asyncio.run(_run_one_shot(session, prompt))
+            except Exception:
+                failed = True
+                os.write(2, traceback.format_exc().encode("utf-8"))
+            finally:
+                sys.stderr.flush()
+        finally:
+            os.dup2(saved_stderr, 2)
+            os.close(saved_stderr)
+
+        stderr_file.seek(0)
+        stderr = stderr_file.read().decode("utf-8", errors="replace").strip()
+        return output, stderr, failed
+
+
+def _validate_notify_args(args: argparse.Namespace) -> None:
+    if args.notify and not args.prompt:
+        # comment: --notify only has output to send in one-shot prompt mode.
+        raise SystemExit("--notify requires a prompt")
+    if args.source and not args.notify:
+        # comment: --source only annotates queued notifications.
+        raise SystemExit("--source requires --notify")
+
+
+def _session_from_args(args: argparse.Namespace) -> sessions.Session:
+    session_id = str(uuid4()) if args.new_session else args.session_id
+    if args.session_id and args.workspace is None:
+        session_ref = _find_session_by_id(args.session_id)
+        if session_ref is None:
+            # comment: stale follow-up ids should fail before creating a new session.
+            raise SystemExit(f"Session not found: {args.session_id}")
+        return sessions.get_session(
+            chat_key=session_ref.chat_key,
+            session_id=session_ref.session_id,
+        )
+
     workspace = _workspace_from_args(args.workspace)
-    session_id = str(uuid4()) if args.new_session else None
     chat_key = sessions.get_dir_chat_key(workspace, is_sub_agent=bool(args.prompt))
-    session = sessions.get_session(
+    if args.session_id:
+        try:
+            exists = sessions.Session(chat_key, args.session_id).messages_path.exists()
+        except ValueError as exc:
+            # comment: session id comes from CLI input and must be a safe path segment.
+            raise SystemExit(str(exc)) from exc
+        if not exists:
+            # comment: --workspace pins which chat root should contain the session.
+            raise SystemExit(f"Session not found: {args.session_id}")
+    return sessions.get_session(
         chat_key=chat_key,
         session_id=session_id,
         workspace=workspace,
     )
+
+
+def main() -> int:
+    args = parse_args()
+    _validate_notify_args(args)
+    session = _session_from_args(args)
     try:
         if args.prompt:
+            if args.notify:
+                output, stderr, failed = _run_one_shot_with_stderr(session, args.prompt)
+                message = output.strip()
+                if stderr:
+                    message = (
+                        f"{message}\n\n## stderr\n{stderr}"
+                        if message
+                        else f"## stderr\n{stderr}"
+                    )
+                notify_queue.enqueue_notification(
+                    args.notify,
+                    message or "(no output)",
+                    source=args.source or "sub-agent:faltoochat",
+                    session_id=session.session_id,
+                )
+                return 1 if failed else 0
             output = asyncio.run(_run_one_shot(session, args.prompt))
             if output:
                 print(output)

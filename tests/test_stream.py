@@ -38,6 +38,37 @@ from faltoobot.faltoochat.stream import get_event_text
             ),
             (True, "thinking", "**Planning** reply"),
         ),
+        (
+            SimpleNamespace(
+                type="codex.rate_limits",
+                plan_type="prolite",
+                rate_limits={
+                    "primary": {"used_percent": 2, "reset_after_seconds": 18000},
+                    "secondary": {"used_percent": 60, "reset_after_seconds": 604800},
+                },
+            ),
+            (
+                True,
+                "tool",
+                "Remaining limit: 5h = 98% ・ 7d = 40%",
+            ),
+        ),
+        (
+            SimpleNamespace(
+                type="codex.rate_limits",
+                plan_type="prolite",
+                rate_limits={
+                    "primary": True,
+                    "secondary": {"used_percent": False, "reset_after_seconds": 10},
+                    "tertiary": {"used_percent": 17},
+                },
+            ),
+            (
+                True,
+                "tool",
+                "Remaining limit: tertiary = 83%",
+            ),
+        ),
     ],
 )
 def test_get_event_text(event: object, expected: tuple[bool, str, str]) -> None:

@@ -14,13 +14,17 @@ Diff: TypeAlias = list[Line]
 
 
 def _git_text(cwd: Path, *args: str) -> str | None:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        # comment: missing cwd/git should behave like an empty git result.
+        return None
     if result.returncode not in {0, 1}:
         return None
     return result.stdout

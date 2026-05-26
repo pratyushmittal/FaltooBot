@@ -4,23 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faltoobot"
-version = "4.1.0"
+version = "6.5.2"
 description = "WhatsApp-first LLM bot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "neonize>=0.3.16.post0",
+  "neonize==0.3.18.post0",
   "openai>=2.32.0",
   "playwright>=1.58.0",
   "pillow>=12.2.0",
   "rich>=14.3.4",
   "textual[syntax]>=8.2.3",
-  'pyobjc-framework-Cocoa>=11.1; sys_platform == "darwin"',
   "tree-sitter-lua>=0.5.0",
   "tree-sitter-typescript>=0.23.2",
   "google-genai>=1.73.1",
   "textual-speedups>=0.2.1",
   "certifi>=2026.4.22",
+  "websockets>=16.0",
 ]
 
 [project.scripts]
@@ -32,6 +32,9 @@ include = ["faltoobot*"]
 
 [tool.setuptools.package-data]
 faltoobot = ["skills/*", "skills/**/*"]
+
+[tool.setuptools.data-files]
+"share/faltoobot" = ["CHANGELOG.md"]
 
 
 [dependency-groups]

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections import defaultdict
 from importlib.metadata import version as package_version
 from io import BytesIO
@@ -36,6 +37,7 @@ from faltoobot import sessions
 from faltoobot.sessions import get_messages, get_session, set_messages
 from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, inspect, runtime
+from faltoobot.whatsapp.allowlist import matches_allowed_chats
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
 
 
@@ -92,6 +94,37 @@ def fake_event(
             Info=SimpleNamespace(MessageSource=source, ID=message_id),
         ),
     )
+
+
+def fake_direct_event(
+    *,
+    message_id: str = "direct-1",
+    text: str = "",
+    sender_phone: str = "15555550123",
+) -> MessageEv:
+    source = Neonize_pb2.MessageSource(
+        Chat=jid(sender_phone, "s.whatsapp.net"),
+        Sender=jid(sender_phone, "s.whatsapp.net"),
+    )
+    return cast(
+        MessageEv,
+        SimpleNamespace(
+            Message=Message(conversation=text),
+            Info=SimpleNamespace(MessageSource=source, ID=message_id),
+        ),
+    )
+
+
+def turn_for_event(event: MessageEv, prompt: str | None = None) -> runtime.Turn:
+    return {
+        "event": event,
+        "chat": event.Info.MessageSource.Chat,
+        "message_ids": [event.Info.ID],
+        "prompt": prompt if prompt is not None else event.Message.conversation,
+        "quoted_message_text": "",
+        "attachments": [],
+        "audio": None,
+    }
 
 
 def fake_group_event(  # noqa: PLR0913
@@ -266,6 +299,7 @@ class FakePresenceClient:
         self.replies: list[str] = []
         self.reply_ids: list[str] = []
         self.sent_messages: list[str] = []
+        self.sent_message_chats: list[str] = []
         self.sent_images: list[dict[str, object | None]] = []
         self.sent_documents: list[dict[str, object | None]] = []
         self.downloads = 0
@@ -280,6 +314,7 @@ class FakePresenceClient:
 
     async def get_group_info(self, group: Neonize_pb2.JID) -> Neonize_pb2.GroupInfo:
         info = Neonize_pb2.GroupInfo(JID=group)
+        info.GroupName.Name = "Engineering"
         for index in range(self.group_size):
             info.Participants.append(
                 Neonize_pb2.GroupParticipant(
@@ -303,6 +338,7 @@ class FakePresenceClient:
         return "ok"
 
     async def send_message(self, chat: Neonize_pb2.JID, text: str) -> str:
+        self.sent_message_chats.append(Jid2String(chat))
         self.sent_messages.append(text)
         return "ok"
 
@@ -368,14 +404,15 @@ async def handle_message(
         if turn is None:
             return
         stored = True
-        if turn["prompt"] not in runtime.SLASH_COMMANDS:
+        if not runtime.get_slash_command(turn["prompt"]):
             stored = await sessions.append_user_turn(
                 session,
                 question=turn["prompt"],
                 attachments=turn["attachments"] or None,
                 message_ids=turn["message_ids"],
             )
-        if stored and await runtime.should_reply_now(client, turn["event"]):
+        should_process = await runtime.should_reply_now(client, turn["event"])
+        if stored and should_process:
             await runtime.process_turn_locked(client, session, config=config, turn=turn)
 
 
@@ -471,6 +508,30 @@ def test_source_chat_ids_normalize_whatsapp_ids(
             {"15555550123@s.whatsapp.net"},
             True,
         ),
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("919838502343", "s.whatsapp.net"),
+                Sender=jid("919838502343", "s.whatsapp.net"),
+            ),
+            {"9838502343@s.whatsapp.net"},
+            True,
+        ),
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("919838502343", "s.whatsapp.net"),
+                Sender=jid("919838502343", "s.whatsapp.net"),
+            ),
+            set(),
+            False,
+        ),
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("919838502343", "s.whatsapp.net"),
+                Sender=jid("919838502343", "s.whatsapp.net"),
+            ),
+            {"2343@s.whatsapp.net"},
+            False,
+        ),
     ],
 )
 def test_matches_allowed_chats(
@@ -479,9 +540,78 @@ def test_matches_allowed_chats(
     expected: bool,
 ) -> None:
     assert (
-        runtime._matches_allowed_chats(allowed_chats, runtime.source_chat_ids(source))
+        matches_allowed_chats(allowed_chats, runtime.source_chat_ids(source))
         is expected
     )
+
+
+def _write_bot_allowlist_config(
+    config: Config,
+    *,
+    group: str = "120363046573411792@g.us",
+    direct: str = "919838502343@s.whatsapp.net",
+) -> None:
+    data = default_config()
+    data["bot"]["allow_group_chats"] = [group]
+    data["bot"]["allowed_chats"] = [direct]
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+
+
+def test_refresh_bot_allowlists_reads_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    _write_bot_allowlist_config(config)
+    monkeypatch.setattr(whatsapp_app, "config", config)
+
+    whatsapp_app._refresh_bot_allowlists()
+
+    assert config.allow_group_chats == {"120363046573411792@g.us"}
+    assert config.allowed_chats == {"919838502343@s.whatsapp.net"}
+
+
+def test_refresh_bot_allowlists_reloads_changed_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    _write_bot_allowlist_config(config)
+    monkeypatch.setattr(whatsapp_app, "config", config)
+
+    whatsapp_app._refresh_bot_allowlists()
+    _write_bot_allowlist_config(
+        config,
+        group="120363046573411793@g.us",
+        direct="919838502344@s.whatsapp.net",
+    )
+    stat = config.config_file.stat()
+    os.utime(config.config_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+    whatsapp_app._refresh_bot_allowlists()
+
+    assert config.allow_group_chats == {"120363046573411793@g.us"}
+    assert config.allowed_chats == {"919838502344@s.whatsapp.net"}
+
+
+def test_refresh_bot_allowlists_skips_unchanged_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config(tmp_path, allowed_chats=set())
+    _write_bot_allowlist_config(config)
+    calls = 0
+    original_load_toml = whatsapp_app.load_toml
+
+    def counted_load_toml(path: Path) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original_load_toml(path)
+
+    monkeypatch.setattr(whatsapp_app, "config", config)
+    monkeypatch.setattr(whatsapp_app, "load_toml", counted_load_toml)
+
+    whatsapp_app._refresh_bot_allowlists()
+    whatsapp_app._refresh_bot_allowlists()
+
+    assert calls == 1
 
 
 def test_empty_group_allowlist_blocks_group_messages() -> None:
@@ -493,8 +623,7 @@ def test_empty_group_allowlist_blocks_group_messages() -> None:
     )
 
     assert (
-        bool(set())
-        and runtime._matches_allowed_chats(set(), runtime.source_chat_ids(source))
+        bool(set()) and matches_allowed_chats(set(), runtime.source_chat_ids(source))
     ) is False
 
 
@@ -506,7 +635,7 @@ async def test_get_turn_locked_uses_group_allowlist(
     config = make_config(
         tmp_path,
         allowed_chats={"19999999999@s.whatsapp.net"},
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -519,7 +648,7 @@ async def test_get_turn_locked_uses_group_allowlist(
         config=config,
         session=session,
     )
-    blocked_turn = await runtime.get_turn_locked(
+    other_sender_turn = await runtime.get_turn_locked(
         cast(NewAClient, FakePresenceClient()),
         fake_group_event(message_id="group-2", sender_phone="16666660123"),
         config=config,
@@ -528,7 +657,30 @@ async def test_get_turn_locked_uses_group_allowlist(
 
     assert allowed_turn is not None
     assert allowed_turn["prompt"] == "[from 15555555555555] hi"
-    assert blocked_turn is None
+    assert other_sender_turn is not None
+    assert other_sender_turn["prompt"] == "[from 15555555555555] hi"
+
+
+@pytest.mark.anyio
+async def test_get_turn_locked_ignores_group_when_group_jid_not_allowlisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"15555550123@s.whatsapp.net", "19999999999@g.us"},
+    )
+    session = get_session(chat_key="120363000000000000@g.us")
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, FakePresenceClient()),
+        fake_group_event(sender_phone="15555550123", text="hello group"),
+        config=config,
+        session=session,
+    )
+
+    assert turn is None
 
 
 @pytest.mark.anyio
@@ -539,7 +691,7 @@ async def test_get_turn_locked_stores_group_messages_without_bot_mention(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -562,7 +714,7 @@ async def test_get_turn_locked_allows_group_messages_when_bot_lid_is_mentioned(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
     client = FakePresenceClient()
@@ -590,7 +742,7 @@ async def test_two_person_group_messages_auto_trigger_without_mention(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     client = FakePresenceClient(group_size=2)
 
@@ -611,6 +763,59 @@ async def test_two_person_group_messages_auto_trigger_without_mention(
 
 
 @pytest.mark.anyio
+async def test_group_follow_up_mention_sees_other_sender_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats=set(),
+        allow_group_chats={"120363000000000000@g.us"},
+    )
+    client = FakePresenceClient()
+    seen: list[list[str]] = []
+
+    async def fake_get_answer(session, **_: object) -> str:
+        messages = get_messages(session)["messages"]
+        seen.append(
+            [
+                str(message["content"])
+                for message in messages
+                if message["role"] == "user"
+            ]
+        )
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_group_event(
+            sender_phone="16666660123", text="The production deploy is stuck"
+        ),
+        config=config,
+    )
+    await handle_message(
+        cast(NewAClient, client),
+        fake_group_event(
+            message_id="group-2",
+            sender_phone="15555550123",
+            text="@faltoo what should we check?",
+            mentioned_jids=["15555550999@s.whatsapp.net"],
+        ),
+        config=config,
+    )
+
+    assert client.replies == ["Done"]
+    assert seen == [
+        [
+            "[from 15555555555555] The production deploy is stuck",
+            "[from 15555555555555] @faltoo what should we check?",
+        ]
+    ]
+
+
+@pytest.mark.anyio
 async def test_group_follow_up_mention_sees_earlier_unmentioned_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -618,7 +823,7 @@ async def test_group_follow_up_mention_sees_earlier_unmentioned_history(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     client = FakePresenceClient()
     seen: list[list[str]] = []
@@ -671,7 +876,7 @@ async def test_get_turn_locked_prefers_group_push_name(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
     event = fake_group_event(sender_phone="15555550123", text="hello group")
@@ -696,7 +901,7 @@ async def test_get_turn_locked_keeps_group_slash_command_unprefixed(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -719,7 +924,7 @@ async def test_get_turn_locked_normalizes_addressed_group_slash_command(
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -746,7 +951,7 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
     config = make_config(
         tmp_path,
         allowed_chats=set(),
-        allow_group_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats={"120363000000000000@g.us"},
     )
     session = get_session(chat_key="120363000000000000@g.us")
 
@@ -769,6 +974,191 @@ async def test_get_turn_locked_allows_group_messages_when_replying_to_bot_messag
         "User reply:\nthanks"
     )
     assert turn["quoted_message_text"] == ""
+
+
+@pytest.mark.anyio
+async def test_unapproved_group_mention_requests_owner_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats=set(),
+    )
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(default_config()), encoding="utf-8")
+    session = get_session(chat_key="120363000000000000@g.us")
+    client = FakePresenceClient()
+
+    turn = await runtime.get_turn_locked(
+        cast(NewAClient, client),
+        fake_group_event(
+            text="@faltoo please join",
+            mentioned_jids=["15555550999@s.whatsapp.net"],
+        ),
+        config=config,
+        session=session,
+    )
+
+    assert turn is None
+    assert client.sent_message_chats == ["15555550123@s.whatsapp.net"]
+    assert client.sent_messages == [
+        "\n".join(
+            [
+                "Group approval requested",
+                "",
+                "Group: Engineering",
+                "JID: 120363000000000000@g.us",
+                "Requested by: 15555555555555",
+                "Requester JID: 15555555555555@lid",
+                "",
+                "Message: @faltoo please join",
+                "",
+                "Reply with:",
+                "/approve_group 120363000000000000@g.us",
+                "/deny_group 120363000000000000@g.us",
+            ]
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_unapproved_group_approval_request_is_deduped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats=set(),
+    )
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(default_config()), encoding="utf-8")
+    session = get_session(chat_key="120363000000000000@g.us")
+    client = FakePresenceClient()
+    event = fake_group_event(
+        text="@faltoo please join",
+        mentioned_jids=["15555550999@s.whatsapp.net"],
+    )
+
+    await runtime.get_turn_locked(
+        cast(NewAClient, client), event, config=config, session=session
+    )
+    await runtime.get_turn_locked(
+        cast(NewAClient, client),
+        fake_group_event(
+            message_id="group-2",
+            text="@faltoo again",
+            mentioned_jids=["15555550999@s.whatsapp.net"],
+        ),
+        config=config,
+        session=session,
+    )
+
+    assert len(client.sent_messages) == 1
+
+
+@pytest.mark.anyio
+async def test_approve_group_command_updates_config_and_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats=set(),
+    )
+    data = default_config()
+    data["bot"]["allowed_chats"] = ["15555550123@s.whatsapp.net"]
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+    client = FakePresenceClient()
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    event = fake_direct_event(
+        text="/approve_group 120363000000000000@g.us",
+        sender_phone="15555550123",
+    )
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn=turn_for_event(event),
+    )
+
+    assert client.replies == ["Approved group 120363000000000000@g.us."]
+    assert config.allow_group_chats == {"120363000000000000@g.us"}
+    assert (
+        'allow_group_chats = ["120363000000000000@g.us"]'
+        in config.config_file.read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.anyio
+async def test_deny_group_command_updates_approval_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats=set(),
+    )
+    data = default_config()
+    data["bot"]["allowed_chats"] = ["15555550123@s.whatsapp.net"]
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(data), encoding="utf-8")
+    client = FakePresenceClient()
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    event = fake_direct_event(
+        text="/deny_group 120363000000000000@g.us",
+        sender_phone="15555550123",
+    )
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn=turn_for_event(event),
+    )
+
+    approvals = json.loads((config.root / "group_approvals.json").read_text())
+    record = approvals["120363000000000000@g.us"]
+    assert client.replies == ["Denied group 120363000000000000@g.us."]
+    assert record["status"] == "denied"
+    assert record["decided_by"] == "15555550123@s.whatsapp.net"
+    assert config.allow_group_chats == set()
+
+
+@pytest.mark.anyio
+async def test_non_approver_cannot_approve_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(
+        tmp_path,
+        allowed_chats={"15555550123@s.whatsapp.net"},
+        allow_group_chats=set(),
+    )
+    config.config_file.parent.mkdir(parents=True, exist_ok=True)
+    config.config_file.write_text(render_config(default_config()), encoding="utf-8")
+    client = FakePresenceClient()
+    session = get_session(chat_key="16666660123@s.whatsapp.net")
+    event = fake_direct_event(
+        text="/approve_group 120363000000000000@g.us",
+        sender_phone="16666660123",
+    )
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn=turn_for_event(event),
+    )
+
+    assert client.replies == ["You are not allowed to approve WhatsApp groups."]
+    assert config.allow_group_chats == set()
 
 
 def test_keep_chat_typing_sends_composing_then_paused() -> None:
@@ -797,7 +1187,8 @@ async def test_process_message_transcribes_voice_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
+    config.openai_api_key = "test-key"
     client = FakePresenceClient()
     prompts: list[str] = []
 
@@ -849,7 +1240,7 @@ async def test_process_message_includes_reply_quote_text_in_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient()
     prompts: list[str] = []
 
@@ -895,7 +1286,8 @@ async def test_process_message_includes_reply_quote_text_for_voice_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
+    config.openai_api_key = "test-key"
     client = FakePresenceClient()
     prompts: list[str] = []
 
@@ -939,7 +1331,7 @@ async def test_process_message_rejects_long_voice_notes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient()
 
     async def fake_get_answer(*args: object, **kwargs: object) -> str:
@@ -1020,7 +1412,7 @@ async def test_process_message_handles_whatsapp_image_turns(
     expected_question: str,
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
 
@@ -1080,7 +1472,7 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     case: dict[str, object],
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
     pending_albums: dict[str, runtime.PendingAlbum] = {}
@@ -1193,9 +1585,11 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 '• openai_model="gpt-5.2-codex"',
                 '• openai_thinking="high"',
                 "• openai_fast=false",
+                "• openai_websocket=false",
                 '• openai_transcription_model="gpt-4o-transcribe"',
                 '• gemini_gemini_api_key=""',
                 '• gemini_model="gemini-3.1-flash-image-preview"',
+                '• google_places_api_key=""',
                 '• ui_theme=""',
                 (
                     '• browser_binary="/Applications/Google Chrome.app/Contents/MacOS/'
@@ -1298,13 +1692,88 @@ async def test_process_turn_locked_inspect_handles_empty_history(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("compacted", "reply"),
+    [(True, "Memory compacted."), (False, "Nothing to compact.")],
+)
+async def test_process_turn_locked_compact_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    compacted: bool,
+    reply: str,
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    client = FakePresenceClient()
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    calls: list[sessions.Session] = []
+
+    async def fake_compact_message_history(session: sessions.Session) -> bool:
+        calls.append(session)
+        return compacted
+
+    async def fake_get_answer(*args: object, **kwargs: object) -> str:
+        raise AssertionError("get_answer should not run for /compact")
+
+    monkeypatch.setattr(
+        runtime, "compact_message_history", fake_compact_message_history
+    )
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn={
+            "event": fake_event(message_id="compact-1", text="/compact"),
+            "chat": jid("15555550123", "s.whatsapp.net"),
+            "message_ids": ["compact-1"],
+            "prompt": "/compact",
+            "quoted_message_text": "",
+            "attachments": [],
+            "audio": None,
+        },
+    )
+
+    assert calls == [session]
+    assert client.replies == [reply]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("text", ["/reset please", "/help me write a summary"])
+async def test_simple_slash_command_with_trailing_text_goes_to_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
+    client = FakePresenceClient()
+    prompts: list[str] = []
+
+    async def fake_get_answer(session, **_: object) -> str:
+        prompts.append(str(get_messages(session)["messages"][-1]["content"]))
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_direct_event(text=text),
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert prompts == [text]
+    assert client.replies == ["Done"]
+
+
+@pytest.mark.anyio
 async def test_process_message_reset_creates_new_session_for_chat(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
 
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"8960294979@s.whatsapp.net"})
     config.root.mkdir(parents=True, exist_ok=True)
     client = FakePresenceClient()
     chat_key = "8960294979@s.whatsapp.net"
@@ -1312,8 +1781,9 @@ async def test_process_message_reset_creates_new_session_for_chat(
     original = get_messages(first)
     original["messages"].append({"type": "message", "role": "user", "content": "hi"})
     original["message_ids"] = ["msg-1"]
-    from faltoobot.sessions import set_messages
-
+    (Path(original["workspace"]) / "AGENTS.md").write_text(
+        "remember this", encoding="utf-8"
+    )
     set_messages(first, original)
 
     source = Neonize_pb2.MessageSource(
@@ -1343,6 +1813,9 @@ async def test_process_message_reset_creates_new_session_for_chat(
     ]
     assert get_messages(second)["messages"] == []
     assert get_messages(second)["message_ids"] == ["msg-1"]
+    assert (Path(get_messages(second)["workspace"]) / "AGENTS.md").read_text(
+        encoding="utf-8"
+    ) == "remember this"
 
 
 class _DummyClient:
@@ -1824,6 +2297,156 @@ async def test_process_turn_locked_handles_notification_turn_answers(
 
 
 @pytest.mark.anyio
+async def test_compact_message_history_replaces_messages_with_compacted_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    messages_json = get_messages(session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": "old"},
+        {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": "hi",
+            "usage": {"total_tokens": 3},
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": "again",
+            "response_id": "resp_1",
+        },
+    ]
+    messages_json["message_ids"] = ["msg-1"]
+    set_messages(session, messages_json)
+    archived_before_compact = json.loads(
+        session.messages_path.read_text(encoding="utf-8")
+    )
+
+    raw_compacted_output = [
+        {"type": "message", "role": "user", "content": "summary seed"},
+        {"type": "compaction", "id": "cmp_2", "encrypted_content": "new"},
+    ]
+    saved_compacted_output = [
+        raw_compacted_output[0],
+        {**raw_compacted_output[1], sessions.STANDALONE_COMPACTION_KEY: True},
+    ]
+
+    class FakeResponses:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def compact(self, **kwargs: Any) -> Any:
+            self.calls.append(kwargs)
+            return SimpleNamespace(output=raw_compacted_output)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    client = FakeClient()
+    monkeypatch.setattr(sessions, "build_config", lambda: config)
+    monkeypatch.setattr(sessions, "get_openai_client", lambda _: client)
+    monkeypatch.setattr(sessions, "get_system_instructions", lambda *_: "system prompt")
+
+    assert await sessions.compact_message_history(session) is True
+
+    saved = get_messages(session)
+    assert saved["messages"] == saved_compacted_output
+    assert saved["message_ids"] == ["msg-1"]
+    assert saved["system_prompt"] == "system prompt"
+    archive_paths = list(session.session_dir.glob("messages.archive.*.json"))
+    assert len(archive_paths) == 1
+    archive_json = json.loads(archive_paths[0].read_text(encoding="utf-8"))
+    assert archive_json == {
+        **archived_before_compact,
+        "system_prompt": "system prompt",
+    }
+    assert client.closed is True
+    assert client.responses.calls == [
+        {
+            "model": "gpt-5.4",
+            "input": [
+                {"type": "message", "role": "user", "content": "old"},
+                {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
+                {"type": "message", "role": "assistant", "content": "hi"},
+                {"type": "message", "role": "user", "content": "again"},
+            ],
+            "instructions": "system prompt",
+            "prompt_cache_key": session.session_id,
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_compact_message_history_creates_archive_file_per_compaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    messages_json = get_messages(session)
+    messages_json["messages"] = [
+        {"type": "message", "role": "user", "content": "old"},
+    ]
+    set_messages(session, messages_json)
+
+    raw_outputs = [
+        [{"type": "message", "role": "user", "content": "first compact"}],
+        [{"type": "message", "role": "user", "content": "second compact"}],
+    ]
+
+    class FakeResponses:
+        async def compact(self, **_: Any) -> Any:
+            return SimpleNamespace(output=raw_outputs.pop(0))
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(sessions, "build_config", lambda: config)
+    monkeypatch.setattr(sessions, "get_openai_client", lambda _: FakeClient())
+    monkeypatch.setattr(sessions, "get_system_instructions", lambda *_: "system prompt")
+
+    first_snapshot = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    assert await sessions.compact_message_history(session) is True
+    second_snapshot = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    assert await sessions.compact_message_history(session) is True
+
+    archived_snapshots = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in session.session_dir.glob("messages.archive.*.json")
+    ]
+    assert sorted(
+        archived_snapshots, key=lambda snapshot: snapshot["messages"][0]["content"]
+    ) == [
+        {**second_snapshot, "system_prompt": "system prompt"},
+        {**first_snapshot, "system_prompt": "system prompt"},
+    ]
+
+
+@pytest.mark.anyio
+async def test_compact_message_history_skips_empty_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+
+    assert await sessions.compact_message_history(session) is False
+    assert get_messages(session)["messages"] == []
+
+
+@pytest.mark.anyio
 async def test_start_polling_notifications_claims_and_acks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1985,3 +2608,72 @@ async def test_send_text_keeps_non_standalone_media_markdown_as_text(
     assert client.sent_messages == expected_messages
     assert client.sent_images == []
     assert client.sent_documents == []
+
+
+@pytest.mark.anyio
+async def test_start_polling_global_notification_targets_allowed_chats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored: list[str] = []
+    processed: list[str] = []
+    expected_targets = 1
+
+    monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
+    monkeypatch.setattr(
+        whatsapp_app,
+        "config",
+        make_config(
+            tmp_path,
+            allowed_chats={"15555550123@s.whatsapp.net"},
+            allow_group_chats={"120363000000000000@g.us"},
+        ),
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    (
+        tmp_path / "home" / ".faltoobot" / "sessions" / "19999999999@s.whatsapp.net"
+    ).mkdir(parents=True)
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "claim_notifications",
+        lambda matches: [
+            (
+                tmp_path / "notify.json",
+                {
+                    "id": "notify_1",
+                    "chat_key": "global",
+                    "message": "Faltoobot updated",
+                    "created_at": "2026-04-05T00:00:00+00:00",
+                },
+            )
+        ],
+    )
+
+    async def fake_store_turn_locked(*args: object, **kwargs: Any) -> bool:
+        stored.append(str(kwargs["question"]))
+        return True
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+        processed.append(Jid2String(cast(runtime.Turn, kwargs["turn"])["chat"]))
+        if len(processed) == expected_targets:
+            whatsapp_app.notifications_stop.set()
+
+    monkeypatch.setattr(whatsapp_app, "append_user_turn", fake_store_turn_locked)
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "ack_notification",
+        lambda path: processed.append("ack"),
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "requeue_notification",
+        lambda path: processed.append("requeue"),
+    )
+
+    await whatsapp_app._start_polling_notifications()
+
+    assert stored == ["# Background update\n\n## message\nFaltoobot updated"]
+    assert processed == ["15555550123@s.whatsapp.net", "ack"]

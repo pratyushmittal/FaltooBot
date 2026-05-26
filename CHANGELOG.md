@@ -2,6 +2,139 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 6.5.2 — 2026-05-20
+
+### Fixed
+- WebSocket streaming now accepts larger response events, avoiding `message too big` disconnects.
+
+## 6.5.1 — 2026-05-20
+
+### Fixed
+- WebSocket streaming now uses the bundled certificate store to avoid SSL verification failures on macOS Python installs.
+
+## 6.5.0 — 2026-05-19
+
+### Added
+- Review split view can now open a second file beside the current diff with `Shift+O`, switch panes with `o`, and close the split with `q`.
+- Review diffs can now switch to an added-lines-only view.
+
+### Changed
+- Project search now prioritizes already-open review files.
+- Refreshed locked dependencies.
+
+## 6.4.1 — 2026-05-16
+
+### Fixed
+- Backfilled the WebSocket default migration for users who upgraded through earlier 6.x releases.
+
+## 6.4.0 — 2026-05-16
+
+### Added
+- Manual compaction now archives the previous `messages.json` before replacing it.
+
+### Changed
+- Refreshed dependencies, including OpenAI, Textual, Ruff, and Ty.
+
+### Fixed
+- Cancelling the `@` file picker now inserts a literal `@` in chat and review comments.
+- Review project search now jumps to the selected line, not just the file.
+
+## 6.3.0 — 2026-05-15
+
+### Added
+- Added `/compact` to manually compact long chat histories in Faltoochat and WhatsApp.
+
+### Changed
+- Project search now matches file paths fuzzily, so partial names can find matching files more easily.
+- Review file subtitles now show the full workspace-relative path.
+
+### Fixed
+- Review no longer crashes when the workspace or a deleted file is missing.
+
+## 6.2.0 — 2026-05-12
+
+### Added
+- Faltoochat now shows the changelog after `faltoobot update` and warns when a newer version is available.
+
+## 6.1.0 — 2026-05-09
+
+### Changed
+- OpenAI WebSocket streaming is now enabled by default. Set `openai.websocket = false` to turn it off.
+- Faltoochat rate-limit notices now show remaining allowance, for example `Remaining limit: 1h = 89% ・ 3d = 59%`.
+
+## 6.0.0 — 2026-05-08
+
+### Breaking
+- Removed the interactive `faltoobot configure` command. Run `faltoobot update` to create or migrate `~/.faltoobot/config.toml`, use `faltoobot codex-login` for Codex / ChatGPT OAuth, and edit the config file directly for other settings.
+
+### Added
+- Added optional OpenAI Responses WebSocket streaming with `openai.websocket = true` for lower-latency tool loops.
+- Faltoochat now shows basic `codex.rate_limits` events instead of ignoring them.
+
+### Changed
+- Refreshed locked dependencies, including the OpenAI SDK.
+
+### Fixed
+- Assistant responses are now saved correctly in `messages.json` when WebSocket streaming is disabled.
+- ChatGPT OAuth/Codex streaming no longer reuses cross-turn `previous_response_id`, avoiding repeated `previous_response_not_found` errors.
+- Tool/rate-limit status blocks no longer merge into the assistant response while streaming.
+- Voice note transcription now reports a clear error when no OpenAI API key is configured.
+
+## 5.3.0 — 2026-05-06
+
+### Added
+- WhatsApp bot can now request approval for unknown groups when mentioned, and allowed direct chats can approve, deny, or list group requests with `/approve_group`, `/deny_group`, and `/groups`.
+- WhatsApp shared locations and live locations are now included in prompts with coordinates and a Maps link.
+- Faltoochat responses can now be stopped with `Ctrl+C` while streaming.
+
+### Fixed
+- ChatGPT OAuth-backed Codex requests now include aligned thread headers for more reliable session continuity.
+- WhatsApp slash commands with extra text are now treated as normal messages instead of accidentally running the command.
+
+## 5.2.0 — 2026-05-06
+
+### Added
+- Faltoochat review now supports file-level comments with `Shift+C`.
+
+### Changed
+- Faltoochat now sets the terminal tab title to the workspace folder name and shows when it is answering.
+- Faltoochat retry errors now clear when retrying and focus returns to the composer.
+
+## 5.1.0 — 2026-05-06
+
+### Changed
+- WhatsApp bot now picks up direct and group allowlist edits while running, without requiring a service restart.
+- Faltoochat now refreshes the composer repository/branch title when the branch changes outside the app.
+
+### Fixed
+- WhatsApp group allowlist checks now match the group JID directly, avoiding participant-ID matching confusion.
+
+## 5.0.0 — 2026-05-05
+
+### Breaking
+- WhatsApp `allow_group_chats` now accepts group JIDs instead of participant IDs. Replace old participant phone/JID entries with the group JIDs you want the bot to keep history for and reply in.
+
+### Fixed
+- Review hunk counts now refresh when tab contents change.
+- Review line selection now stays on the selected line instead of jumping to the next line.
+
+## 4.1.2 — 2026-05-05
+
+### Changed
+- Refreshed locked dependencies.
+
+### Fixed
+- Faltoochat now re-parses streamed Markdown when an answer completes, so code blocks render correctly after streaming.
+- Faltoochat transcript navigation shortcuts now work from the chat shell instead of only from the composer.
+
+## 4.1.1 — 2026-05-04
+
+### Fixed
+- WhatsApp answer streaming now retries once after transient incomplete chunked-read connection failures.
+- WhatsApp `/reset` now preserves `AGENTS.md` in the new workspace so chat instructions and memory survive.
+- Review diff colors now stay readable across light and dark themes without forcing the wrong content background.
+- Browser automation now has a bounded shared-CDP connector with clearer errors when the FaltooBot browser is missing or using the wrong profile.
+
 ## 4.1.0 — 2026-05-03
 
 ### Added

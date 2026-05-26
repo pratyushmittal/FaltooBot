@@ -101,6 +101,23 @@ PY""",
     assert "gemini-key" in result["stdout"]
 
 
+def test_tool_env_adds_uv_tool_bins_to_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tools.os, "environ", {"PATH": "/usr/bin:/bin"})
+    monkeypatch.setattr(tools.Path, "home", lambda: Path("/home/faltoo"))
+    monkeypatch.setattr(tools, "_uv_tool_bin_dir", lambda: "/tmp/uv-tools")
+    monkeypatch.setattr(
+        tools,
+        "build_config",
+        lambda: SimpleNamespace(openai_api_key="", gemini_api_key=""),
+        raising=False,
+    )
+
+    assert (
+        tools._tool_env()["PATH"]
+        == "/usr/bin:/bin:/home/faltoo/.local/bin:/tmp/uv-tools"
+    )
+
+
 def test_get_load_image_tool_builds_valid_tool_definition(tmp_path: Path) -> None:
     tool = get_load_image_tool(tmp_path)
     definition = get_tools_definition(tool)

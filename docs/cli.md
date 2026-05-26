@@ -23,16 +23,11 @@ Use this when you want to make the bot work.
 
 Shows logs in follow mode.
 
-### `faltoobot configure`
+### `faltoobot codex-login`
 
-Shows a simple setup menu:
-- Wizard
-- WhatsApp
-- Codex / OpenAI
+Signs in with Codex / ChatGPT OAuth and saves the auth file path in `~/.faltoobot/config.toml`.
 
-Use the wizard unless you want to update only one part.
-
-If a service is already installed, `configure` restarts it after saving changes.
+For other settings, edit `~/.faltoobot/config.toml` directly. `faltoobot update` creates this file with defaults when it does not exist. Set `bot.allowed_chats` before starting WhatsApp if you want to restrict who can talk to the bot.
 
 ## Suggested flow
 
@@ -40,7 +35,9 @@ If a service is already installed, `configure` restarts it after saving changes.
 
 ```bash
 uv tool install faltoobot
-faltoobot configure
+faltoobot update
+faltoobot codex-login
+# edit ~/.faltoobot/config.toml if needed
 faltoobot whatsapp
 ```
 

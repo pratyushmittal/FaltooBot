@@ -7,7 +7,12 @@ from textual import events
 
 from faltoobot import sessions
 from faltoobot.faltoochat import submit_queue
-from faltoobot.faltoochat.app import AttachmentCheckbox, Composer, FaltooChatApp
+from faltoobot.faltoochat.app import (
+    AttachmentCheckbox,
+    ChatShell,
+    Composer,
+    FaltooChatApp,
+)
 from faltoobot.session_utils import (
     decompose_local_message_item,
     get_local_user_message_item,
@@ -45,6 +50,84 @@ def test_minchat_uses_terminal_theme_on_startup(
     _, app = build_app(tmp_path, monkeypatch)
 
     assert app.theme == "textual-light"
+
+
+def test_minchat_terminal_title_uses_workspace_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles: list[str] = []
+    workspace, app = build_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("faltoobot.faltoochat.app.set_terminal_title", titles.append)
+
+    app.refresh_terminal_title()
+    app.is_answering = True
+    app.refresh_terminal_title()
+
+    assert titles == [workspace.name, f"{workspace.name} ・answering"]
+    assert app.title == f"{workspace.name} ・answering"
+
+
+@pytest.mark.anyio
+async def test_minchat_shows_update_changelog_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, app = build_app(tmp_path, monkeypatch)
+    update_file = tmp_path / "home" / ".faltoobot" / "last_update.json"
+    update_file.parent.mkdir(parents=True, exist_ok=True)
+    update_file.write_text(
+        '{"previous_version":"6.0.0","current_version":"6.1.0"}\n',
+        encoding="utf-8",
+    )
+    changelog_path = tmp_path / "CHANGELOG.md"
+    changelog_path.write_text(
+        "# Changelog\n\n## 6.1.0 — 2026-05-09\n\n- Updated chat\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("faltoobot.changelog._changelog_path", lambda: changelog_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+
+        blocks = [block for block in app.query_one("#transcript").query(Markdown)]
+        assert any("Updated chat" in str(block._markdown) for block in blocks)
+        assert not update_file.exists()
+
+
+@pytest.mark.anyio
+async def test_minchat_shows_available_update_notice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.available_update_notice",
+        lambda _: "New Faltoobot version available",
+    )
+
+    async with app.run_test():
+        await wait_for_condition(
+            lambda: any(
+                "New Faltoobot version available" in str(block._markdown)
+                for block in app.query_one("#transcript").query(Markdown)
+            )
+        )
+
+
+@pytest.mark.anyio
+async def test_minchat_sets_terminal_title_on_mount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles: list[str] = []
+    workspace, app = build_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("faltoobot.faltoochat.app.set_terminal_title", titles.append)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+    assert workspace.name in titles
 
 
 @pytest.mark.anyio
@@ -93,6 +176,9 @@ def build_app(
     workspace.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.available_update_notice", lambda _: ""
+    )
     return workspace, FaltooChatApp(
         session=sessions.get_session(
             chat_key=sessions.get_dir_chat_key(workspace),
@@ -134,6 +220,7 @@ async def test_minchat_shows_slash_command_suggestions(
         option_list = app.query_one("#slash-commands", SlashCommandsOptionList)
         assert option_list.display
         assert [str(option.prompt) for option in option_list.options] == [
+            "/compact — compact this session history",
             "/name — name the current session",
             "/reset — start a fresh session",
             "/resume — resume another session",
@@ -412,6 +499,28 @@ async def test_minchat_at_opens_file_picker_and_inserts_mention(
 
 
 @pytest.mark.anyio
+async def test_minchat_cancelled_at_picker_inserts_at(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+
+        await pilot.press("@")
+        await pilot.pause(0)
+        assert isinstance(app.screen, SearchFile)
+
+        await pilot.press("escape")
+        await wait_for_condition(lambda: composer.text == "@")
+
+        assert composer.text == "@"
+
+
+@pytest.mark.anyio
 async def test_minchat_up_down_navigate_slash_command_suggestions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -456,6 +565,61 @@ async def test_minchat_enter_applies_highlighted_slash_command(
 
         assert composer.text == "/reset"
         assert composer.cursor_location == (0, len("/reset"))
+
+
+@pytest.mark.anyio
+async def test_minchat_compact_command_compacts_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    calls: list[sessions.Session] = []
+
+    async def fake_compact_message_history(session: sessions.Session) -> bool:
+        calls.append(session)
+        return True
+
+    monkeypatch.setattr(
+        sessions, "compact_message_history", fake_compact_message_history
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/compact")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        assert calls == [app.session]
+        assert any("Memory compacted." in block._markdown for block in blocks)
+
+
+@pytest.mark.anyio
+async def test_minchat_compact_command_reports_empty_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async def fake_compact_message_history(session: sessions.Session) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        sessions, "compact_message_history", fake_compact_message_history
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/compact")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+
+        transcript = app.query_one("#transcript")
+        blocks = [block for block in transcript.query(Markdown)]
+        assert any("Nothing to compact." in block._markdown for block in blocks)
 
 
 @pytest.mark.anyio
@@ -581,6 +745,7 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
         transcript = app.query_one("#transcript")
+        chat_shell = app.query_one("#chat-shell", ChatShell)
         composer = app.query_one("#composer", Composer)
         await transcript.remove_children()
         await transcript.mount(
@@ -610,8 +775,8 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
 
         monkeypatch.setattr(transcript, "scroll_to", scroll_to)
 
-        composer.action_transcript_previous_message()
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [
             transcript.children[25].virtual_region.y,
@@ -625,7 +790,7 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
         await pilot.pause(0)
         jumps.clear()
 
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [transcript.children[22].virtual_region.y]
 
@@ -633,9 +798,16 @@ async def test_composer_alt_arrows_scroll_transcript_by_user_and_answer_messages
         await pilot.pause(0)
         jumps.clear()
 
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [transcript.children[25].virtual_region.y]
+
+        transcript.focus()
+        await pilot.pause(0)
+        jumps.clear()
+        await pilot.press("alt+up")
+
+        assert jumps == [transcript.children[24].virtual_region.y]
 
 
 @pytest.mark.anyio
@@ -648,7 +820,7 @@ async def test_composer_alt_up_skips_visible_clamped_last_message(
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause(0)
         transcript = app.query_one("#transcript")
-        composer = app.query_one("#composer", Composer)
+        chat_shell = app.query_one("#chat-shell", ChatShell)
         await transcript.remove_children()
         await transcript.mount(
             *(Markdown(f"filler before {index}\n\nmore") for index in range(30)),
@@ -676,7 +848,7 @@ async def test_composer_alt_up_skips_visible_clamped_last_message(
 
         monkeypatch.setattr(transcript, "scroll_to", scroll_to)
 
-        composer.action_transcript_previous_message()
+        chat_shell.action_transcript_previous_message()
 
         assert jumps == [older_answer_y]
         assert jumps != [latest_answer_y]
@@ -882,7 +1054,7 @@ async def test_minchat_queues_messages_while_streaming(
         await composer.action_composer_enter()
         await asyncio.wait_for(started.wait(), timeout=3)
         await pilot.pause(0)
-        assert str(composer.border_subtitle) == "answering"
+        assert str(composer.border_subtitle) == "answering · Ctrl+C to stop"
 
         composer.load_text("later")
         await composer.action_composer_enter()
@@ -903,6 +1075,52 @@ async def test_minchat_queues_messages_while_streaming(
         assert str(composer.border_subtitle) == ""
         assert submit_queue.get_queue(app.session) == []
         assert seen == ["hello", "later"]
+
+
+@pytest.mark.anyio
+async def test_minchat_ctrl_c_cancels_response_and_keeps_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
+        started.set()
+        await release.wait()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await asyncio.wait_for(started.wait(), timeout=3)
+        await pilot.pause(0)
+        assert str(composer.border_subtitle) == "answering · Ctrl+C to stop"
+
+        composer.load_text("later")
+        await composer.action_composer_enter()
+        await pilot.pause(0)
+        assert submit_queue.get_queue(app.session)
+
+        app.action_cancel_response()
+        await asyncio.wait_for(
+            wait_for_condition(lambda: not app.is_answering), timeout=3
+        )
+        await pilot.pause(0)
+
+        assert str(composer.border_subtitle) == ""
+        assert submit_queue.get_queue(app.session)
+        texts = sessions.get_messages(app.session)["messages"]
+        assert len(texts) == 1
+        assert texts[-1]["role"] == "user"
 
 
 def test_get_local_user_message_item_keeps_local_image_paths() -> None:
@@ -976,6 +1194,49 @@ async def test_minchat_queue_enter_loads_selected_message_back_into_composer(
         assert composer.attachments == [Path("/tmp/cat.png")]
         assert app.query_one(AttachmentCheckbox).attachment == Path("/tmp/cat.png")
         assert submit_queue.get_queue(app.session) == []
+
+
+@pytest.mark.anyio
+async def test_minchat_keeps_answer_text_out_of_tool_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async def fake_get_answer_streaming(session: sessions.Session):
+        yield type(
+            "Event",
+            (),
+            {
+                "type": "codex.rate_limits",
+                "rate_limits": {"primary": {"used_percent": 17}},
+            },
+        )()
+        yield type(
+            "Event", (), {"type": "response.output_text.delta", "delta": "Final answer"}
+        )()
+        yield type("Event", (), {"type": "response.output_text.done"})()
+
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.sessions.get_answer_streaming",
+        fake_get_answer_streaming,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("hello")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: not app.is_answering)
+        await pilot.pause(0)
+
+        blocks = [block for block in app.query_one("#transcript").query(Markdown)]
+        tool = [block for block in blocks if block.has_class("tool")]
+        answer = [block for block in blocks if block.has_class("answer")]
+        assert tool
+        assert answer
+        assert tool[-1]._markdown == "Remaining limit: primary = 83%"
+        assert answer[-1]._markdown == "Final answer"
 
 
 @pytest.mark.anyio
@@ -1115,6 +1376,10 @@ async def test_minchat_shows_retry_when_answer_fails(
         assert "\\[overloaded]" in cast(str, error_block.content)
 
         await app.action_retry_failed_message()
+        assert not list(
+            app.query_one("#transcript").query(Static).filter(".retry-error")
+        )
+        assert app.focused is composer
         await wait_for_condition(
             lambda: (
                 not app.is_answering
@@ -1169,3 +1434,27 @@ async def test_minchat_answer_completion_does_not_focus_composer_outside_chat(
 
         assert app.query_one(TabbedContent).active == "review-tab"
         assert app.screen.focused is not composer
+
+
+@pytest.mark.anyio
+async def test_composer_title_refreshes_when_workspace_label_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "faltoobot.faltoochat.app.get_workspace_label", lambda _: "repo • old"
+    )
+    monkeypatch.setattr("faltoobot.faltoochat.app.COMPOSER_TITLE_REFRESH_SECONDS", 0.01)
+    _, app = build_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        composer = app.query_one("#composer", Composer)
+        assert composer.border_title == "repo • old"
+        monkeypatch.setattr(
+            "faltoobot.faltoochat.app.get_workspace_label", lambda _: "repo • new"
+        )
+        await asyncio.wait_for(
+            wait_for_condition(lambda: composer.border_title == "repo • new"),
+            timeout=1,
+        )

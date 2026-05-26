@@ -14,6 +14,7 @@ from textual.binding import Binding
 from textual.color import Color
 from textual.strip import Strip
 from textual.widgets import TabbedContent, TabPane, TextArea
+from textual.widgets.text_area import TextAreaTheme
 
 
 from ..diff import Diff, get_diff
@@ -27,15 +28,16 @@ from ..editor_utils import (
     word_under_cursor,
 )
 from ..git import apply_selected_diff_lines, get_selected_change_state, stage_file
-from ..review_api import get_review
+from ..review_api import FILE_COMMENT_LINE, get_review
 from ..terminal import open_in_editor
 
 from .review_comment_modal import ReviewCommentModal
+from .search_project import SearchProject
 from .text_input_modal import TextInputModal
 
 if TYPE_CHECKING:
     from ..app import FaltooChatApp
-    from ..review import ReviewView
+    from ..review import ProjectSearchResult, ReviewView
 
 TAB_SWITCH_COOLDOWN = 0.2
 DIFF_MODE = "diff"
@@ -119,8 +121,12 @@ class ReviewDiffView(TextArea):
         ),
         Binding("slash", "review_search", "Search File", priority=True, show=True),
         Binding("escape", "review_escape", "Exit Search", priority=True, show=True),
-        Binding("m", "review_cycle_mode", "Review Mode", priority=True, show=True),
+        Binding("m", "review_cycle_mode", "Diff View", priority=True, show=True),
+        Binding("o", "review_focus_other_pane", "Other Pane", priority=True, show=True),
+        Binding("O", "review_open_split", "Open Split", priority=True, show=True),
+        Binding("q", "review_close_split", "Close Split", priority=True, show=True),
         Binding("a,c", "review_add", "Add Review", priority=True, show=True),
+        Binding("C", "review_add_file", "Add File Review", priority=True, show=True),
         Binding("s", "review_stage_lines", "Stage Lines", priority=True, show=True),
         Binding("S", "review_stage_file", "Stage File", priority=True, show=True),
         Binding(
@@ -146,7 +152,7 @@ class ReviewDiffView(TextArea):
         self.file_path = file_path
         self.review_view = review_view
         self.diff = diff
-        self.mode = DIFF_MODE
+        self.mode = kwargs.pop("mode", DIFF_MODE)
         self.visible_diff_lines: list[int] = []
         self.last_tab_switch_at = 0.0
         self.line_highlights = line_highlights
@@ -156,13 +162,29 @@ class ReviewDiffView(TextArea):
         self.missing_language_package: str | None = None
         kwargs.setdefault("soft_wrap", True)
         super().__init__("", language=None, **kwargs)
+        self.styles.scrollbar_size_horizontal = 0
+        _use_review_theme(self, dark=False)
         self._load_diff_text()
         _register_extra_languages(self)
         if requested_language in self.available_languages:
             self.language = requested_language
         elif requested_language is not None:
             self.missing_language_package = _language_package(requested_language)
-        self.border_title = "0 comments"
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.refresh_review_theme()
+        if self.missing_language_package is None:
+            # comment: all requested syntax highlighting support is already available.
+            return
+        self.app.notify(
+            f"Install `{self.missing_language_package}` for {self.file_path.suffix} syntax highlighting.",
+            severity="warning",
+        )
+
+    def refresh_review_theme(self) -> None:
+        _use_review_theme(self, dark=self.app.current_theme.dark)
+        self.refresh()
 
     @property
     def gutter_width(self) -> int:
@@ -170,17 +192,6 @@ class ReviewDiffView(TextArea):
         if not self.show_line_numbers:
             return 0
         return super().gutter_width + 1
-
-    def on_mount(self) -> None:
-        if self.missing_language_package is None:
-            return
-        self.app.notify(
-            f"Install `{self.missing_language_package}` for {self.file_path.suffix} syntax highlighting.",
-            severity="warning",
-        )
-
-    def on_show(self, _event: events.Show) -> None:
-        self.focus()
 
     def on_focus(self, _event: events.Focus) -> None:
         self.review_view.active_pane = self
@@ -209,7 +220,6 @@ class ReviewDiffView(TextArea):
         self.move_cursor((target_line, target_column))
         self.selection = selection
         self.scroll_to(scroll_x, scroll_y, animate=False, immediate=True)
-        self.border_title = _comment_title(self)
 
     def render_line(self, y: int):
         strip = super().render_line(y)
@@ -384,7 +394,11 @@ class ReviewDiffView(TextArea):
         )
 
     def _update_mode_subtitle(self) -> None:
-        self.border_subtitle = "" if self.mode == DIFF_MODE else self.mode
+        self.border_subtitle = (
+            str(self.file_path)
+            if self.mode == DIFF_MODE
+            else f"{self.file_path} · {self.mode}"
+        )
 
     def _visible_diff_line(self, line_index: int) -> int:
         """Return the backing diff line for a document row."""
@@ -411,6 +425,7 @@ class ReviewDiffView(TextArea):
         self.visible_diff_lines = _visible_diff_lines(self.diff, self.mode)
         self._update_mode_subtitle()
         self.load_text(_diff_text(self.diff, self.visible_diff_lines))
+        self.border_title = _comment_title(self)
         if self.document.line_count == 0:
             return
         self.move_cursor(
@@ -534,6 +549,35 @@ class ReviewDiffView(TextArea):
     async def action_review_refresh_current_file(self) -> None:
         await self.reload_in_place()
 
+    def action_review_focus_other_pane(self) -> None:
+        self.review_view.focus_other_split()
+
+    def action_review_open_split(self) -> None:
+        app = cast("FaltooChatApp", self.app)
+
+        async def on_result(result: "ProjectSearchResult | None") -> None:
+            if result is not None:
+                await self.review_view.open_split(
+                    result["path"],
+                    line_number=result["line_number"],
+                )
+
+        tabs = self.screen.query_one("#review-tabs", TabbedContent)
+        app.push_screen(
+            SearchProject(
+                workspace=app.workspace,
+                preferred_files=[
+                    viewer.file_path
+                    for pane in tabs.query(TabPane)
+                    for viewer in pane.query(ReviewDiffView)
+                ],
+            ),
+            on_result,
+        )
+
+    async def action_review_close_split(self) -> None:
+        await self.review_view.close_split()
+
     async def action_review_edit_file(self) -> None:
         await self.reload_in_place()
         workspace = cast("FaltooChatApp", self.app).workspace
@@ -600,11 +644,35 @@ class ReviewDiffView(TextArea):
     async def action_review_add(self) -> None:
         await self.reload_in_place()
         start, end = _review_range(self)
-        code = _get_code_for_review_submission(self.diff, start, end)
-        file_line_number_start = _file_line_for_diff_line(self.diff, start)
-        file_line_number_end = _file_line_for_diff_line(self.diff, end)
-        line_number_start = start + 1
-        line_number_end = end + 1
+        await self._add_review(start, end)
+
+    async def action_review_add_file(self) -> None:
+        await self.reload_in_place()
+        if not self.diff:
+            # comment: deleted/empty tabs can briefly have no diff rows to attach a file comment to.
+            return
+        await self._add_review(0, len(self.diff) - 1, file_comment=True)
+
+    async def _add_review(
+        self, start: int, end: int, *, file_comment: bool = False
+    ) -> None:
+        code = (
+            ""
+            if file_comment
+            else _get_code_for_review_submission(self.diff, start, end)
+        )
+        file_line_number_start = (
+            FILE_COMMENT_LINE
+            if file_comment
+            else _file_line_for_diff_line(self.diff, start)
+        )
+        file_line_number_end = (
+            FILE_COMMENT_LINE
+            if file_comment
+            else _file_line_for_diff_line(self.diff, end)
+        )
+        line_number_start = FILE_COMMENT_LINE if file_comment else start + 1
+        line_number_end = FILE_COMMENT_LINE if file_comment else end + 1
         existing = get_review(
             self.review_view.reviews,
             filename=self.file_path,
@@ -700,6 +768,23 @@ class ReviewDiffView(TextArea):
 
     async def action_review_submit_reviews(self) -> None:
         await self.review_view.submit_reviews()
+
+
+def _use_review_theme(view: ReviewDiffView, *, dark: bool) -> None:
+    """Use syntax colors for the app theme without forcing TextArea's background."""
+    theme_name = "vscode_dark" if dark else "github_light"
+    review_theme_name = f"faltoobot_review_{'dark' if dark else 'light'}"
+    theme = TextAreaTheme.get_builtin_theme(theme_name)
+    if theme is None:
+        # comment: fall back to TextArea's default theme if Textual changes built-in names.
+        return
+    view.register_theme(
+        TextAreaTheme(
+            name=review_theme_name,
+            syntax_styles=theme.syntax_styles,
+        )
+    )
+    view.theme = review_theme_name
 
 
 def _register_extra_languages(view: ReviewDiffView) -> None:
@@ -862,6 +947,10 @@ def _gutter_base_style(view: ReviewDiffView, document_line: int) -> Style:
     return view.rich_style
 
 
+def _line_end(view: ReviewDiffView, line: int) -> int:
+    return len(view.document.get_line(line))
+
+
 def _line_selection(
     view: ReviewDiffView,
     anchor_line: int,
@@ -869,29 +958,29 @@ def _line_selection(
 ):
     selection_type = type(view.selection)
     if current_line < anchor_line:
-        return selection_type((anchor_line + 1, 0), (current_line, 0))
-    if current_line + 1 < view.document.line_count:
-        return selection_type((anchor_line, 0), (current_line + 1, 0))
+        # comment: reverse selections must start after the anchor to cover full lines.
+        return selection_type(
+            (anchor_line, _line_end(view, anchor_line)), (current_line, 0)
+        )
     return selection_type(
-        (anchor_line, 0),
-        (current_line, len(view.document.get_line(current_line))),
+        (anchor_line, 0), (current_line, _line_end(view, current_line))
     )
 
 
 def _review_range(view: ReviewDiffView) -> tuple[int, int]:
-    start = view.selection.start[0]
-    end = view.selection.end[0]
-    if end < start:
-        start, end = end, start
-    # comment: line-mode selections use column-0 endpoints as a sentinel for the
-    # next full line, but arbitrary text selections ending at the start of a later
-    # line should still include that line in the review range.
+    """Return inclusive backing diff-line range for text or visual-line selection."""
     if (
         view.line_selection_anchor is not None
-        and view.selection.end[1] == 0
-        and end > start
+        and view.line_selection_cursor is not None
     ):
-        end -= 1
+        # comment: visual line mode tracks exact rows even when selection endpoints are line ends.
+        start = min(view.line_selection_anchor, view.line_selection_cursor)
+        end = max(view.line_selection_anchor, view.line_selection_cursor)
+    else:
+        start = view.selection.start[0]
+        end = view.selection.end[0]
+        if end < start:
+            start, end = end, start
     return (
         view._visible_diff_line(start),
         view._visible_diff_line(end),
@@ -1003,6 +1092,12 @@ def _commented_lines(view: ReviewDiffView) -> set[int]:
     lines: set[int] = set()
     for review in view.review_view.reviews:
         if review["filename"] != view.file_path:
+            continue
+        if (
+            review["line_number_start"] == FILE_COMMENT_LINE
+            and review["line_number_end"] == FILE_COMMENT_LINE
+        ):
+            # comment: file-level comments belong in the title count, not every line gutter.
             continue
         lines.update(range(review["line_number_start"] - 1, review["line_number_end"]))
     return lines

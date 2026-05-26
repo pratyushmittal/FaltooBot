@@ -84,6 +84,68 @@ def test_install_service_uses_systemd_on_linux(tmp_path: Path, monkeypatch) -> N
     ]
 
 
+def test_run_systemctl_sets_runtime_dir(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_capture(
+        *args: str, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        seen["args"] = args
+        seen["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(list(args), 0, "", "")
+
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(cli, "_run_capture", fake_run_capture)
+
+    cli._run_systemctl("daemon-reload")
+
+    env = seen["env"]
+    assert isinstance(env, dict)
+    runtime_dir = next(value for key, value in env.items() if key == "XDG_RUNTIME_DIR")
+    assert seen["args"] == ("systemctl", "--user", "daemon-reload")
+    assert runtime_dir == f"/run/user/{cli.os.getuid()}"
+
+
+def test_ensure_system_dependencies_installs_libmagic_on_linux(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(cli.ctypes.util, "find_library", lambda name: None)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: "/usr/bin/apt-get" if name == "apt-get" else None,
+    )
+    monkeypatch.setattr(cli, "_install_with_apt", lambda package: calls.append(package))
+
+    assert cli._ensure_system_dependencies() == ["libmagic1"]
+    assert calls == ["libmagic1"]
+
+
+def test_ensure_system_dependencies_skips_when_libmagic_exists(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli.ctypes.util, "find_library", lambda name: "/usr/lib/libmagic.so"
+    )
+
+    assert cli._ensure_system_dependencies() == []
+
+
+def test_ensure_system_dependencies_explains_manual_linux_install(monkeypatch) -> None:
+    monkeypatch.setattr(cli.ctypes.util, "find_library", lambda name: None)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    try:
+        cli._ensure_system_dependencies()
+    except SystemExit as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected SystemExit")
+
+    assert "libmagic" in message
+    assert "sudo apt-get install -y libmagic1" in message
+
+
 def test_render_log_line_uses_level_colors() -> None:
     assert cli._render_log_line("2026-03-17 INFO faltoobot: ok").style == "cyan"
     assert (
@@ -102,36 +164,39 @@ def test_run_update_command_upgrades_then_bootstraps(
 ) -> None:
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
-    ensured: list[str] = []
-    migrations: list[str] = []
+    migrations: list[dict[str, str]] = []
     versions = iter(["1.6.0", "1.6.0"])
 
     monkeypatch.setattr(cli, "build_config", lambda: config)
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
-    monkeypatch.setattr(
-        cli, "_ensure_configured", lambda: ensured.append("ran") or config
-    )
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     crontab: list[str] = []
     monkeypatch.setattr(
         cli, "_ensure_crontab_path", lambda: crontab.append("ran") or True
     )
     reinstalls: list[str] = []
     monkeypatch.setattr(
-        cli, "_run_migrations", lambda config: migrations.append("ran") or ["sessions"]
+        cli,
+        "_run_migrations",
+        lambda config, **kwargs: migrations.append(kwargs) or ["sessions"],
     )
     monkeypatch.setattr(cli, "_service_installed", lambda config: True)
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
+    recorded_updates: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        cli, "record_update", lambda old, new: recorded_updates.append((old, new))
+    )
 
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
-    assert ensured == ["ran"]
     assert crontab == ["ran"]
-    assert migrations == ["ran"]
+    assert migrations == [{"previous_version": "1.6.0", "current_version": "1.6.0"}]
+    assert recorded_updates == [("1.6.0", "1.6.0")]
     assert reinstalls == ["ran"]
     assert result == config
 
@@ -141,7 +206,6 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
 ) -> None:
     config = make_config(tmp_path)
     calls: list[tuple[str, ...]] = []
-    ensured: list[str] = []
     versions = iter(["1.6.0", "1.6.1"])
     reexecs: list[str] = []
 
@@ -149,13 +213,12 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
     monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
     monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
-    monkeypatch.setattr(
-        cli, "_ensure_configured", lambda: ensured.append("ran") or config
-    )
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     reinstalls: list[str] = []
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
     )
+    monkeypatch.delenv(cli.PREVIOUS_VERSION_ENV, raising=False)
     monkeypatch.setattr(cli, "_reexec_current_command", lambda: reexecs.append("ran"))
     monkeypatch.setattr(
         cli,
@@ -166,10 +229,36 @@ def test_run_update_command_reexecs_when_new_version_was_installed(
     result = cli.run_update_command(config)
 
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
-    assert ensured == []
     assert reinstalls == []
     assert reexecs == ["ran"]
+    assert cli.os.environ[cli.PREVIOUS_VERSION_ENV] == "1.6.0"
     assert result is None
+
+
+def test_run_update_command_records_original_version_after_reexec(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    versions = iter(["6.1.0", "6.1.0"])
+    recorded_updates: list[tuple[str, str]] = []
+
+    monkeypatch.setenv(cli.PREVIOUS_VERSION_ENV, "6.0.0")
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
+    monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
+    monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
+    monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
+    monkeypatch.setattr(cli, "_service_installed", lambda config: False)
+    monkeypatch.setattr(
+        cli, "record_update", lambda old, new: recorded_updates.append((old, new))
+    )
+    result = cli.run_update_command(config)
+
+    assert recorded_updates == [("6.0.0", "6.1.0")]
+    assert cli.PREVIOUS_VERSION_ENV not in cli.os.environ
+    assert result == config
 
 
 def test_run_whatsapp_command_runs_service_flow(tmp_path: Path, monkeypatch) -> None:
@@ -192,7 +281,9 @@ def test_run_migrations_reports_actual_changes(tmp_path: Path, monkeypatch) -> N
 
     monkeypatch.setattr(cli, "migrate_config_file", lambda path: False)
     monkeypatch.setattr(
-        cli, "run_migrations", lambda config: ["migration:remove-session-last-used"]
+        cli,
+        "run_migrations",
+        lambda config, **kwargs: ["migration:remove-session-last-used"],
     )
 
     assert cli._run_migrations(config) == [
@@ -207,52 +298,58 @@ def test_run_migrations_is_quiet_when_clean(tmp_path: Path, monkeypatch) -> None
     config.sessions_dir.mkdir(parents=True)
 
     monkeypatch.setattr(cli, "migrate_config_file", lambda path: False)
-    monkeypatch.setattr(cli, "run_migrations", lambda config: [])
+    monkeypatch.setattr(cli, "run_migrations", lambda config, **kwargs: [])
 
     assert cli._run_migrations(config) == []
 
 
-def test_run_configure_command_runs_selected_setup(tmp_path: Path, monkeypatch) -> None:
+def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
+    versions = iter(["1.6.0", "1.6.0"])
+
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(cli, "_uv_bin", lambda: "uv")
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: None)
+    monkeypatch.setattr(cli, "package_version", lambda name: next(versions))
+    monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
+    monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
+    monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
+    monkeypatch.setattr(cli, "_service_installed", lambda config: False)
+
+    result = cli.run_update_command(config)
+
+    assert result == config
+
+
+def test_handle_codex_login_command(monkeypatch) -> None:
     calls: list[str] = []
 
-    monkeypatch.setattr(cli, "_configure_openai", lambda config: calls.append("openai"))
-    monkeypatch.setattr(
-        cli, "_ensure_crontab_path", lambda: calls.append("cron") or True
-    )
-    monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
+    monkeypatch.setattr(cli, "run_openai_login", lambda console: calls.append("login"))
 
-    cli.run_configure_command(config, mode="openai")
+    cli.handle_command(cli.argparse.Namespace(command="codex-login"), None)
 
-    assert calls == ["openai", "cron", "restart"]
+    assert calls == ["login"]
 
 
-def test_run_configure_command_runs_gemini_setup(tmp_path: Path, monkeypatch) -> None:
-    config = make_config(tmp_path)
-    calls: list[str] = []
+def test_parse_args_hides_service_command_from_help(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["faltoobot", "--help"])
 
-    monkeypatch.setattr(cli, "_configure_gemini", lambda config: calls.append("gemini"))
-    monkeypatch.setattr(
-        cli, "_ensure_crontab_path", lambda: calls.append("cron") or True
-    )
-    monkeypatch.setattr(cli, "_restart_service", lambda config: calls.append("restart"))
+    try:
+        cli.parse_args()
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("expected help to exit")
 
-    cli.run_configure_command(config, mode="gemini")
-
-    assert calls == ["gemini", "cron", "restart"]
+    assert "whatsapp-service" not in capsys.readouterr().out
 
 
-def test_configure_gemini_saves_api_key(tmp_path: Path, monkeypatch) -> None:
-    config = make_config(tmp_path)
+def test_parse_args_accepts_hidden_service_command(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["faltoobot", cli.SERVICE_COMMAND])
 
-    monkeypatch.setattr(cli, "_prompt_text", lambda *args, **kwargs: "gem-key")
+    args = cli.parse_args()
 
-    cli._configure_gemini(config)
-
-    text = config.config_file.read_text(encoding="utf-8")
-    assert "[gemini]" in text
-    assert 'gemini_api_key = "gem-key"' in text
-    assert 'model = "gemini-3.1-flash-image-preview"' in text
+    assert args.command == cli.SERVICE_COMMAND
 
 
 def test_run_notify_command_formats_message_with_source(monkeypatch) -> None:
@@ -352,26 +449,6 @@ def test_run_browser_command_installs_playwright_chrome_when_binary_missing(
     assert data["browser"]["binary"] == "/tmp/chrome"
 
 
-def test_run_configure_command_browser_mode_installs_playwright_chrome(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    calls: list[tuple[str, ...]] = []
-
-    monkeypatch.setattr(cli, "_run_cmd", lambda *args: calls.append(args))
-    monkeypatch.setattr(
-        cli.browser_runtime, "default_browser_binary", lambda: "/tmp/chrome"
-    )
-    monkeypatch.setattr(cli, "_prompt_menu", lambda *args, **kwargs: 1)
-    monkeypatch.setattr(cli, "_restart_service", lambda config: None)
-
-    cli.run_configure_command(config, mode="browser")
-
-    assert calls == [(sys.executable, "-m", "playwright", "install", "chrome")]
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["browser"]["binary"] == "/tmp/chrome"
-
-
 def test_run_browser_command_rejects_missing_configured_binary(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -384,91 +461,6 @@ def test_run_browser_command_rejects_missing_configured_binary(
         assert str(exc) == "Configured browser binary not found: /tmp/does-not-exist"
     else:
         raise AssertionError("Expected SystemExit")
-
-
-def test_ensure_configured_runs_missing_browser_setup_for_old_config(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    config.config_file.parent.mkdir(parents=True, exist_ok=True)
-    config.config_file.write_text('[openai]\nmodel = "gpt-5.4"\n', encoding="utf-8")
-    calls: list[str] = []
-
-    monkeypatch.setattr(cli, "app_root", lambda: config.root)
-    monkeypatch.setattr(cli, "build_config", lambda: config)
-    monkeypatch.setattr(
-        cli,
-        "run_configure_command",
-        lambda config, *, mode=None: calls.append(str(mode)),
-    )
-
-    result = cli._ensure_configured()
-
-    assert calls == ["browser"]
-    assert result == config
-
-
-def test_ensure_configured_checks_missing_modes_before_build_config_migrates_file(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    config.config_file.parent.mkdir(parents=True, exist_ok=True)
-    config.config_file.write_text(
-        """[openai]
-model = "gpt-5.4"
-""",
-        encoding="utf-8",
-    )
-    calls: list[str] = []
-
-    def fake_build_config() -> Config:
-        # comment: build_config migrates config.toml in real runs, so simulate it filling the
-        # browser section before _ensure_configured returns.
-        config.config_file.write_text(
-            """[openai]
-model = "gpt-5.4"
-
-[browser]
-binary = ""
-""",
-            encoding="utf-8",
-        )
-        return config
-
-    monkeypatch.setattr(cli, "app_root", lambda: config.root)
-    monkeypatch.setattr(cli, "build_config", fake_build_config)
-    monkeypatch.setattr(
-        cli,
-        "run_configure_command",
-        lambda config, *, mode=None: calls.append(str(mode)),
-    )
-
-    result = cli._ensure_configured()
-
-    assert calls == ["browser"]
-    assert result == config
-
-
-def test_ensure_configured_skips_present_required_values(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    config.config_file.parent.mkdir(parents=True, exist_ok=True)
-    config.config_file.write_text('[browser]\nbinary = ""\n', encoding="utf-8")
-    calls: list[str] = []
-
-    monkeypatch.setattr(cli, "app_root", lambda: config.root)
-    monkeypatch.setattr(cli, "build_config", lambda: config)
-    monkeypatch.setattr(
-        cli,
-        "run_configure_command",
-        lambda config, *, mode=None: calls.append(str(mode)),
-    )
-
-    result = cli._ensure_configured()
-
-    assert calls == []
-    assert result == config
 
 
 def test_run_whatsapp_auth_surfaces_libmagic_help(monkeypatch, tmp_path: Path) -> None:
@@ -556,29 +548,3 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
     changed = cli._ensure_crontab_path()
 
     assert changed is False
-
-
-def test_configure_whatsapp_leaves_group_allowlist_empty_by_default(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = make_config(tmp_path)
-    prompts: list[tuple[str, list[str]]] = []
-
-    def fake_prompt(current: list[str], *, label: str = "Allowed chats") -> list[str]:
-        prompts.append((label, list(current)))
-        if label == "Allowed chats":
-            return ["15551234567@s.whatsapp.net"]
-        return list(current)
-
-    monkeypatch.setattr(cli, "_prompt_allowed_chats", fake_prompt)
-    monkeypatch.setattr(cli.Confirm, "ask", lambda *args, **kwargs: False)
-
-    cli._configure_whatsapp(config)
-
-    assert prompts == [
-        ("Allowed chats", []),
-        ("Allowed group chats", []),
-    ]
-    data = cli.merge_config(cli.load_toml(config.config_file))
-    assert data["bot"]["allowed_chats"] == ["15551234567@s.whatsapp.net"]
-    assert data["bot"]["allow_group_chats"] == []

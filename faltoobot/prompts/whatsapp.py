@@ -23,4 +23,6 @@ Media formatting:
 
 Background updates:
 If the latest user message starts with `# Background update`, it came from a background job. Tell the user naturally if it contains a result or useful status. Reply exactly `[noreply]` only when the update is noise or does not need user attention.
+
+If it contains `sub-agent follow-up id:`, it came from a `faltoochat --notify` sub-agent. Use that session id for follow-up sub-agent work when needed.
 """.strip()

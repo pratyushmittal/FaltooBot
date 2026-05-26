@@ -55,6 +55,14 @@ EXPECTED_DEFAULT_APP_BINDINGS = [
         "key_display": None,
     },
     {
+        "key": "ctrl+c",
+        "action": "cancel_response",
+        "description": "Cancel Response",
+        "show": True,
+        "priority": True,
+        "key_display": None,
+    },
+    {
         "key": "ctrl+p",
         "action": "command_palette",
         "description": "Command Palette",
@@ -287,7 +295,31 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
         {
             "key": "m",
             "action": "review_cycle_mode",
-            "description": "Review Mode",
+            "description": "Diff View",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "o",
+            "action": "review_focus_other_pane",
+            "description": "Other Pane",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "O",
+            "action": "review_open_split",
+            "description": "Open Split",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "q",
+            "action": "review_close_split",
+            "description": "Close Split",
             "show": True,
             "priority": True,
             "key_display": None,
@@ -296,6 +328,14 @@ EXPECTED_DEFAULT_REVIEW_BINDINGS = {
             "key": "a,c",
             "action": "review_add",
             "description": "Add Review",
+            "show": True,
+            "priority": True,
+            "key_display": None,
+        },
+        {
+            "key": "C",
+            "action": "review_add_file",
+            "description": "Add File Review",
             "show": True,
             "priority": True,
             "key_display": None,
@@ -439,7 +479,11 @@ def test_default_review_bindings_snapshot() -> None:
             [
                 binding
                 for binding in _default_keybindings()["review"]
-                if binding.action in {"review_search_project", "review_refresh_files"}
+                if binding.action
+                in {
+                    "review_search_project",
+                    "review_refresh_files",
+                }
             ]
         ),
         "ReviewDiffView": _snapshot(
@@ -447,7 +491,10 @@ def test_default_review_bindings_snapshot() -> None:
                 binding
                 for binding in _default_keybindings()["review"]
                 if binding.action
-                not in {"review_search_project", "review_refresh_files"}
+                not in {
+                    "review_search_project",
+                    "review_refresh_files",
+                }
             ]
         ),
     } == EXPECTED_DEFAULT_REVIEW_BINDINGS

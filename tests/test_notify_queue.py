@@ -77,3 +77,36 @@ def test_format_notification_message_without_source_still_wraps_message() -> Non
     assert "[noreply]" not in message
     assert "## message" in message
     assert "hello" in message
+
+
+def test_notify_queue_preserves_session_metadata(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+
+    notify_queue.enqueue_notification(
+        "code@demo",
+        "done",
+        source="sub-agent:faltoochat",
+        session_id="session-1",
+    )
+    claimed = notify_queue.claim_notifications(
+        lambda item: item["chat_key"] == "code@demo"
+    )
+
+    _path, notification = claimed[0]
+    assert notification["session_id"] == "session-1"
+
+
+def test_format_notification_message_includes_session_id() -> None:
+    message = notify_queue.format_notification_message(
+        {
+            "id": "notify-1",
+            "chat_key": "code@demo",
+            "message": "done",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "source": "sub-agent:faltoochat",
+            "session_id": "session-1",
+        }
+    )
+
+    assert "sub-agent follow-up id: session-1" in message
+    assert "--session-id" not in message

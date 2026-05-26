@@ -81,6 +81,23 @@ def textual_theme_from_terminal(timeout: float = 0.1) -> str | None:
     return "textual-dark" if terminal_dark else "textual-light"
 
 
+def set_terminal_title(title: str) -> None:
+    sequence = f"\033]2;{title}\033\\".encode()
+    for stream in (sys.stdout, sys.__stdout__):
+        if stream is None:
+            # comment: embedded runtimes may not keep the original stdout handle.
+            continue
+        if not stream.isatty():
+            # comment: non-interactive test/log output should not contain terminal escape codes.
+            continue
+        try:
+            os.write(stream.fileno(), sequence)
+            return
+        except OSError:
+            # comment: Textual can expose stdout as a closed pseudo-tty while the real tty is still on __stdout__.
+            continue
+
+
 def input_hint(
     config: Config,
     *,
