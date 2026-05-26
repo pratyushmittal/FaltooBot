@@ -87,6 +87,7 @@ def test_get_openai_client_options_prefers_oauth_over_api_key(
     assert default_headers == {
         openai_auth.CHATGPT_ACCOUNT_HEADER: "account-123",
         openai_auth.CHATGPT_ORIGINATOR_HEADER: openai_auth.CHATGPT_ORIGINATOR_VALUE,
+        openai_auth.CHATGPT_USER_AGENT_HEADER: openai_auth._codex_user_agent(),
     }
 
 
@@ -110,6 +111,7 @@ def test_get_openai_client_options_uses_codex_oauth(tmp_path: Path) -> None:
     assert default_headers == {
         openai_auth.CHATGPT_ACCOUNT_HEADER: "account-123",
         openai_auth.CHATGPT_ORIGINATOR_HEADER: openai_auth.CHATGPT_ORIGINATOR_VALUE,
+        openai_auth.CHATGPT_USER_AGENT_HEADER: openai_auth._codex_user_agent(),
     }
     assert asyncio.run(_oauth_token(api_key)) == "access-token"
 
@@ -152,6 +154,35 @@ def test_oauth_provider_refreshes_auth_json(monkeypatch, tmp_path: Path) -> None
     assert payload["tokens"]["access_token"] == "new-refresh-token"
     assert payload["tokens"]["refresh_token"] == "new-refresh-token"
     assert payload["last_refresh"]
+
+
+def test_request_token_refresh_sends_codex_headers(monkeypatch) -> None:
+    seen: dict[str, dict[str, str]] = {}
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, exc_tb: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"access_token": "access-token", "refresh_token": "refresh-token"}
+            ).encode("utf-8")
+
+    def fake_open_url(request: Request, *, timeout: int):
+        seen["headers"] = dict(request.header_items())
+        return FakeResponse()
+
+    monkeypatch.setattr(openai_auth, "open_url", fake_open_url)
+
+    openai_auth._request_token_refresh("refresh-token")
+
+    headers = seen["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Originator"] == openai_auth.CHATGPT_ORIGINATOR_VALUE
+    assert headers["User-agent"].startswith(f"{openai_auth.CHATGPT_ORIGINATOR_VALUE}/")
 
 
 class FakeResponse:

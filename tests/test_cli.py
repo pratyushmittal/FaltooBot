@@ -84,6 +84,28 @@ def test_install_service_uses_systemd_on_linux(tmp_path: Path, monkeypatch) -> N
     ]
 
 
+def test_run_systemctl_sets_runtime_dir(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_capture(
+        *args: str, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        seen["args"] = args
+        seen["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(list(args), 0, "", "")
+
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(cli, "_run_capture", fake_run_capture)
+
+    cli._run_systemctl("daemon-reload")
+
+    env = seen["env"]
+    assert isinstance(env, dict)
+    runtime_dir = next(value for key, value in env.items() if key == "XDG_RUNTIME_DIR")
+    assert seen["args"] == ("systemctl", "--user", "daemon-reload")
+    assert runtime_dir == f"/run/user/{cli.os.getuid()}"
+
+
 def test_render_log_line_uses_level_colors() -> None:
     assert cli._render_log_line("2026-03-17 INFO faltoobot: ok").style == "cyan"
     assert (

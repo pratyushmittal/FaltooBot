@@ -2,8 +2,10 @@ import asyncio
 import base64
 import json
 import os
+import platform
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import ssl
 from typing import Any, TypeAlias
@@ -20,6 +22,7 @@ CHATGPT_OAUTH_BASE_URL = "https://chatgpt.com/backend-api/codex/"
 CHATGPT_ACCOUNT_HEADER = "chatgpt-account-id"
 CHATGPT_ORIGINATOR_HEADER = "originator"
 CHATGPT_ORIGINATOR_VALUE = "codex_cli_rs"
+CHATGPT_USER_AGENT_HEADER = "User-Agent"
 # comment: OpenAI's Codex OAuth flow uses this fixed client id. Keep it here so
 # refresh and login match the same first-party OAuth app, while still allowing an
 # env override if OpenAI rotates it in the future.
@@ -73,6 +76,20 @@ def openai_oauth_client_id() -> str:
         os.environ.get("FALTOOBOT_OPENAI_OAUTH_CLIENT_ID", "").strip()
         or CHATGPT_OAUTH_CLIENT_ID
     )
+
+
+def _package_version() -> str:
+    try:
+        return version("faltoobot")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
+def _codex_user_agent() -> str:
+    system = platform.system() or "unknown"
+    release = platform.release() or "unknown"
+    machine = platform.machine() or "unknown"
+    return f"{CHATGPT_ORIGINATOR_VALUE}/{_package_version()} ({system} {release}; {machine})"
 
 
 def save_chatgpt_oauth_tokens(
@@ -228,7 +245,11 @@ def _request_token_refresh(refresh_token: str) -> JsonObject:
                 "refresh_token": refresh_token,
             }
         ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            CHATGPT_ORIGINATOR_HEADER: CHATGPT_ORIGINATOR_VALUE,
+            CHATGPT_USER_AGENT_HEADER: _codex_user_agent(),
+        },
         method="POST",
     )
     try:
@@ -324,5 +345,6 @@ def get_openai_client_options(config: Config) -> OpenAIClientOptions:
             # comment: upstream Codex identifies first-party ChatGPT OAuth traffic with the
             # `originator` header rather than the older `OpenAI-Beta: responses=experimental`.
             CHATGPT_ORIGINATOR_HEADER: CHATGPT_ORIGINATOR_VALUE,
+            CHATGPT_USER_AGENT_HEADER: _codex_user_agent(),
         },
     )

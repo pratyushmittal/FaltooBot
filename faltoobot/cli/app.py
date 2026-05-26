@@ -74,9 +74,13 @@ def _reexec_current_command() -> NoReturn:
     raise RuntimeError("os.execv returned unexpectedly")
 
 
-def _run_capture(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _run_capture(
+    *args: str, check: bool = True, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run a command and return its captured stdout/stderr to the caller."""
-    return subprocess.run(list(args), check=check, text=True, capture_output=True)
+    return subprocess.run(
+        list(args), check=check, text=True, capture_output=True, env=env
+    )
 
 
 def _reraised_whatsapp_import_error(exc: Exception) -> None:
@@ -275,9 +279,17 @@ def _run_darwin_launchctl(
     return _run_capture("launchctl", *args, check=check)
 
 
+def _systemctl_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{_uid()}")
+    return env
+
+
 def _run_systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     try:
-        return _run_capture("systemctl", "--user", *args, check=check)
+        return _run_capture(
+            "systemctl", "--user", *args, check=check, env=_systemctl_env()
+        )
     except (
         FileNotFoundError
     ) as exc:  # comment: systemctl is required for Linux services.
