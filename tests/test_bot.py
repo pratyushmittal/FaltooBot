@@ -2677,3 +2677,45 @@ async def test_start_polling_global_notification_targets_allowed_chats(
 
     assert stored == ["# Background update\n\n## message\nFaltoobot updated"]
     assert processed == ["15555550123@s.whatsapp.net", "ack"]
+
+
+@pytest.mark.anyio
+async def test_start_polling_notification_requeues_failure_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    notification = {
+        "id": "notify_1",
+        "chat_key": "15555550123@s.whatsapp.net",
+        "message": "Check backups",
+        "created_at": "2026-04-05T00:00:00+00:00",
+    }
+
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue, "recover_processing_notifications", lambda: 0
+    )
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "claim_notifications",
+        lambda _matches: [(tmp_path / "notify.json", notification)],
+    )
+
+    async def fail_process(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    def fake_requeue(_path: Path) -> None:
+        events.append("requeue")
+        whatsapp_app.notifications_stop.set()
+
+    monkeypatch.setattr(whatsapp_app, "_process_notification_for_chat", fail_process)
+    monkeypatch.setattr(whatsapp_app.notify_queue, "requeue_notification", fake_requeue)
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue,
+        "ack_notification",
+        lambda _path: events.append("ack"),
+    )
+
+    await whatsapp_app._start_polling_notifications()
+
+    assert events == ["requeue"]

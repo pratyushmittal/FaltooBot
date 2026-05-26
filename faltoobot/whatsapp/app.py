@@ -100,6 +100,7 @@ async def _process_notification_for_chat(
 async def _start_polling_notifications() -> None:
     recovered = notify_queue.recover_processing_notifications()
     if recovered:
+        # comment: stale processing files mean a previous poller stopped mid-turn.
         logger.warning("Recovered %s stale notify-queue item(s)", recovered)
     while not notifications_stop.is_set():
         for path, notification in notify_queue.claim_notifications(
@@ -116,22 +117,12 @@ async def _start_polling_notifications() -> None:
                     await _process_notification_for_chat(chat_key, notification)
             except Exception:
                 logger.exception(
-                    "Notify-queue item %s failed; requeueing and continuing",
+                    "Notify-queue item %s failed; requeueing",
                     notification.get("id", path.name),
                 )
                 notify_queue.requeue_notification(path)
-                try:
-                    await asyncio.wait_for(notifications_stop.wait(), timeout=5.0)
-                except TimeoutError:
-                    pass
                 continue
-            else:
-                logger.info(
-                    "Handled notify-queue item %s for %s",
-                    notification.get("id", path.name),
-                    notification.get("chat_key"),
-                )
-                notify_queue.ack_notification(path)
+            notify_queue.ack_notification(path)
         try:
             await asyncio.wait_for(notifications_stop.wait(), timeout=1.0)
         except TimeoutError:
