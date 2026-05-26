@@ -52,24 +52,24 @@ def update_default_openai_model(config: Config) -> bool:
     return True
 
 
-def enable_default_openai_websocket(
+def disable_default_openai_websocket(
     config: Config,
     *,
     previous_version: str | None,
     current_version: str | None,
 ) -> bool:
-    if not _upgrading_across(previous_version, current_version, "6.4.1"):
-        # comment: backfill users whose 6.1-6.4 config kept the old default.
+    if not _upgrading_across(previous_version, current_version, "6.5.3"):
+        # comment: keep the default flip tied to this release only.
         return False
     path = config.config_file
     if not path.exists():
-        # comment: fresh installs will be created with websocket enabled.
+        # comment: fresh installs will be created with websocket disabled.
         return False
     data = merge_config(load_toml(path))
-    if data["openai"]["websocket"] is not False:
-        # comment: only move users who were still on the previous default.
+    if data["openai"]["websocket"] is not True:
+        # comment: false configs are already using the safer SDK streaming path.
         return False
-    data["openai"]["websocket"] = True
+    data["openai"]["websocket"] = False
     path.write_text(render_config(data), encoding="utf-8")
     return True
 
@@ -87,8 +87,8 @@ def main(
         changes.append("migration:remove-session-last-used")
     if update_default_openai_model(config):
         changes.append("migration:update-default-openai-model")
-    if enable_default_openai_websocket(
+    if disable_default_openai_websocket(
         config, previous_version=previous_version, current_version=current_version
     ):
-        changes.append("migration:enable-default-openai-websocket")
+        changes.append("migration:disable-default-openai-websocket")
     return changes

@@ -38,7 +38,7 @@ class Config:
     gemini_api_key: str = ""
     gemini_model: str = GEMINI_MODEL
     google_places_api_key: str = ""
-    openai_websocket: bool = True
+    openai_websocket: bool = False
 
 
 def app_root() -> Path:
@@ -53,7 +53,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "model": MODEL_OPTIONS[0],
             "thinking": DEFAULT_THINKING,
             "fast": False,
-            "websocket": True,
+            "websocket": False,
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
