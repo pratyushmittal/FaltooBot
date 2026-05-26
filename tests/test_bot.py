@@ -521,6 +521,14 @@ def test_source_chat_ids_normalize_whatsapp_ids(
                 Chat=jid("919838502343", "s.whatsapp.net"),
                 Sender=jid("919838502343", "s.whatsapp.net"),
             ),
+            set(),
+            False,
+        ),
+        (
+            Neonize_pb2.MessageSource(
+                Chat=jid("919838502343", "s.whatsapp.net"),
+                Sender=jid("919838502343", "s.whatsapp.net"),
+            ),
             {"2343@s.whatsapp.net"},
             False,
         ),
@@ -1179,7 +1187,7 @@ async def test_process_message_transcribes_voice_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     config.openai_api_key = "test-key"
     client = FakePresenceClient()
     prompts: list[str] = []
@@ -1232,7 +1240,7 @@ async def test_process_message_includes_reply_quote_text_in_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient()
     prompts: list[str] = []
 
@@ -1278,7 +1286,7 @@ async def test_process_message_includes_reply_quote_text_for_voice_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     config.openai_api_key = "test-key"
     client = FakePresenceClient()
     prompts: list[str] = []
@@ -1323,7 +1331,7 @@ async def test_process_message_rejects_long_voice_notes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient()
 
     async def fake_get_answer(*args: object, **kwargs: object) -> str:
@@ -1404,7 +1412,7 @@ async def test_process_message_handles_whatsapp_image_turns(
     expected_question: str,
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
 
@@ -1464,7 +1472,7 @@ async def test_process_message_groups_whatsapp_album_images_into_one_turn(
     case: dict[str, object],
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
     client = FakePresenceClient(audio_bytes=png_bytes())
     calls: list[dict[str, Any]] = []
     pending_albums: dict[str, runtime.PendingAlbum] = {}
@@ -1737,7 +1745,7 @@ async def test_simple_slash_command_with_trailing_text_goes_to_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"15555550123@s.whatsapp.net"})
     client = FakePresenceClient()
     prompts: list[str] = []
 
@@ -1765,7 +1773,7 @@ async def test_process_message_reset_creates_new_session_for_chat(
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
 
-    config = make_config(tmp_path, allowed_chats=set())
+    config = make_config(tmp_path, allowed_chats={"8960294979@s.whatsapp.net"})
     config.root.mkdir(parents=True, exist_ok=True)
     client = FakePresenceClient()
     chat_key = "8960294979@s.whatsapp.net"

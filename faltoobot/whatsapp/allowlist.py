@@ -14,7 +14,8 @@ def _phone_matches(left: str, right: str) -> bool:
 
 def matches_allowed_chats(allowed_chats: set[str], source_ids: set[str]) -> bool:
     if not allowed_chats:
-        return True
+        # comment: an empty allowlist should block everyone until explicitly configured.
+        return False
     if allowed_chats & source_ids:
         return True
 
