@@ -193,6 +193,10 @@ def test_run_update_command_upgrades_then_bootstraps(
         "_run_migrations",
         lambda config, **kwargs: migrations.append(kwargs) or ["sessions"],
     )
+    doctor_calls: list[Config] = []
+    monkeypatch.setattr(
+        cli, "run_doctor", lambda config: doctor_calls.append(config) or ["doctor:ok"]
+    )
     monkeypatch.setattr(cli, "_service_installed", lambda config: True)
     monkeypatch.setattr(
         cli, "_reinstall_service", lambda config: reinstalls.append("ran")
@@ -207,6 +211,7 @@ def test_run_update_command_upgrades_then_bootstraps(
     assert calls == [("uv", "tool", "upgrade", "faltoobot")]
     assert crontab == ["ran"]
     assert migrations == [{"previous_version": "1.6.0", "current_version": "1.6.0"}]
+    assert doctor_calls == [config]
     assert recorded_updates == [("1.6.0", "1.6.0")]
     assert reinstalls == ["ran"]
     assert result == config
@@ -261,6 +266,7 @@ def test_run_update_command_records_original_version_after_reexec(
     monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
     monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
+    monkeypatch.setattr(cli, "run_doctor", lambda config: [])
     monkeypatch.setattr(cli, "_service_installed", lambda config: False)
     monkeypatch.setattr(
         cli, "record_update", lambda old, new: recorded_updates.append((old, new))
@@ -325,6 +331,7 @@ def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(cli, "_ensure_system_dependencies", lambda: [])
     monkeypatch.setattr(cli, "_ensure_crontab_path", lambda: True)
     monkeypatch.setattr(cli, "_run_migrations", lambda config, **kwargs: [])
+    monkeypatch.setattr(cli, "run_doctor", lambda config: [])
     monkeypatch.setattr(cli, "_service_installed", lambda config: False)
 
     result = cli.run_update_command(config)

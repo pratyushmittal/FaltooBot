@@ -4,7 +4,6 @@ from faltoobot.config import Config, default_config, render_config
 from faltoobot.migrate import (
     disable_default_openai_websocket,
     main,
-    remove_session_last_used_files,
     update_default_openai_model,
 )
 
@@ -32,34 +31,6 @@ def make_config(tmp_path: Path) -> Config:
         bot_name="Faltoo",
         browser_binary="",
     )
-
-
-def test_remove_session_last_used_files(tmp_path: Path) -> None:
-    config = make_config(tmp_path)
-    stale = config.sessions_dir / "code@test" / "last_used"
-    messages = config.sessions_dir / "code@test" / "named" / "messages.json"
-    stale.parent.mkdir(parents=True)
-    messages.parent.mkdir(parents=True)
-    stale.write_text("old\n", encoding="utf-8")
-    messages.write_text("{}\n", encoding="utf-8")
-
-    changed = remove_session_last_used_files(config)
-
-    assert changed
-    assert not stale.exists()
-    assert messages.exists()
-
-
-def test_migrate_main_accepts_config(tmp_path: Path) -> None:
-    config = make_config(tmp_path)
-    stale = config.sessions_dir / "code@test" / "last_used"
-    stale.parent.mkdir(parents=True)
-    stale.write_text("old\n", encoding="utf-8")
-
-    changes = main(config)
-
-    assert changes == ["migration:remove-session-last-used"]
-    assert not stale.exists()
 
 
 def test_migrate_main_returns_empty_when_clean(tmp_path: Path) -> None:

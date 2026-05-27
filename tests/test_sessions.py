@@ -119,6 +119,9 @@ def test_get_session_creates_messages_json_and_workspace(
         / session.session_id
         / "messages.json"
     ).exists()
+    assert (tmp_path / ".faltoobot" / "sessions" / chat_key / "last_used").read_text(
+        encoding="utf-8"
+    ) == f"{session.session_id}\n"
     assert not (
         tmp_path / ".faltoobot" / "sessions" / chat_key / "sessions.json"
     ).exists()
@@ -182,6 +185,9 @@ def test_get_session_sets_dir_chat_key_and_last_used(
         f"code@{workspace.resolve().name}-"
         f"{hashlib.md5(str(workspace.resolve()).encode('utf-8')).hexdigest()[-6:]}"
     )
+    assert (session.chat_root / "last_used").read_text(
+        encoding="utf-8"
+    ) == f"{session.session_id}\n"
     assert sessions.get_session(chat_key=chat_key) == session
 
 
@@ -192,12 +198,31 @@ def test_get_session_reads_last_used_session(
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     chat_key = "123@lid"
 
-    first = sessions.get_session(chat_key=chat_key)
-    second = sessions.get_session(chat_key=chat_key)
-    payload = sessions.get_messages(second)
+    first = sessions.get_session(chat_key=chat_key, session_id="first")
+    sessions.get_session(chat_key=chat_key, session_id="second")
 
-    assert second == first
+    assert sessions.get_session(chat_key=chat_key).session_id == "second"
+
+    sessions.set_last_used(first)
+    payload = sessions.get_messages(sessions.get_session(chat_key=chat_key))
+
     assert payload["id"] == first.session_id
+
+
+def test_get_session_warns_and_picks_any_session_without_last_used(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    chat_key = "123@lid"
+    session = sessions.get_session(chat_key=chat_key, session_id="first")
+    (session.chat_root / "last_used").unlink()
+
+    picked = sessions.get_session(chat_key=chat_key)
+
+    assert picked.session_id == "first"
+    assert "Missing last_used for 123@lid" in caplog.text
 
 
 def test_set_session_name_persists_name(
@@ -213,6 +238,9 @@ def test_set_session_name_persists_name(
 
     assert session.session_id == "Fix flaky tests"
     assert payload["id"] == "Fix flaky tests"
+    assert (session.chat_root / "last_used").read_text(
+        encoding="utf-8"
+    ) == "Fix flaky tests\n"
     assert not old_session_dir.exists()
     assert session.session_dir.exists()
     assert sessions.list_sessions(session.chat_key) == [
@@ -221,6 +249,33 @@ def test_set_session_name_persists_name(
             "name": _listed_name(session, "Fix flaky tests"),
         }
     ]
+
+
+def test_set_session_name_keeps_last_used_when_renaming_inactive_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    first = sessions.get_session(chat_key="code@test", session_id="first")
+    second = sessions.get_session(chat_key="code@test", session_id="second")
+
+    sessions.set_session_name(first, "Renamed first")
+
+    assert (second.chat_root / "last_used").read_text(encoding="utf-8") == "second\n"
+
+
+def test_set_session_name_does_not_create_missing_last_used_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="code@test", session_id="first")
+    marker = session.chat_root / "last_used"
+    marker.unlink()
+
+    sessions.set_session_name(session, "Renamed first")
+
+    assert not marker.exists()
 
 
 def test_list_sessions_includes_unnamed_sessions(
@@ -233,11 +288,11 @@ def test_list_sessions_includes_unnamed_sessions(
     sessions.set_session_name(first, "Fix flaky tests")
 
     assert sessions.list_sessions("code@test") == [
+        {"id": "second", "name": _listed_name(second, "second")},
         {
             "id": "Fix flaky tests",
             "name": _listed_name(first, "Fix flaky tests"),
         },
-        {"id": "second", "name": _listed_name(second, "second")},
     ]
 
 
