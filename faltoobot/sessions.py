@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,8 +21,10 @@ from faltoobot.gpt_utils import (
     STANDALONE_COMPACTION_KEY,
     StreamingReplyItem,
     Tool,
+    ensure_function_call_outputs,
     get_openai_client,
     get_streaming_reply,
+    has_missing_function_call_outputs,
     trim_input,
 )
 from faltoobot.images import inline_image_item, upload_attachment
@@ -128,7 +131,7 @@ def _latest_session_id(chat_key: str) -> str | None:
     message_paths = list(_chat_root(chat_key).glob(f"*/{MESSAGES_FILE}"))
     if not message_paths:
         return None
-    message_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    message_paths.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
     return message_paths[0].parent.name
 
 
@@ -184,8 +187,21 @@ def set_session_name(session: Session, name: str) -> None:
     old_session_dir.rename(new_session_dir)
     # comment: mutate the current session so active streams keep writing to the renamed folder.
     session.session_id = new_session_id
-    # comment: keep the renamed current session at the top of the resume list.
-    session.messages_path.touch()
+    # comment: rewrite messages.json so its id and mtime track the renamed active session.
+    set_messages(session, get_messages(session))
+    # comment: some filesystems can give adjacent writes the same timestamp; force the
+    # renamed current session to sort ahead of the rest of the resume list.
+    newest_other = max(
+        (
+            path.stat().st_mtime_ns
+            for path in session.chat_root.glob(f"*/{MESSAGES_FILE}")
+            if path != session.messages_path
+        ),
+        default=0,
+    )
+    current_mtime = session.messages_path.stat().st_mtime_ns
+    target_mtime = max(current_mtime, newest_other + 1)
+    os.utime(session.messages_path, ns=(target_mtime, target_mtime))
 
 
 def _session_label(session_id: str, messages_path: Path) -> str:
@@ -196,7 +212,7 @@ def _session_label(session_id: str, messages_path: Path) -> str:
 def list_sessions(chat_key: str) -> list[dict[str, str]]:
     chat_key = _validate_chat_key(chat_key)
     message_paths = list(_chat_root(chat_key).glob(f"*/{MESSAGES_FILE}"))
-    message_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    message_paths.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
     return [
         {
             "id": path.parent.name,
@@ -432,10 +448,13 @@ async def get_answer_streaming(
     if available_skills:
         tools.append(load_skill_tool)
 
+    messages_changed = ensure_function_call_outputs(messages_json["messages"])
     instructions = get_system_instructions(config, chat_key, workspace)
     if messages_json["system_prompt"] != instructions:
         # comment: keep a debug snapshot without trusting stale prompts from older app versions.
         messages_json["system_prompt"] = instructions
+        messages_changed = True
+    if messages_changed:
         set_messages(session, messages_json)
 
     async for event in _get_streaming_reply(
@@ -445,7 +464,9 @@ async def get_answer_streaming(
         tools=tools,
         prompt_cache_key=messages_json["id"],
     ):
-        if event.type in {"function_call_output", "response.completed"}:
+        if event.type in {"function_call_output", "response.completed"} and not (
+            has_missing_function_call_outputs(messages_json["messages"])
+        ):
             set_messages(session, messages_json)
         yield event
 

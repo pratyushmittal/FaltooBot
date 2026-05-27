@@ -617,6 +617,112 @@ async def test_get_streaming_reply_yields_all_stream_events(
     assert client.closed is True
 
 
+def test_ensure_function_call_outputs_repairs_dangling_and_null_outputs() -> None:
+    history: MessageHistory = [
+        {"type": "message", "role": "user", "content": "old"},
+        {
+            "type": "function_call",
+            "id": "fc_missing",
+            "call_id": "call_missing",
+            "name": "greet",
+            "arguments": '{"name":"Faltoo"}',
+        },
+        {"type": "message", "role": "user", "content": "next"},
+        {
+            "type": "function_call",
+            "id": "fc_null",
+            "call_id": "call_null",
+            "name": "greet",
+            "arguments": '{"name":"Bot"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_null",
+            "output": None,
+        },
+    ]
+
+    assert gpt_utils.ensure_function_call_outputs(history) is True
+
+    assert history == [
+        {"type": "message", "role": "user", "content": "old"},
+        {
+            "type": "function_call",
+            "id": "fc_missing",
+            "call_id": "call_missing",
+            "name": "greet",
+            "arguments": '{"name":"Faltoo"}',
+        },
+        {
+            "id": "fco_call_missing",
+            "type": "function_call_output",
+            "call_id": "call_missing",
+            "output": gpt_utils.MISSING_FUNCTION_CALL_OUTPUT,
+            "status": "completed",
+        },
+        {"type": "message", "role": "user", "content": "next"},
+        {
+            "type": "function_call",
+            "id": "fc_null",
+            "call_id": "call_null",
+            "name": "greet",
+            "arguments": '{"name":"Bot"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_null",
+            "output": gpt_utils.MISSING_FUNCTION_CALL_OUTPUT,
+            "status": "completed",
+        },
+    ]
+    assert gpt_utils.has_missing_function_call_outputs(history) is False
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_repairs_dangling_tool_calls_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(
+        [
+            {
+                "events": [FakeCompletedEvent([])],
+                "output": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+    history: MessageHistory = [
+        {"type": "message", "role": "user", "content": "old"},
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "greet",
+            "arguments": '{"name":"Faltoobot"}',
+        },
+        {"type": "message", "role": "user", "content": "retry"},
+    ]
+
+    _items = [
+        item
+        async for item in get_streaming_reply(
+            instructions="system prompt",
+            input=history,
+            tools=[greet],
+        )
+    ]
+
+    repaired_output = {
+        "id": "fco_call_1",
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": gpt_utils.MISSING_FUNCTION_CALL_OUTPUT,
+        "status": "completed",
+    }
+    assert history[2] == repaired_output
+    assert client.responses.calls[0]["input"][2] == repaired_output
+
+
 @pytest.mark.anyio
 async def test_get_streaming_reply_trims_input(
     monkeypatch: pytest.MonkeyPatch,
@@ -661,6 +767,13 @@ async def test_get_streaming_reply_trims_input(
             "call_id": "call_1",
             "name": "greet",
             "arguments": '{"name":"Faltoobot"}',
+        },
+        {
+            "id": "fco_call_1",
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": gpt_utils.MISSING_FUNCTION_CALL_OUTPUT,
+            "status": "completed",
         },
         {"type": "compaction", "id": "cmp_1", "encrypted_content": "secret"},
         {"type": "message", "role": "assistant", "content": "hi"},

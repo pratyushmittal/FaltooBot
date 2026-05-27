@@ -429,6 +429,66 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
 
 
 @pytest.mark.anyio
+async def test_get_answer_streaming_persists_tool_calls_only_after_all_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        sessions,
+        "get_system_instructions",
+        lambda config, chat_key, workspace: "system prompt",
+    )
+
+    function_call = {
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "run_shell_call",
+        "arguments": '{"command":"true"}',
+    }
+    tool_output = {
+        "id": "fco_call_1",
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": "ok",
+        "status": "completed",
+    }
+
+    async def fake_get_streaming_reply(
+        config: Any,
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+        prompt_cache_key: str | None = None,
+    ):
+        input.append(cast(Any, function_call))
+        yield FakeCompletedEvent([function_call], {})
+        input.append(cast(Any, tool_output))
+        yield SimpleNamespace(type="function_call_output")
+
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
+    session = sessions.get_session(chat_key="code@test")
+    assert await sessions.append_user_turn(session, question="Hi") is True
+
+    saw_completed = False
+    async for event in sessions.get_answer_streaming(session):
+        if event.type == "response.completed":
+            saw_completed = True
+            assert sessions.get_messages(session)["messages"] == [
+                {"type": "message", "role": "user", "content": "Hi"}
+            ]
+
+    assert saw_completed is True
+    assert sessions.get_messages(session)["messages"] == [
+        {"type": "message", "role": "user", "content": "Hi"},
+        function_call,
+        tool_output,
+    ]
+
+
+@pytest.mark.anyio
 async def test_get_answer_exposes_shell_tool_for_whatsapp_chats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

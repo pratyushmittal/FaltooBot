@@ -23,6 +23,7 @@ from faltoobot.gpt_utils import (
     _callable_name,
     _cloud_tools,
     _remember_response_event,
+    ensure_function_call_outputs,
     _request_extra_headers,
     _to_message_item,
     _tool_calls_from_response,
@@ -140,6 +141,7 @@ async def streaming_reply(  # noqa: C901, PLR0913
     tools_by_name = {_callable_name(tool): tool for tool in tools}
     replace_unavailable_uploads = uses_chatgpt_oauth(config)
     previous_response_id: str | None = None
+    ensure_function_call_outputs(input)
     current_input = trim_input(
         input, replace_unavailable_uploads=replace_unavailable_uploads
     )
