@@ -106,9 +106,24 @@ def _install_with_brew(package: str) -> None:
     _run_cmd(brew, "install", package)
 
 
+def _libmagic_available() -> bool:
+    try:
+        import magic
+
+        magic.Magic(mime=True).from_buffer(b"faltoobot")
+    except ImportError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
 def _ensure_system_dependencies() -> list[str]:
+    if _libmagic_available():
+        # comment: python-magic can load libmagic, so no package install is needed.
+        return []
     if ctypes.util.find_library("magic"):
-        # comment: python-magic can import when the shared libmagic library is present.
+        # comment: ctypes can find libmagic even if python-magic is unavailable here.
         return []
     if sys.platform == "linux" and shutil.which("apt-get"):
         _install_with_apt(LINUX_LIBMAGIC_PACKAGE)

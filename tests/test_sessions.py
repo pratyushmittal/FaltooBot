@@ -730,6 +730,44 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
 
 
 @pytest.mark.anyio
+async def test_get_answer_uses_codex_output_when_output_text_property_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        output = None
+        codex_output = [
+            ResponseOutputMessage(
+                id="msg_codex",
+                type="message",
+                role="assistant",
+                status="completed",
+                content=[
+                    ResponseOutputText(
+                        type="output_text",
+                        text="hello from codex",
+                        annotations=[],
+                    )
+                ],
+            )
+        ]
+
+        @property
+        def output_text(self) -> str:
+            raise TypeError("'NoneType' object is not iterable")
+
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
+        yield SimpleNamespace(type="response.completed", response=Response())
+
+    monkeypatch.setattr(sessions, "get_answer_streaming", fake_get_answer_streaming)
+
+    answer = await sessions.get_answer(
+        sessions.Session(chat_key="code@test", session_id="session-1")
+    )
+
+    assert answer == "hello from codex"
+
+
+@pytest.mark.anyio
 async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

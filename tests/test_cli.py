@@ -109,6 +109,7 @@ def test_run_systemctl_sets_runtime_dir(monkeypatch) -> None:
 def test_ensure_system_dependencies_installs_libmagic_on_linux(monkeypatch) -> None:
     calls: list[str] = []
 
+    monkeypatch.setattr(cli, "_libmagic_available", lambda: False)
     monkeypatch.setattr(cli.ctypes.util, "find_library", lambda name: None)
     monkeypatch.setattr(cli.sys, "platform", "linux")
     monkeypatch.setattr(
@@ -122,7 +123,16 @@ def test_ensure_system_dependencies_installs_libmagic_on_linux(monkeypatch) -> N
     assert calls == ["libmagic1"]
 
 
-def test_ensure_system_dependencies_skips_when_libmagic_exists(monkeypatch) -> None:
+def test_ensure_system_dependencies_skips_when_python_magic_loads(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_libmagic_available", lambda: True)
+
+    assert cli._ensure_system_dependencies() == []
+
+
+def test_ensure_system_dependencies_skips_when_ctypes_finds_libmagic(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cli, "_libmagic_available", lambda: False)
     monkeypatch.setattr(
         cli.ctypes.util, "find_library", lambda name: "/usr/lib/libmagic.so"
     )
@@ -131,6 +141,7 @@ def test_ensure_system_dependencies_skips_when_libmagic_exists(monkeypatch) -> N
 
 
 def test_ensure_system_dependencies_explains_manual_linux_install(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_libmagic_available", lambda: False)
     monkeypatch.setattr(cli.ctypes.util, "find_library", lambda name: None)
     monkeypatch.setattr(cli.sys, "platform", "linux")
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)

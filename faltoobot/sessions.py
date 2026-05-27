@@ -316,7 +316,11 @@ def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
     response = getattr(event, "response", None)
     if response is None:
         return ""
-    output_text = getattr(response, "output_text", "")
+    try:
+        output_text = getattr(response, "output_text", "")
+    except TypeError:
+        # comment: OpenAI SDK output_text can crash when response.output is None.
+        output_text = ""
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
 

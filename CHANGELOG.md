@@ -2,6 +2,12 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.0.2 — 2026-05-27
+
+### Fixed
+- WhatsApp replies now avoid another OpenAI SDK `output=None` crash when extracting the final answer text.
+- `faltoobot update` no longer runs `brew install libmagic` repeatedly when macOS can already load libmagic.
+
 ## 7.0.1 — 2026-05-27
 
 ### Fixed
