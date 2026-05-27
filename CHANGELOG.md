@@ -2,6 +2,12 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.0.3 — 2026-05-27
+
+### Fixed
+- `faltoobot update` now heals saved sessions with missing tool-call outputs, avoiding replay errors from older interrupted conversations.
+- Sessions now use an explicit `last_used` marker again, so maintenance writes do not accidentally change the active session.
+
 ## 7.0.2 — 2026-05-27
 
 ### Fixed
