@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.0.1 — 2026-05-27
+
+### Fixed
+- HTTP streaming now avoids an OpenAI SDK parser crash when completed response output is empty.
+
 ## 7.0.0 — 2026-05-26
 
 ### Breaking
