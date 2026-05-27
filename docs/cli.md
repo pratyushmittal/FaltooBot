@@ -82,10 +82,10 @@ faltoochat "draft a release note"
 faltoochat "review unstaged files" --workspace=./repo --new-session
 ```
 
-### `--notify-chat-key`
+### `--notify`
 
 A one-shot run can send its final output back to another chat key. This powers sub-agents, cron jobs, and detached background jobs.
 
 ```bash
-faltoochat "List new emails for the user" --workspace=./emails --notify-chat-key=code@main
+faltoochat "List new emails for the user" --workspace=./emails --notify=code@main
 ```

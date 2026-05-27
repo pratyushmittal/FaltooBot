@@ -5,7 +5,14 @@ from collections import defaultdict
 from typing import Any
 
 from neonize.aioze.client import NewAClient
-from neonize.aioze.events import ConnectedEv, MessageEv, PairStatusEv
+from neonize.aioze.events import (
+    ConnectFailureEv,
+    ConnectedEv,
+    DisconnectedEv,
+    LoggedOutEv,
+    MessageEv,
+    PairStatusEv,
+)
 from neonize.utils.jid import Jid2String, build_jid
 
 from faltoobot import notify_queue
@@ -34,6 +41,7 @@ chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 debounce_timers: dict[str, asyncio.TimerHandle] = {}
 pending_albums: dict[str, runtime.PendingAlbum] = {}
 notifications_stop = asyncio.Event()
+whatsapp_connected = asyncio.Event()
 _allowlists_config_marker: tuple[str, int] | None = None
 
 
@@ -97,12 +105,34 @@ async def _process_notification_for_chat(
             )
 
 
+async def _wait_for_whatsapp_connection() -> bool:
+    """Return once WhatsApp is connected, or False if shutdown starts first."""
+    if whatsapp_connected.is_set():
+        return True
+
+    logger.info("Waiting for WhatsApp connection before processing notify queue")
+    connected_task = asyncio.create_task(whatsapp_connected.wait())
+    stopped_task = asyncio.create_task(notifications_stop.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {connected_task, stopped_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        pending = [task for task in (connected_task, stopped_task) if not task.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+    return connected_task in done and whatsapp_connected.is_set()
+
+
 async def _start_polling_notifications() -> None:
     recovered = notify_queue.recover_processing_notifications()
     if recovered:
         # comment: stale processing files mean a previous poller stopped mid-turn.
         logger.warning("Recovered %s stale notify-queue item(s)", recovered)
     while not notifications_stop.is_set():
+        if not await _wait_for_whatsapp_connection():
+            break
         for path, notification in notify_queue.claim_notifications(
             lambda item: (
                 item["chat_key"] == "global"
@@ -131,7 +161,26 @@ async def _start_polling_notifications() -> None:
 
 @client.event(ConnectedEv)
 async def _on_connected(_: NewAClient, __: ConnectedEv) -> None:
+    whatsapp_connected.set()
     logger.info("Faltoobot connected to WhatsApp")
+
+
+@client.event(DisconnectedEv)
+async def _on_disconnected(_: NewAClient, __: DisconnectedEv) -> None:
+    whatsapp_connected.clear()
+    logger.warning("Faltoobot disconnected from WhatsApp")
+
+
+@client.event(ConnectFailureEv)
+async def _on_connect_failure(_: NewAClient, __: ConnectFailureEv) -> None:
+    whatsapp_connected.clear()
+    logger.warning("Faltoobot WhatsApp connection failed")
+
+
+@client.event(LoggedOutEv)
+async def _on_logged_out(_: NewAClient, __: LoggedOutEv) -> None:
+    whatsapp_connected.clear()
+    logger.warning("Faltoobot logged out from WhatsApp")
 
 
 @client.event(PairStatusEv)
@@ -222,7 +271,8 @@ async def main(this_config: Config | None = None) -> None:
         chat_locks, \
         debounce_timers, \
         pending_albums, \
-        notifications_stop
+        notifications_stop, \
+        whatsapp_connected
 
     config = this_config or build_config()
     login.configure_logging(config.log_file)
@@ -231,6 +281,7 @@ async def main(this_config: Config | None = None) -> None:
     debounce_timers = {}
     pending_albums = {}
     notifications_stop = asyncio.Event()
+    whatsapp_connected = asyncio.Event()
     notify_task = asyncio.create_task(_start_polling_notifications())
 
     loop = asyncio.get_running_loop()

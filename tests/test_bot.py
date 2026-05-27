@@ -2446,10 +2446,17 @@ async def test_compact_message_history_skips_empty_sessions(
     assert get_messages(session)["messages"] == []
 
 
+def _set_whatsapp_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    connected = asyncio.Event()
+    connected.set()
+    monkeypatch.setattr(whatsapp_app, "whatsapp_connected", connected)
+
+
 @pytest.mark.anyio
 async def test_start_polling_notifications_claims_and_acks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _set_whatsapp_connected(monkeypatch)
     calls: list[str] = []
 
     monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
@@ -2614,6 +2621,7 @@ async def test_send_text_keeps_non_standalone_media_markdown_as_text(
 async def test_start_polling_global_notification_targets_allowed_chats(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _set_whatsapp_connected(monkeypatch)
     stored: list[str] = []
     processed: list[str] = []
     expected_targets = 1
@@ -2680,9 +2688,40 @@ async def test_start_polling_global_notification_targets_allowed_chats(
 
 
 @pytest.mark.anyio
+async def test_start_polling_notifications_waits_until_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    connected = asyncio.Event()
+    monkeypatch.setattr(whatsapp_app, "whatsapp_connected", connected)
+    monkeypatch.setattr(whatsapp_app, "notifications_stop", asyncio.Event())
+    monkeypatch.setattr(
+        whatsapp_app.notify_queue, "recover_processing_notifications", lambda: 0
+    )
+
+    def fake_claim(_matches: object) -> list[object]:
+        events.append("claim")
+        whatsapp_app.notifications_stop.set()
+        return []
+
+    monkeypatch.setattr(whatsapp_app.notify_queue, "claim_notifications", fake_claim)
+
+    poller = asyncio.create_task(whatsapp_app._start_polling_notifications())
+    await asyncio.sleep(0)
+
+    assert events == []
+
+    connected.set()
+    await poller
+
+    assert events == ["claim"]
+
+
+@pytest.mark.anyio
 async def test_start_polling_notification_requeues_failure_and_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _set_whatsapp_connected(monkeypatch)
     events: list[str] = []
     notification = {
         "id": "notify_1",
