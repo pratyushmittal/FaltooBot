@@ -90,15 +90,17 @@ class FakeItem:
 class FakeResponse:
     def __init__(
         self,
-        output: list[dict[str, Any]],
+        output: list[dict[str, Any]] | None,
         usage: dict[str, Any] | None = None,
     ) -> None:
-        self.output = [FakeItem(item) for item in output]
+        self.output = None if output is None else [FakeItem(item) for item in output]
         self.usage = usage
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "output": [item.to_dict() for item in self.output],
+            "output": None
+            if self.output is None
+            else [item.to_dict() for item in self.output],
             "usage": self.usage,
         }
 
@@ -133,7 +135,7 @@ class FakeResponses:
         self.calls: list[dict[str, Any]] = []
         self.index = 0
 
-    def stream(self, **kwargs: Any) -> FakeStreamManager:
+    async def create(self, **kwargs: Any) -> FakeStreamManager:
         self.calls.append(kwargs)
         response = self.responses[self.index]
         self.index += 1
@@ -150,7 +152,7 @@ class FakeClient:
 
 
 class FakeCompletedEvent:
-    def __init__(self, output: list[dict[str, Any]]) -> None:
+    def __init__(self, output: list[dict[str, Any]] | None) -> None:
         self.type = "response.completed"
         self.response = FakeResponse(output)
 
@@ -465,6 +467,55 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
         "content": [{"type": "output_text", "text": "Done."}],
     }
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_accepts_completed_output_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(
+        [
+            {
+                "events": [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=FakeItem(
+                            {
+                                "type": "message",
+                                "id": "msg_1",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Done."}],
+                            }
+                        ),
+                    ),
+                    FakeCompletedEvent(None),
+                ],
+                "output": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+
+    history: MessageHistory = [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+
+    items = [
+        item
+        async for item in get_streaming_reply(
+            instructions="system prompt",
+            input=history,
+            tools=[],
+        )
+    ]
+
+    assert getattr(items[-1], "type", "") == "response.completed"
+    assert history[-1] == {
+        "type": "message",
+        "id": "msg_1",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Done."}],
+    }
 
 
 @pytest.mark.anyio

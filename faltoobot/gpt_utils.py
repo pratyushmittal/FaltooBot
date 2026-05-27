@@ -345,7 +345,7 @@ async def get_streaming_reply(  # noqa: C901
         current_input: MessageHistory,
     ) -> AsyncIterator[StreamingReplyItem]:
         response_output: list[ResponseOutputItem] = []
-        async with client.responses.stream(
+        stream = await cast(Any, client.responses).create(
             model=config.openai_model,
             input=cast(
                 Any,
@@ -354,11 +354,12 @@ async def get_streaming_reply(  # noqa: C901
                     replace_unavailable_uploads=uses_chatgpt_oauth(config),
                 ),
             ),
-            tools=tool_defs + _cloud_tools(),  # type: ignore
+            tools=tool_defs + _cloud_tools(),
             store=False,
+            stream=True,
             parallel_tool_calls=True,
             instructions=instructions,
-            reasoning={"summary": "auto", "effort": config.openai_thinking},  # type: ignore
+            reasoning={"summary": "auto", "effort": config.openai_thinking},
             include=["reasoning.encrypted_content", "web_search_call.action.sources"],
             context_management=[
                 {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
@@ -366,7 +367,10 @@ async def get_streaming_reply(  # noqa: C901
             prompt_cache_key=prompt_cache_key or omit,
             extra_headers=_request_extra_headers(config, prompt_cache_key),
             service_tier="priority" if config.openai_fast else omit,
-        ) as stream:
+        )
+
+        # comment: raw streamed events avoid SDK snapshot parsing bugs on empty output.
+        async with stream:
             async for event in stream:
                 response_id = _remember_response_event(event, response_output)
                 if event.type != "response.completed":
