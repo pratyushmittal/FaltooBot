@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.0.4 — 2026-05-27
+
+### Fixed
+- WhatsApp background notifications now wait for the bot to connect before claiming queued notifications.
+
+### Changed
+- Docs and background-notification guidance now consistently use `faltoochat --notify` for AI/sub-agent notifications and `faltoobot notify` for final script output.
+- Updated locked dependencies and pre-commit hooks.
+
 ## 7.0.3 — 2026-05-27
 
 ### Fixed

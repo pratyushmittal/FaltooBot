@@ -9,12 +9,17 @@ from faltoobot.faltoochat.terminal import open_in_editor, set_terminal_title
 @pytest.mark.parametrize(
     ("available", "path", "line_number", "expected_command"),
     [
-        ({"nvim": "/usr/bin/nvim"}, Path("alpha.py"), 2, "/usr/bin/nvim +2 alpha.py"),
+        (
+            {"nvim": "/usr/bin/nvim"},
+            Path("alpha.py"),
+            2,
+            ["/usr/bin/nvim", "+2", "alpha.py"],
+        ),
         (
             {"emacs": "/usr/bin/emacs", "vi": "/usr/bin/vi"},
             Path("alpha beta.py"),
             3,
-            "/usr/bin/emacs +3 'alpha beta.py'",
+            ["/usr/bin/emacs", "+3", "alpha beta.py"],
         ),
     ],
 )
@@ -22,7 +27,7 @@ def test_open_in_editor_uses_first_available_terminal_editor(
     available: dict[str, str],
     path: Path,
     line_number: int,
-    expected_command: str,
+    expected_command: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[str] = []
@@ -31,8 +36,8 @@ def test_open_in_editor_uses_first_available_terminal_editor(
         lambda name: available.get(name),
     )
     monkeypatch.setattr(
-        "faltoobot.faltoochat.terminal.os.system",
-        lambda command: seen.append(command) or 0,
+        "faltoobot.faltoochat.terminal.subprocess.run",
+        lambda command, check: seen.append(command),
     )
 
     assert open_in_editor(path, line_number=line_number) is True

@@ -1,7 +1,6 @@
 import os
 import re
 import select
-import shlex
 import shutil
 import subprocess
 import sys
@@ -132,5 +131,5 @@ def open_in_editor(
     if line_number is not None:
         command.append(f"+{line_number}")
     command.append(str(path))
-    os.system(shlex.join(command))
+    subprocess.run(command, check=False)  # noqa: S603
     return True
