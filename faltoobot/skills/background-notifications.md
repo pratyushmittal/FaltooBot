@@ -11,7 +11,9 @@ The unique identifier for your current chat is `{chat_key}`.
 
 Default to `faltoochat "<task>" --notify="{chat_key}"` when the background task needs AI, reasoning, research, coding, summarization, or may need follow-up.
 
-Use `faltoobot notify "{chat_key}" ...` only when a normal script already has the final message and no AI work is needed.
+Use `faltoobot notify "{chat_key}" ...` when a normal script already has the final message and no AI work is needed.
+
+Do not wrap an already-composed monitor alert in `faltoochat --notify` just to make the agent echo it. That adds another LLM run, can mutate or drop the message, can surface stderr as a WhatsApp alert, and delays delivery. If the script has the exact message, send it with `faltoobot notify`.
 
 ## AI Cron / Sub-Agent Tasks
 
@@ -44,9 +46,14 @@ If a `faltoochat --notify` error looks transient, ask the same sub-agent to retr
 Good `faltoochat --notify` use-cases:
 - email/news digests that need summarization
 - PR reviews and code investigations
-- website monitoring that needs interpretation
+- website monitoring where the agent itself produces the final interpretation
 - research tasks
 - scheduled help with user tasks
+
+Bad `faltoochat --notify` use-cases:
+- echoing or rephrasing a final message that a shell/Python monitor already generated
+- piping deterministic script output through a prompt like "reply exactly with this text"
+- replacing `faltoobot notify` in a script that already does parsing, dedupe, and formatting
 
 ## Plain Script Notifications
 

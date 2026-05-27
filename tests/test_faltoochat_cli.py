@@ -104,6 +104,53 @@ def test_faltoochat_one_shot_notify_enqueues_without_printing_answer(
     assert capsys.readouterr().out == ""
 
 
+def test_faltoochat_notify_chat_key_alias_enqueues_notification(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    workspace = tmp_path / "workspace"
+    enqueued: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "faltoochat",
+            "List new emails",
+            "--workspace",
+            str(workspace),
+            "--new-session",
+            "--notify-chat-key=code@main",
+        ],
+    )
+    monkeypatch.setattr(
+        chat_app.sessions,
+        "get_session",
+        lambda *, chat_key, session_id=None, workspace=None: SimpleNamespace(
+            chat_key=chat_key, session_id="session-1"
+        ),
+    )
+
+    async def fake_run_one_shot(session, prompt: str) -> str:
+        return "There are 2 new emails."
+
+    monkeypatch.setattr(chat_app, "_run_one_shot", fake_run_one_shot)
+    monkeypatch.setattr(
+        chat_app.notify_queue,
+        "enqueue_notification",
+        lambda chat_key, message, **kwargs: (
+            enqueued.append({"chat_key": chat_key, "message": message, **kwargs})
+            or "notify-1"
+        ),
+    )
+
+    assert chat_app.main() == 0
+
+    assert enqueued[0]["chat_key"] == "code@main"
+    assert enqueued[0]["message"] == "There are 2 new emails."
+
+
 def test_faltoochat_one_shot_notify_honors_source_override(
     tmp_path: Path, monkeypatch
 ) -> None:

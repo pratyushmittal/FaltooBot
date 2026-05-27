@@ -188,7 +188,7 @@ faltoochat "review unstaged files" --workspace=./repo --new-session
 A one-shot `faltoochat` run can send its final output back to another chat key. This is useful for sub-agents, cron jobs, and detached background tasks:
 
 ```bash
-faltoochat "List new emails for the user" --workspace=./emails --notify-chat-key=code@main
+faltoochat "List new emails for the user" --workspace=./emails --notify=code@main
 ```
 
 ## Commands inside chat

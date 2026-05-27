@@ -977,6 +977,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workspace", help="workspace path to use for this chat")
     parser.add_argument(
         "--notify",
+        "--notify-chat-key",
+        dest="notify",
         help="send one-shot output to this chat key instead of printing it",
     )
     parser.add_argument(
