@@ -84,7 +84,7 @@ faltoochat "review unstaged files" --workspace=./repo --new-session
 
 ### `--notify`
 
-A one-shot run can send its final output back to another chat key. `--notify-chat-key` remains accepted as a compatibility alias. This powers sub-agents, cron jobs, and detached background jobs.
+A one-shot run can send its final output back to another chat key. This powers sub-agents, cron jobs, and detached background jobs.
 
 ```bash
 faltoochat "List new emails for the user" --workspace=./emails --notify=code@main

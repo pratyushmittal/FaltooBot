@@ -114,13 +114,14 @@ async def _wait_for_whatsapp_connection() -> bool:
     connected_task = asyncio.create_task(whatsapp_connected.wait())
     stopped_task = asyncio.create_task(notifications_stop.wait())
     try:
-        done, _pending = await asyncio.wait(
+        done, pending = await asyncio.wait(
             {connected_task, stopped_task}, return_when=asyncio.FIRST_COMPLETED
         )
     finally:
-        for task in (connected_task, stopped_task):
-            if not task.done():
-                task.cancel()
+        pending = [task for task in (connected_task, stopped_task) if not task.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     return connected_task in done and whatsapp_connected.is_set()
 
 
