@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,7 +33,10 @@ from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
 MESSAGES_FILE = "messages.json"
+LAST_USED_FILE = "last_used"
 WORKSPACE_DIR = "workspace"
+
+logger = logging.getLogger("faltoobot")
 
 
 class MessagesJson(TypedDict):
@@ -124,12 +128,29 @@ def _write_text_atomic(path: Path, value: str) -> None:
     temp.replace(path)
 
 
-def _latest_session_id(chat_key: str) -> str | None:
-    message_paths = list(_chat_root(chat_key).glob(f"*/{MESSAGES_FILE}"))
-    if not message_paths:
-        return None
-    message_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return message_paths[0].parent.name
+def _get_last_used_session_id(chat_key: str) -> str | None:
+    chat_root = _chat_root(chat_key)
+    try:
+        session_id = _validate_session_id(
+            (chat_root / LAST_USED_FILE).read_text(encoding="utf-8").strip()
+        )
+    except (OSError, ValueError):
+        session_id = None
+
+    if session_id and (chat_root / session_id / MESSAGES_FILE).exists():
+        return session_id
+
+    for path in chat_root.glob(f"*/{MESSAGES_FILE}"):
+        logger.warning("Missing last_used for %s; using %s", chat_key, path.parent.name)
+        return path.parent.name
+    return None
+
+
+def set_last_used(session: Session) -> None:
+    _write_text_atomic(
+        session.chat_root / LAST_USED_FILE,
+        f"{_validate_session_id(session.session_id)}\n",
+    )
 
 
 def get_session(
@@ -139,7 +160,7 @@ def get_session(
 ) -> Session:
     chat_key = _validate_chat_key(chat_key)
     session_id = _validate_session_id(
-        session_id or _latest_session_id(chat_key) or str(uuid4())
+        session_id or _get_last_used_session_id(chat_key) or str(uuid4())
     )
     session = Session(chat_key=chat_key, session_id=session_id)
     session_dir = session.session_dir
@@ -162,11 +183,11 @@ def get_session(
     workspace_path.mkdir(parents=True, exist_ok=True)
     # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
     (workspace_path / "AGENTS.md").touch(exist_ok=True)
-    # comment: update messages.json so its mtime tracks the last-used session.
     _write_text_atomic(
         messages_path,
         json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
     )
+    set_last_used(session)
     return session
 
 
@@ -180,12 +201,21 @@ def set_session_name(session: Session, name: str) -> None:
     if new_session_dir.exists():
         raise ValueError(f"Session already exists: {new_session_id}")
 
+    try:
+        was_last_used = (session.chat_root / LAST_USED_FILE).read_text(
+            encoding="utf-8"
+        ).strip() == session.session_id
+    except OSError:
+        # comment: old histories may not have an explicit last-used marker yet.
+        was_last_used = False
+
     # comment: rename the whole folder so the session id is the user-visible name.
     old_session_dir.rename(new_session_dir)
     # comment: mutate the current session so active streams keep writing to the renamed folder.
     session.session_id = new_session_id
-    # comment: keep the renamed current session at the top of the resume list.
-    session.messages_path.touch()
+    if was_last_used:
+        # comment: preserve the current-session marker across rename.
+        set_last_used(session)
 
 
 def _session_label(session_id: str, messages_path: Path) -> str:
@@ -195,8 +225,11 @@ def _session_label(session_id: str, messages_path: Path) -> str:
 
 def list_sessions(chat_key: str) -> list[dict[str, str]]:
     chat_key = _validate_chat_key(chat_key)
+    last_used = _get_last_used_session_id(chat_key)
     message_paths = list(_chat_root(chat_key).glob(f"*/{MESSAGES_FILE}"))
-    message_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    message_paths.sort(
+        key=lambda path: (path.parent.name != last_used, -path.stat().st_mtime)
+    )
     return [
         {
             "id": path.parent.name,

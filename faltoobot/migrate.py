@@ -24,20 +24,6 @@ def _upgrading_across(
     return bool(previous and current and previous < target <= current)
 
 
-def remove_session_last_used_files(config: Config) -> bool:
-    sessions_dir = config.sessions_dir
-    if not sessions_dir.exists():
-        # comment: fresh installs do not have session state yet.
-        return False
-    removed = False
-    for path in sessions_dir.glob("*/last_used"):
-        # comment: only remove the old marker file, not unrelated folders.
-        if path.is_file():
-            path.unlink()
-            removed = True
-    return removed
-
-
 def update_default_openai_model(config: Config) -> bool:
     path = config.config_file
     if not path.exists():
@@ -83,8 +69,6 @@ def main(
     config = config or build_config()
     changes: list[str] = []
     # comment: keep update summaries quiet when idempotent migrations have no work.
-    if remove_session_last_used_files(config):
-        changes.append("migration:remove-session-last-used")
     if update_default_openai_model(config):
         changes.append("migration:update-default-openai-model")
     if disable_default_openai_websocket(
