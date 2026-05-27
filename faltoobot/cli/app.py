@@ -488,6 +488,12 @@ def run_browser_command(args: argparse.Namespace, config: Config | None = None) 
     browser_runtime.open_browser(root=config.root, binary=binary, url=args.url)
 
 
+def run_doctor(config: Config) -> list[str]:
+    from faltoobot.doctor import main as doctor_main
+
+    return doctor_main(config)
+
+
 def _run_migrations(
     config: Config,
     *,
@@ -550,6 +556,7 @@ def run_update_command(config: Config | None = None) -> Config | None:
     changes = _run_migrations(
         config, previous_version=upgrade_from_version, current_version=current_version
     )
+    changes.extend(run_doctor(config))
     record_update(upgrade_from_version, current_version)
     final_config = build_config()
 

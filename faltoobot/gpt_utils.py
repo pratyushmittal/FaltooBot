@@ -28,10 +28,6 @@ STRIPPED_MESSAGE_KEYS = {
     "usage",
     STANDALONE_COMPACTION_KEY,
 }
-MISSING_FUNCTION_CALL_OUTPUT = (
-    "Tool call did not complete before FaltooBot recorded an output. "
-    "Treat this as a failed tool call; call the tool again if you still need it."
-)
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -183,117 +179,6 @@ def _replace_unavailable_upload(value: Any) -> Any:
     return {key: _replace_unavailable_upload(item) for key, item in value.items()}
 
 
-def _function_call_id(item: MessageItem) -> str | None:
-    if item.get("type") != "function_call":
-        return None
-    call_id = item.get("call_id")
-    return call_id if isinstance(call_id, str) and call_id else None
-
-
-def _function_call_output_id(item: MessageItem) -> str | None:
-    if item.get("type") != "function_call_output":
-        return None
-    call_id = item.get("call_id")
-    return call_id if isinstance(call_id, str) and call_id else None
-
-
-def _missing_function_call_output_item(call_id: str) -> MessageItem:
-    return {
-        "id": f"fco_{call_id}",
-        "type": "function_call_output",
-        "call_id": call_id,
-        "output": MISSING_FUNCTION_CALL_OUTPUT,
-        "status": "completed",
-    }
-
-
-def _normalize_function_call_output(item: MessageItem) -> bool:
-    if item.get("type") != "function_call_output":
-        return False
-
-    changed = False
-    if item.get("output") is None:
-        # comment: Responses treats a null/missing output as not answering the call.
-        item["output"] = MISSING_FUNCTION_CALL_OUTPUT
-        if "status" not in item:
-            item["status"] = "completed"
-        changed = True
-    return changed
-
-
-def missing_function_call_output_ids(items: MessageHistory) -> list[str]:
-    """Return function call ids that have no corresponding function_call_output."""
-    output_ids = {
-        call_id
-        for item in items
-        if (call_id := _function_call_output_id(item)) is not None
-        and item.get("output") is not None
-    }
-    missing: list[str] = []
-    for item in items:
-        call_id = _function_call_id(item)
-        if call_id is None or call_id in output_ids or call_id in missing:
-            continue
-        missing.append(call_id)
-    return missing
-
-
-def has_missing_function_call_outputs(items: MessageHistory) -> bool:
-    return bool(missing_function_call_output_ids(items))
-
-
-def ensure_function_call_outputs(items: MessageHistory) -> bool:
-    """Mutate history so every function_call has a non-null output item.
-
-    The Responses API rejects a replayed function_call unless the input also contains
-    a matching function_call_output. FaltooChat can be interrupted after streaming a
-    completed response that contains tool calls but before recording every tool
-    output, so repair old/in-memory histories before persisting or replaying them.
-    """
-    existing_output_ids = {
-        call_id
-        for item in items
-        if (call_id := _function_call_output_id(item)) is not None
-        and item.get("output") is not None
-    }
-    repaired: MessageHistory = []
-    pending_missing: list[str] = []
-    changed = False
-
-    def flush_pending_missing() -> None:
-        nonlocal changed
-        for call_id in pending_missing:
-            repaired.append(_missing_function_call_output_item(call_id))
-            changed = True
-        pending_missing.clear()
-
-    for item in items:
-        output_call_id = _function_call_output_id(item)
-        if output_call_id is not None:
-            # comment: copy before normalizing so trimmed snapshots do not share mutable items.
-            item = dict(item)
-            changed = _normalize_function_call_output(item) or changed
-            if output_call_id in pending_missing:
-                pending_missing.remove(output_call_id)
-            repaired.append(item)
-            continue
-
-        call_id = _function_call_id(item)
-        if call_id is not None:
-            repaired.append(item)
-            if call_id not in existing_output_ids and call_id not in pending_missing:
-                pending_missing.append(call_id)
-            continue
-
-        flush_pending_missing()
-        repaired.append(item)
-
-    flush_pending_missing()
-    if changed:
-        items[:] = repaired
-    return changed
-
-
 def trim_input(
     items: MessageHistory,
     *,
@@ -327,7 +212,6 @@ def trim_input(
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)
-    ensure_function_call_outputs(trimmed_items)
     return trimmed_items
 
 
@@ -513,8 +397,6 @@ async def get_streaming_reply(  # noqa: C901
 
         async for item in reply(current_input):
             yield item
-
-    ensure_function_call_outputs(input)
 
     try:
         async for item in reply(input):
