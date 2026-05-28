@@ -10,6 +10,7 @@ from pathlib import Path
 import ssl
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -238,7 +239,7 @@ def _token_url() -> str:
 def _request_token_refresh(refresh_token: str) -> JsonObject:
     request = Request(
         _token_url(),
-        data=json.dumps(
+        data=urlencode(
             {
                 "client_id": openai_oauth_client_id(),
                 "grant_type": "refresh_token",
@@ -246,7 +247,7 @@ def _request_token_refresh(refresh_token: str) -> JsonObject:
             }
         ).encode("utf-8"),
         headers={
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
             CHATGPT_ORIGINATOR_HEADER: CHATGPT_ORIGINATOR_VALUE,
             CHATGPT_USER_AGENT_HEADER: _codex_user_agent(),
         },

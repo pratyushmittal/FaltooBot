@@ -64,6 +64,15 @@ async def get_streaming_reply(
         yield item
 
 
+def test_get_openai_client_uses_codex_retry_limits() -> None:
+    client = gpt_utils.get_openai_client(_api_config())
+
+    timeout = cast(Any, client.timeout)
+
+    assert client.max_retries == gpt_utils.REQUEST_MAX_RETRIES
+    assert timeout.read == gpt_utils.STREAM_IDLE_TIMEOUT_SECONDS
+
+
 class Mode(str, Enum):
     FAST = "fast"
     SAFE = "safe"

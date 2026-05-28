@@ -4,7 +4,9 @@ import ssl
 from collections.abc import Awaitable, Callable
 from email.message import Message
 from pathlib import Path
+from typing import cast
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs
 from urllib.request import Request
 
 import pytest
@@ -157,7 +159,7 @@ def test_oauth_provider_refreshes_auth_json(monkeypatch, tmp_path: Path) -> None
 
 
 def test_request_token_refresh_sends_codex_headers(monkeypatch) -> None:
-    seen: dict[str, dict[str, str]] = {}
+    seen: dict[str, object] = {}
 
     class FakeResponse:
         def __enter__(self) -> "FakeResponse":
@@ -172,6 +174,7 @@ def test_request_token_refresh_sends_codex_headers(monkeypatch) -> None:
             ).encode("utf-8")
 
     def fake_open_url(request: Request, *, timeout: int):
+        seen["data"] = request.data
         seen["headers"] = dict(request.header_items())
         return FakeResponse()
 
@@ -179,10 +182,16 @@ def test_request_token_refresh_sends_codex_headers(monkeypatch) -> None:
 
     openai_auth._request_token_refresh("refresh-token")
 
-    headers = seen["headers"]
-    assert isinstance(headers, dict)
+    headers = cast(dict[str, str], seen["headers"])
+    assert headers["Content-type"] == "application/x-www-form-urlencoded"
     assert headers["Originator"] == openai_auth.CHATGPT_ORIGINATOR_VALUE
     assert headers["User-agent"].startswith(f"{openai_auth.CHATGPT_ORIGINATOR_VALUE}/")
+    body = parse_qs(cast(bytes, seen["data"]).decode("utf-8"))
+    assert body == {
+        "client_id": [openai_auth.openai_oauth_client_id()],
+        "grant_type": ["refresh_token"],
+        "refresh_token": ["refresh-token"],
+    }
 
 
 class FakeResponse:

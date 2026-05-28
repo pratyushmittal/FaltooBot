@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
 
-from openai import AsyncOpenAI, omit
+from openai import AsyncOpenAI, Timeout, omit
 from openai.types.responses import (
     FunctionToolParam,
     ResponseCompletedEvent,
@@ -22,6 +22,8 @@ from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 200_000
 STANDALONE_COMPACTION_KEY = "_standalone_compaction"
+REQUEST_MAX_RETRIES = 4
+STREAM_IDLE_TIMEOUT_SECONDS = 300
 STRIPPED_MESSAGE_KEYS = {
     "parsed_arguments",
     "response_id",
@@ -67,7 +69,16 @@ def _callable_name(function: Callable[..., Any]) -> str:
 
 def get_openai_client(config: Config) -> AsyncOpenAI:
     api_key, base_url, default_headers = get_openai_client_options(config)
-    kwargs: dict[str, Any] = {"api_key": api_key}
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "max_retries": REQUEST_MAX_RETRIES,
+        "timeout": Timeout(
+            connect=30.0,
+            read=STREAM_IDLE_TIMEOUT_SECONDS,
+            write=30.0,
+            pool=30.0,
+        ),
+    }
     if base_url:
         kwargs["base_url"] = base_url
     if default_headers:

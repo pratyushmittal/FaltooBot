@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from http import HTTPStatus
 import mimetypes
 import re
 from pathlib import Path
@@ -390,20 +391,67 @@ async def _handle_slash_command(
         await client.reply_message("Memory cleared for this chat.", event)
 
 
+STREAM_MAX_RETRIES = 5
+RETRY_BASE_DELAY_SECONDS = 0.2
+RETRY_MAX_DELAY_SECONDS = 5.0
+
+TRANSIENT_ANSWER_ERROR_NAMES = {
+    "APIConnectionError",
+    "APITimeoutError",
+    "ConnectError",
+    "ConnectTimeout",
+    "ReadError",
+    "ReadTimeout",
+    "RemoteProtocolError",
+    "TimeoutException",
+}
+TRANSIENT_ANSWER_ERROR_TEXT = (
+    "connection reset",
+    "incomplete chunked read",
+    "peer closed connection",
+)
+
+
+def _is_transient_answer_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int):
+            # comment: API errors are retryable only when the server failed.
+            return status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
+        if type(current).__name__ in TRANSIENT_ANSWER_ERROR_NAMES:
+            # comment: httpx/openai stream disconnects can have empty error messages.
+            return True
+        message = str(current).lower()
+        if any(text in message for text in TRANSIENT_ANSWER_ERROR_TEXT):
+            # comment: older errors only exposed the transient failure in text.
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 async def _get_answer_with_retry(session: Session) -> str:
-    try:
-        return await get_answer(session)
-    except Exception as exc:
-        message = str(exc).lower()
-        if (
-            "peer closed connection" not in message
-            and "incomplete chunked read" not in message
-        ):
-            # comment: non-network failures should use the normal user-visible error path.
-            raise
-        logger.warning("Retrying after transient answer stream error: %s", exc)
-        await asyncio.sleep(1.0)
-        return await get_answer(session)
+    for retry_number in range(STREAM_MAX_RETRIES + 1):
+        try:
+            return await get_answer(session)
+        except Exception as exc:
+            if (
+                not _is_transient_answer_error(exc)
+                or retry_number == STREAM_MAX_RETRIES
+            ):
+                # comment: non-network or exhausted stream failures use the normal error path.
+                raise
+            delay = min(
+                RETRY_BASE_DELAY_SECONDS * (2**retry_number), RETRY_MAX_DELAY_SECONDS
+            )
+            logger.warning(
+                "Reconnecting after transient answer stream error (%s/%s): %s",
+                retry_number + 1,
+                STREAM_MAX_RETRIES,
+                exc,
+            )
+            await asyncio.sleep(delay)
+    raise RuntimeError("unreachable answer retry state")
 
 
 async def process_turn_locked(

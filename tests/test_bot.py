@@ -2246,6 +2246,114 @@ async def test_process_turn_locked_retries_incomplete_chunked_answer(
 
 
 @pytest.mark.anyio
+async def test_process_turn_locked_retries_empty_read_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    class ReadError(Exception):
+        pass
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(runtime.asyncio, "sleep", fake_sleep)
+    config = make_config(tmp_path, allowed_chats=set())
+    client = FakePresenceClient()
+    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    expected_attempts = 2
+    attempts = 0
+
+    async def fake_get_answer(session: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ReadError
+        return "Done"
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await runtime.process_turn_locked(
+        cast(NewAClient, client),
+        session,
+        config=config,
+        turn={
+            "event": None,
+            "chat": jid("15555550123", "s.whatsapp.net"),
+            "message_ids": ["msg-1"],
+            "prompt": "hello",
+            "quoted_message_text": "",
+            "attachments": [],
+            "audio": None,
+        },
+    )
+
+    assert attempts == expected_attempts
+    assert client.sent_messages == ["Done"]
+
+
+@pytest.mark.anyio
+async def test_get_answer_with_retry_uses_stream_retry_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    class ReadError(Exception):
+        pass
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    attempts = 0
+
+    async def fake_get_answer(session: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= runtime.STREAM_MAX_RETRIES:
+            raise ReadError
+        return "Done"
+
+    monkeypatch.setattr(runtime.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    answer = await runtime._get_answer_with_retry(
+        get_session(chat_key="15555550123@s.whatsapp.net")
+    )
+
+    assert answer == "Done"
+    assert attempts == runtime.STREAM_MAX_RETRIES + 1
+    assert len(sleeps) == runtime.STREAM_MAX_RETRIES
+
+
+@pytest.mark.anyio
+async def test_get_answer_with_retry_does_not_retry_429(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    class APIStatusError(Exception):
+        status_code = 429
+
+    attempts = 0
+
+    async def fake_get_answer(session: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        raise APIStatusError
+
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    with pytest.raises(APIStatusError):
+        await runtime._get_answer_with_retry(
+            get_session(chat_key="15555550123@s.whatsapp.net")
+        )
+
+    assert attempts == 1
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("answer", "expected_messages"),
     [("queued reply", ["queued reply"]), ("[noreply]", [])],
