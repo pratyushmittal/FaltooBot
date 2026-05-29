@@ -507,7 +507,6 @@ async def prewarm_openai_websocket(session: Session) -> None:
         return
     if not (config.openai_api_key or config.openai_oauth):
         return
-    logger.info("Prewarming OpenAI websocket")
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])
     try:
@@ -521,7 +520,6 @@ async def prewarm_openai_websocket(session: Session) -> None:
     except Exception:
         logger.exception("OpenAI websocket prewarm failed")
         raise
-    logger.info("OpenAI websocket prewarm complete")
 
 
 async def get_answer(session: Session) -> str:

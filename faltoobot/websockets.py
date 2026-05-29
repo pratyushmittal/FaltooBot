@@ -195,6 +195,7 @@ class OpenAIWebsocketSession:
 
 async def _close_session(session: OpenAIWebsocketSession) -> None:
     if session.ws is not None:
+        logger.info("Closing OpenAI websocket")
         await session.ws.close()
     session.ws = None
     session.previous_response_id = None
@@ -238,6 +239,7 @@ async def _prewarm_if_needed(  # noqa: PLR0913
     request_input = trim_input(
         input, replace_unavailable_uploads=uses_chatgpt_oauth(config)
     )
+    logger.info("Starting OpenAI websocket prewarm; input_items=%s", len(request_input))
     for attempt in range(WEBSOCKET_PREWARM_RETRIES + 1):
         payload = _get_payload(
             config,
@@ -260,6 +262,10 @@ async def _prewarm_if_needed(  # noqa: PLR0913
                 )
             session.previous_response_id = completed_response_id
             session.input_index = len(input)
+            logger.info(
+                "OpenAI websocket prewarm complete; input_index=%s",
+                session.input_index,
+            )
             return
         except Exception as exc:
             await _close_session(session)
@@ -404,7 +410,6 @@ async def streaming_reply(  # noqa: C901
     )
     tools_by_name = {_callable_name(tool): tool for tool in tools}
     replace_unavailable_uploads = uses_chatgpt_oauth(config)
-
     try:
         async with session.lock:
             # Continue inside the same turn while the model asks for tool calls.
