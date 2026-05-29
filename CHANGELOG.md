@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.1.0 — 2026-05-29
+
+### Added
+- OpenAI WebSocket mode now prewarms sessions and keeps response state across turns for faster follow-up streaming when `openai.websocket = true`.
+- Added external WebSocket E2E coverage for API key and Codex OAuth auth, including token caching and auth failure behavior.
+
+### Fixed
+- WebSocket streaming now recovers through the prewarm gate when cached response ids expire or connection limits are hit, while avoiding retries for auth/client errors.
+- WhatsApp answer streaming now retries transient OpenAI stream interruptions.
+
 ## 7.0.4 — 2026-05-27
 
 ### Fixed
