@@ -30,6 +30,7 @@ from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
+from faltoobot.websockets import prewarm as websocket_prewarm
 from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
 MESSAGES_FILE = "messages.json"
@@ -386,6 +387,10 @@ async def append_user_turn(
         item for item in message_ids if item not in messages_json["message_ids"]
     ]
     if message_ids and not fresh_message_ids:
+        logger.info(
+            "Skipping duplicate user turn; message_ids=%s",
+            len(message_ids),
+        )
         return False
 
     # comment: convert the user turn into the exact content shape expected by the model.
@@ -413,7 +418,28 @@ async def append_user_turn(
     )
     messages_json["message_ids"].extend(fresh_message_ids)
     set_messages(session, messages_json)
+    logger.info(
+        "Appended user turn; attachments=%s message_ids=%s",
+        len(attachments or ()),
+        len(fresh_message_ids),
+    )
     return True
+
+
+def _session_tools(messages_json: MessagesJson) -> list[Tool]:
+    workspace = Path(messages_json["workspace"])
+    chat_key = messages_json["chat_key"]
+    tools: list[Tool] = [
+        get_run_shell_call_tool(workspace),
+        get_load_image_tool(workspace),
+    ]
+    available_skills, load_skill_tool = get_load_skill_tool(
+        workspace,
+        chat_key=chat_key,
+    )
+    if available_skills:
+        tools.append(load_skill_tool)
+    return tools
 
 
 async def _get_streaming_reply(
@@ -422,7 +448,7 @@ async def _get_streaming_reply(
     instructions: str,
     input: MessageHistory,
     tools: list[Tool],
-    prompt_cache_key: str | None,
+    prompt_cache_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
     if getattr(config, "openai_websocket", False) and (
         config.openai_api_key or config.openai_oauth
@@ -450,22 +476,13 @@ async def _get_streaming_reply(
 async def get_answer_streaming(
     session: Session,
 ) -> AsyncIterator[StreamingReplyItem]:
+    logger.info("Starting answer stream")
     config = build_config()
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])
-    chat_key = session.chat_key
-    tools: list[Tool] = [
-        get_run_shell_call_tool(workspace),
-        get_load_image_tool(workspace),
-    ]
-    available_skills, load_skill_tool = get_load_skill_tool(
-        workspace,
-        chat_key=chat_key,
-    )
-    if available_skills:
-        tools.append(load_skill_tool)
+    tools = _session_tools(messages_json)
 
-    instructions = get_system_instructions(config, chat_key, workspace)
+    instructions = get_system_instructions(config, session.chat_key, workspace)
     if messages_json["system_prompt"] != instructions:
         # comment: keep a debug snapshot without trusting stale prompts from older app versions.
         messages_json["system_prompt"] = instructions
@@ -481,6 +498,30 @@ async def get_answer_streaming(
         if event.type in {"function_call_output", "response.completed"}:
             set_messages(session, messages_json)
         yield event
+    logger.info("Finished answer stream")
+
+
+async def prewarm_openai_websocket(session: Session) -> None:
+    config = build_config()
+    if not getattr(config, "openai_websocket", False):
+        return
+    if not (config.openai_api_key or config.openai_oauth):
+        return
+    logger.info("Prewarming OpenAI websocket")
+    messages_json = get_messages(session)
+    workspace = Path(messages_json["workspace"])
+    try:
+        await websocket_prewarm(
+            config,
+            instructions=get_system_instructions(config, session.chat_key, workspace),
+            input=messages_json["messages"],
+            tools=_session_tools(messages_json),
+            prompt_cache_key=messages_json["id"],
+        )
+    except Exception:
+        logger.exception("OpenAI websocket prewarm failed")
+        raise
+    logger.info("OpenAI websocket prewarm complete")
 
 
 async def get_answer(session: Session) -> str:

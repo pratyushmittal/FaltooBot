@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import hashlib
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -924,6 +925,25 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
             ],
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_append_user_turn_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    caplog.set_level(logging.INFO, logger="faltoobot")
+    session = sessions.get_session(chat_key="code@test", session_id="session-1")
+
+    await sessions.append_user_turn(session, question="Hi")
+
+    assert any(
+        record.message == "Appended user turn; attachments=0 message_ids=0"
+        for record in caplog.records
+    )
 
 
 @pytest.mark.anyio

@@ -31,6 +31,7 @@ from faltoobot import notify_queue, sessions
 from faltoobot.changelog import available_update_notice, consume_changelog_update
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
+from faltoobot.faltoochat.logging_config import configure_logging
 from faltoobot.faltoochat.terminal import (
     set_terminal_title,
     textual_theme_from_terminal,
@@ -427,6 +428,9 @@ class FaltooChatApp(App[None]):
         if text := consume_changelog_update():
             await self.transcript.mount(Markdown(text, classes="tool"))
             self.transcript.anchor()
+        self.run_worker(
+            sessions.prewarm_openai_websocket(self.session), exclusive=False
+        )
         self.run_worker(self._show_available_update_notice(), exclusive=False)
         await self.queue().refresh_queue()
         if self._binding_errors:
@@ -1056,6 +1060,10 @@ def main() -> int:
     args = parse_args()
     _validate_notify_args(args)
     session = _session_from_args(args)
+    configure_logging(
+        session.chat_root.parent.parent / "faltoochat.log",
+        session_id=session.session_id,
+    )
     try:
         if args.prompt:
             if args.notify:

@@ -1,7 +1,46 @@
+import logging
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from faltoobot.faltoochat import app as chat_app
+from faltoobot.faltoochat.logging_config import configure_logging
+
+
+def _remove_faltoochat_log_handlers() -> None:
+    logger = logging.getLogger("faltoobot")
+    for handler in list(logger.handlers):
+        if getattr(handler, "_faltoochat_handler", False):
+            logger.removeHandler(handler)
+            handler.close()
+
+
+def _session_stub(
+    root: Path, *, chat_key: str = "code@test", session_id: str = "session-1"
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        chat_key=chat_key,
+        session_id=session_id,
+        chat_root=root / "sessions" / chat_key,
+    )
+
+
+def test_configure_logging_writes_faltoochat_log_with_session_id(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "logs" / "faltoochat.log"
+
+    try:
+        configure_logging(log_path, session_id="session-1")
+        logger = logging.getLogger("faltoobot")
+        logger.info("hello")
+        for handler in logger.handlers:
+            handler.flush()
+
+        text = log_path.read_text(encoding="utf-8")
+        assert "INFO faltoobot [session_id=session-1]: hello" in text
+    finally:
+        _remove_faltoochat_log_handlers()
 
 
 def test_faltoochat_main_runs_one_shot(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -26,7 +65,7 @@ def test_faltoochat_main_runs_one_shot(tmp_path: Path, monkeypatch, capsys) -> N
             seen.update(
                 {"chat_key": chat_key, "session_id": session_id, "workspace": workspace}
             )
-            or (chat_key, "session-1")
+            or _session_stub(tmp_path, chat_key=chat_key)
         ),
     )
 
@@ -49,8 +88,6 @@ def test_faltoochat_main_runs_one_shot(tmp_path: Path, monkeypatch, capsys) -> N
 def test_faltoochat_one_shot_notify_enqueues_without_printing_answer(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    from types import SimpleNamespace
-
     workspace = tmp_path / "workspace"
     seen: dict[str, object] = {}
     enqueued: list[dict[str, object]] = []
@@ -72,7 +109,7 @@ def test_faltoochat_one_shot_notify_enqueues_without_printing_answer(
         "get_session",
         lambda *, chat_key, session_id=None, workspace=None: (
             seen.update({"session_id": session_id})
-            or SimpleNamespace(chat_key=chat_key, session_id="session-1")
+            or _session_stub(tmp_path, chat_key=chat_key)
         ),
     )
 
@@ -107,8 +144,6 @@ def test_faltoochat_one_shot_notify_enqueues_without_printing_answer(
 def test_faltoochat_one_shot_notify_honors_source_override(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from types import SimpleNamespace
-
     workspace = tmp_path / "workspace"
     enqueued: list[dict[str, object]] = []
 
@@ -127,7 +162,7 @@ def test_faltoochat_one_shot_notify_honors_source_override(
     monkeypatch.setattr(
         chat_app.sessions,
         "get_session",
-        lambda **_kwargs: SimpleNamespace(session_id="session-1"),
+        lambda **_kwargs: _session_stub(tmp_path),
     )
 
     async def fake_run_one_shot(session, prompt: str) -> str:
@@ -147,8 +182,6 @@ def test_faltoochat_one_shot_notify_honors_source_override(
 def test_faltoochat_session_id_uses_existing_session(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from types import SimpleNamespace
-
     workspace = tmp_path / "workspace"
     messages_path = tmp_path / "messages.json"
     messages_path.touch()
@@ -175,7 +208,9 @@ def test_faltoochat_session_id_uses_existing_session(
         "get_session",
         lambda *, chat_key, session_id=None, workspace=None: (
             seen.update({"session_id": session_id})
-            or SimpleNamespace(chat_key=chat_key, session_id=session_id)
+            or _session_stub(
+                tmp_path, chat_key=chat_key, session_id=session_id or "session-1"
+            )
         ),
     )
 
@@ -191,8 +226,6 @@ def test_faltoochat_session_id_uses_existing_session(
 def test_faltoochat_session_id_without_workspace_finds_saved_session(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from types import SimpleNamespace
-
     app_root = tmp_path / "home"
     messages_path = (
         app_root / "sessions/sub-agent@project-abc123/session-1/messages.json"
@@ -218,7 +251,9 @@ def test_faltoochat_session_id_without_workspace_finds_saved_session(
             seen.update(
                 {"chat_key": chat_key, "session_id": session_id, "workspace": workspace}
             )
-            or SimpleNamespace(chat_key=chat_key, session_id=session_id)
+            or _session_stub(
+                app_root, chat_key=chat_key, session_id=session_id or "session-1"
+            )
         ),
     )
 
@@ -290,7 +325,6 @@ def test_faltoochat_notify_includes_fd_stderr(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     import os
-    from types import SimpleNamespace
 
     workspace = tmp_path / "workspace"
     enqueued: list[dict[str, object]] = []
@@ -309,7 +343,7 @@ def test_faltoochat_notify_includes_fd_stderr(
     monkeypatch.setattr(
         chat_app.sessions,
         "get_session",
-        lambda **_kwargs: SimpleNamespace(session_id="session-1"),
+        lambda **_kwargs: _session_stub(tmp_path),
     )
 
     async def fake_run_one_shot(session, prompt: str) -> str:
@@ -335,7 +369,6 @@ def test_faltoochat_notify_sends_error_notification_on_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
     import os
-    from types import SimpleNamespace
 
     workspace = tmp_path / "workspace"
     enqueued: list[dict[str, object]] = []
@@ -354,7 +387,7 @@ def test_faltoochat_notify_sends_error_notification_on_failure(
     monkeypatch.setattr(
         chat_app.sessions,
         "get_session",
-        lambda **_kwargs: SimpleNamespace(session_id="session-1"),
+        lambda **_kwargs: _session_stub(tmp_path),
     )
 
     async def fake_run_one_shot(session, prompt: str) -> str:

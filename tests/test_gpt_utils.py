@@ -9,6 +9,9 @@ from typing import Any, cast
 
 import pytest
 from openai import omit
+from websockets.datastructures import Headers
+from websockets.exceptions import InvalidStatus
+from websockets.http11 import Response
 from openai.types.responses import (
     ResponseCompactionItem,
     ResponseFunctionCallArgumentsDeltaEvent,
@@ -874,11 +877,28 @@ async def test_tool_result_keeps_structured_image_output() -> None:
 
 
 class FakeWebSocket:
-    def __init__(self, responses: list[list[dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        responses: list[list[dict[str, Any]]],
+        *,
+        connect_error: Exception | None = None,
+    ) -> None:
         self.responses = responses
+        self.connect_error = connect_error
         self.sent: list[dict[str, Any]] = []
         self.index = 0
         self.pending: list[str] = []
+
+    def __await__(self) -> Any:
+        async def connect() -> "FakeWebSocket":
+            if self.connect_error is not None:
+                raise self.connect_error
+            return self
+
+        return connect().__await__()
+
+    async def close(self) -> None:
+        return None
 
     async def __aenter__(self) -> "FakeWebSocket":
         return self
@@ -924,6 +944,7 @@ def _patch_api_websocket(
 
     from faltoobot import websockets as websocket_utils
 
+    websocket_utils.WEBSOCKET_SESSIONS.clear()
     monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
     monkeypatch.setattr(websocket_utils, "uses_chatgpt_oauth", lambda config: False)
     return connect_calls
@@ -941,12 +962,56 @@ def _previous_response_not_found_event() -> dict[str, Any]:
     }
 
 
+def _websocket_connection_limit_event() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "error",
+            "sequence_number": 1,
+            "error": {
+                "type": "invalid_request_error",
+                "code": "websocket_connection_limit_reached",
+                "message": "Responses websocket connection limit reached.",
+            },
+        }
+    ]
+
+
+def _websocket_completed_response(
+    response_id: str, output: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "response.completed",
+            "sequence_number": 1,
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created_at": 0,
+                "status": "completed",
+                "model": "gpt-5-mini",
+                "output": [] if output is None else output,
+            },
+        }
+    ]
+
+
+def _websocket_completed_response_without_id() -> list[dict[str, Any]]:
+    response = _websocket_completed_response("resp_unused")
+    del response[0]["response"]["id"]
+    return response
+
+
+def _invalid_status(status_code: int = 401) -> InvalidStatus:
+    return InvalidStatus(Response(status_code, "Unauthorized", Headers()))
+
+
 @pytest.mark.anyio
 async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket = FakeWebSocket(
         [
+            _websocket_completed_response("resp_warm"),
             [
                 {
                     "type": "response.output_text.delta",
@@ -1053,6 +1118,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
         }
     ]
     assert websocket.sent[0]["type"] == "response.create"
+    assert websocket.sent[0]["generate"] is False
     assert websocket.sent[0]["input"] == [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
     ]
@@ -1060,8 +1126,10 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     assert websocket.sent[0]["tool_choice"] == "auto"
     assert "stream" not in websocket.sent[0]
     assert "background" not in websocket.sent[0]
-    assert websocket.sent[1]["previous_response_id"] == "resp_1"
-    assert websocket.sent[1]["input"] == [
+    assert websocket.sent[1]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[1]["input"] == []
+    assert websocket.sent[2]["previous_response_id"] == "resp_1"
+    assert websocket.sent[2]["input"] == [
         {
             "id": "fco_call_1",
             "type": "function_call_output",
@@ -1071,7 +1139,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
         }
     ]
     assert history[-2:] == [
-        websocket.sent[1]["input"][0],
+        websocket.sent[2]["input"][0],
         {
             "type": "message",
             "id": "msg_2",
@@ -1083,7 +1151,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
 
 
 @pytest.mark.anyio
-async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
+async def test_websocket_prewarm_reuses_previous_response_across_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket = FakeWebSocket(
@@ -1093,7 +1161,21 @@ async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
                     "type": "response.completed",
                     "sequence_number": 1,
                     "response": {
-                        "id": "resp_new",
+                        "id": "resp_warm",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [],
+                    },
+                }
+            ],
+            [
+                {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": "resp_1",
                         "object": "response",
                         "created_at": 0,
                         "status": "completed",
@@ -1101,14 +1183,274 @@ async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
                         "output": [
                             {
                                 "type": "message",
-                                "id": "msg_new",
+                                "id": "msg_1",
                                 "role": "assistant",
                                 "content": [{"type": "output_text", "text": "Hello"}],
                             }
                         ],
                     },
                 }
-            ]
+            ],
+            [
+                {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": "resp_2",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-5-mini",
+                        "output": [
+                            {
+                                "type": "message",
+                                "id": "msg_2",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Again"}],
+                            }
+                        ],
+                    },
+                }
+            ],
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+    prompt_cache_key = "session-prewarm"
+
+    from faltoobot import websockets as websocket_utils
+
+    history: MessageHistory = [{"role": "user", "content": "hello"}]
+    await websocket_utils.prewarm(
+        config,
+        instructions="system prompt",
+        input=history,
+        tools=[],
+        prompt_cache_key=prompt_cache_key,
+    )
+
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key=prompt_cache_key,
+        )
+    ]
+    history.append({"role": "user", "content": "again"})
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key=prompt_cache_key,
+        )
+    ]
+
+    assert websocket.sent[0]["generate"] is False
+    assert websocket.sent[0]["input"] == [{"role": "user", "content": "hello"}]
+    assert websocket.sent[1]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[1]["input"] == []
+    assert websocket.sent[2]["previous_response_id"] == "resp_1"
+    assert websocket.sent[2]["input"] == [{"role": "user", "content": "again"}]
+
+
+@pytest.mark.anyio
+async def test_websocket_prewarm_raises_when_response_id_stays_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from faltoobot import websockets as websocket_utils
+
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response_without_id()
+            for _ in range(websocket_utils.WEBSOCKET_PREWARM_RETRIES + 1)
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+    history: MessageHistory = [{"role": "user", "content": "hello"}]
+
+    with pytest.raises(websocket_utils.MissingPrewarmResponseIDError):
+        _items = [
+            item
+            async for item in sessions._get_streaming_reply(
+                config=config,
+                instructions="system prompt",
+                input=history,
+                tools=[],
+                prompt_cache_key="session-123",
+            )
+        ]
+
+    assert len(websocket.sent) == websocket_utils.WEBSOCKET_PREWARM_RETRIES + 1
+    assert all(item["generate"] is False for item in websocket.sent)
+
+
+@pytest.mark.anyio
+async def test_websocket_prewarm_retries_when_response_id_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response_without_id(),
+            _websocket_completed_response("resp_warm"),
+            _websocket_completed_response("resp_1"),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+    history: MessageHistory = [{"role": "user", "content": "hello"}]
+
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key="session-123",
+        )
+    ]
+
+    assert websocket.sent[0]["generate"] is False
+    assert websocket.sent[1]["generate"] is False
+    assert websocket.sent[2]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[2]["input"] == []
+
+
+@pytest.mark.anyio
+async def test_websocket_prewarm_does_not_retry_client_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket([], connect_error=_invalid_status())
+    connect_calls = _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+
+    with pytest.raises(InvalidStatus, match="HTTP 401"):
+        _items = [
+            item
+            async for item in sessions._get_streaming_reply(
+                config=config,
+                instructions="system prompt",
+                input=[{"role": "user", "content": "hello"}],
+                tools=[],
+                prompt_cache_key="session-123",
+            )
+        ]
+
+    assert len(connect_calls) == 1
+    assert websocket.sent == []
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_replays_history_after_websocket_connection_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response("resp_warm"),
+            _websocket_connection_limit_event(),
+            _websocket_completed_response("resp_rewarm"),
+            _websocket_completed_response(
+                "resp_new",
+                [
+                    {
+                        "type": "message",
+                        "id": "msg_new",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Hello"}],
+                    }
+                ],
+            ),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+    history: MessageHistory = [{"role": "user", "content": "hello"}]
+
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key="session-123",
+        )
+    ]
+
+    assert websocket.sent[0]["generate"] is False
+    assert websocket.sent[1]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[1]["input"] == []
+    assert "previous_response_id" not in websocket.sent[2]
+    assert websocket.sent[2]["generate"] is False
+    assert websocket.sent[2]["input"] == [{"role": "user", "content": "hello"}]
+    assert websocket.sent[3]["previous_response_id"] == "resp_rewarm"
+    assert websocket.sent[3]["input"] == []
+    assert history[-1]["response_id"] == "resp_new"
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_raises_websocket_client_errors_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket([_websocket_completed_response("resp_warm")])
+    connect_calls = _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+
+    from faltoobot import websockets as websocket_utils
+
+    await websocket_utils.prewarm(
+        config,
+        instructions="system prompt",
+        input=[{"role": "user", "content": "hello"}],
+        tools=[],
+        prompt_cache_key="session-123",
+    )
+    websocket.connect_error = _invalid_status()
+    await websocket_utils._close_session(  # type: ignore[attr-defined]
+        websocket_utils.WEBSOCKET_SESSIONS["session-123"]
+    )
+
+    with pytest.raises(InvalidStatus, match="HTTP 401"):
+        _items = [
+            item
+            async for item in sessions._get_streaming_reply(
+                config=config,
+                instructions="system prompt",
+                input=[{"role": "user", "content": "hello"}],
+                tools=[],
+                prompt_cache_key="session-123",
+            )
+        ]
+
+    assert len(connect_calls) == len(websocket.responses) + 1
+    assert len(websocket.sent) == len(websocket.responses)
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response("resp_warm"),
+            _websocket_completed_response(
+                "resp_new",
+                [
+                    {
+                        "type": "message",
+                        "id": "msg_new",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Hello"}],
+                    }
+                ],
+            ),
         ]
     )
     _patch_api_websocket(monkeypatch, websocket)
@@ -1131,11 +1473,12 @@ async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
             instructions="system prompt",
             input=history,
             tools=[],
-            prompt_cache_key=None,
+            prompt_cache_key="session-123",
         )
     ]
 
     assert "previous_response_id" not in websocket.sent[0]
+    assert websocket.sent[0]["generate"] is False
     assert websocket.sent[0]["input"] == [
         {"role": "user", "content": "old question"},
         {
@@ -1145,6 +1488,8 @@ async def test_get_streaming_reply_replays_history_instead_of_stale_response_id(
         },
         {"role": "user", "content": "new question"},
     ]
+    assert websocket.sent[1]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[1]["input"] == []
     assert history[-1]["response_id"] == "resp_new"
 
 
@@ -1154,6 +1499,7 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
 ) -> None:
     websocket = FakeWebSocket(
         [
+            _websocket_completed_response("resp_warm"),
             [
                 {
                     "type": "response.output_item.done",
@@ -1181,6 +1527,7 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
                 },
             ],
             [_previous_response_not_found_event()],
+            _websocket_completed_response("resp_rewarm"),
             [
                 {
                     "type": "response.completed",
@@ -1215,7 +1562,7 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
             instructions="system prompt",
             input=history,
             tools=[greet],
-            prompt_cache_key=None,
+            prompt_cache_key="session-123",
         )
     ]
 
@@ -1226,8 +1573,11 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
         "response.completed",
     ]
     assert "previous_response_id" not in websocket.sent[0]
-    assert websocket.sent[1]["previous_response_id"] == "resp_1"
-    assert websocket.sent[1]["input"] == [
+    assert websocket.sent[0]["generate"] is False
+    assert websocket.sent[1]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[1]["input"] == []
+    assert websocket.sent[2]["previous_response_id"] == "resp_1"
+    assert websocket.sent[2]["input"] == [
         {
             "id": "fco_call_1",
             "type": "function_call_output",
@@ -1236,8 +1586,9 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
             "status": "completed",
         }
     ]
-    assert "previous_response_id" not in websocket.sent[2]
-    assert websocket.sent[2]["input"] == [
+    assert "previous_response_id" not in websocket.sent[3]
+    assert websocket.sent[3]["generate"] is False
+    assert websocket.sent[3]["input"] == [
         {"role": "user", "content": "new question"},
         {
             "type": "function_call",
@@ -1246,8 +1597,10 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
             "name": "greet",
             "arguments": '{"name":"Faltoobot"}',
         },
-        websocket.sent[1]["input"][0],
+        websocket.sent[2]["input"][0],
     ]
+    assert websocket.sent[4]["previous_response_id"] == "resp_rewarm"
+    assert websocket.sent[4]["input"] == []
     assert history[-1] == {
         "type": "message",
         "id": "msg_2",
@@ -1263,6 +1616,7 @@ async def test_get_streaming_reply_raises_when_previous_response_retry_fails(
 ) -> None:
     websocket = FakeWebSocket(
         [
+            _websocket_completed_response("resp_warm"),
             [
                 {
                     "type": "response.output_item.done",
@@ -1290,10 +1644,14 @@ async def test_get_streaming_reply_raises_when_previous_response_retry_fails(
                 },
             ],
             [_previous_response_not_found_event()],
+            _websocket_completed_response("resp_rewarm"),
             [_previous_response_not_found_event()],
         ]
     )
     _patch_api_websocket(monkeypatch, websocket)
+    from faltoobot import websockets as websocket_utils
+
+    monkeypatch.setattr(websocket_utils, "WEBSOCKET_STREAM_RETRIES", 1)
     config = _websocket_config()
     history: MessageHistory = [{"role": "user", "content": "new question"}]
 
@@ -1305,13 +1663,16 @@ async def test_get_streaming_reply_raises_when_previous_response_retry_fails(
                 instructions="system prompt",
                 input=history,
                 tools=[greet],
-                prompt_cache_key=None,
+                prompt_cache_key="session-123",
             )
         ]
 
     assert len(websocket.sent) == len(websocket.responses)
-    assert websocket.sent[1]["previous_response_id"] == "resp_1"
-    assert "previous_response_id" not in websocket.sent[2]
+    assert websocket.sent[1]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[2]["previous_response_id"] == "resp_1"
+    assert "previous_response_id" not in websocket.sent[3]
+    assert websocket.sent[3]["generate"] is False
+    assert websocket.sent[4]["previous_response_id"] == "resp_rewarm"
 
 
 @pytest.mark.anyio
@@ -1320,20 +1681,8 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
 ) -> None:
     websocket = FakeWebSocket(
         [
-            [
-                {
-                    "type": "response.completed",
-                    "sequence_number": 1,
-                    "response": {
-                        "id": "resp_oauth",
-                        "object": "response",
-                        "created_at": 0,
-                        "status": "completed",
-                        "model": "gpt-5-mini",
-                        "output": [],
-                    },
-                }
-            ]
+            _websocket_completed_response("resp_oauth_warm"),
+            _websocket_completed_response("resp_oauth"),
         ]
     )
     connect_calls: list[dict[str, Any]] = []
@@ -1347,6 +1696,7 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
 
     from faltoobot import websockets as websocket_utils
 
+    websocket_utils.WEBSOCKET_SESSIONS.clear()
     monkeypatch.setattr(websocket_utils, "websocket_connect", fake_connect)
     monkeypatch.setattr(
         websocket_utils,

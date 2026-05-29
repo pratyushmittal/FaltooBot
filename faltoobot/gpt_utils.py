@@ -301,6 +301,7 @@ def _remember_response_event(
     event: ResponsesServerEvent,
     response_output: list[ResponseOutputItem],
 ) -> str | None:
+    """Update collected output items and return response id on completion."""
     if event.type == "response.output_item.done":
         # comment: response.output_item.done carries finalized items before completion.
         response_output.append(cast(ResponseOutputItem, getattr(event, "item", None)))
