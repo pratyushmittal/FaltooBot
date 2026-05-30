@@ -366,6 +366,10 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
     assert client.responses.calls[0]["context_management"] == [
         {"type": "compaction", "compact_threshold": 200_000}
     ]
+    assert client.responses.calls[0]["reasoning"] == {
+        "summary": "concise",
+        "effort": "low",
+    }
     assert client.responses.calls[0]["prompt_cache_key"] == omit
     assert client.responses.calls[0]["extra_headers"] is None
     assert client.responses.calls[1]["input"][-1] == {
@@ -976,6 +980,23 @@ def _websocket_connection_limit_event() -> list[dict[str, Any]]:
     ]
 
 
+def _invalid_request_error_event(code: str | None = None) -> list[dict[str, Any]]:
+    error = {
+        "type": "invalid_request_error",
+        "message": "Bad websocket request",
+    }
+    if code is not None:
+        # comment: OpenAI invalid_request_error often includes a specific code.
+        error["code"] = code
+    return [
+        {
+            "type": "error",
+            "sequence_number": 1,
+            "error": error,
+        }
+    ]
+
+
 def _websocket_completed_response(
     response_id: str, output: list[dict[str, Any]] | None = None
 ) -> list[dict[str, Any]]:
@@ -1124,6 +1145,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     ]
     assert websocket.sent[0]["prompt_cache_key"] == "session-123"
     assert websocket.sent[0]["tool_choice"] == "auto"
+    assert websocket.sent[0]["reasoning"] == {"summary": "concise", "effort": "low"}
     assert "stream" not in websocket.sent[0]
     assert "background" not in websocket.sent[0]
     assert websocket.sent[1]["previous_response_id"] == "resp_warm"
@@ -1430,6 +1452,38 @@ async def test_get_streaming_reply_raises_websocket_client_errors_without_retry(
         ]
 
     assert len(connect_calls) == len(websocket.responses) + 1
+    assert len(websocket.sent) == len(websocket.responses)
+
+
+@pytest.mark.anyio
+async def test_get_streaming_reply_does_not_retry_invalid_request_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response("resp_warm"),
+            _invalid_request_error_event("invalid_value"),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+
+    from faltoobot import websockets as websocket_utils
+
+    with pytest.raises(
+        websocket_utils.InvalidRequestError, match="Bad websocket request"
+    ):
+        _items = [
+            item
+            async for item in sessions._get_streaming_reply(
+                config=config,
+                instructions="system prompt",
+                input=[{"role": "user", "content": "hello"}],
+                tools=[],
+                prompt_cache_key="session-123",
+            )
+        ]
+
     assert len(websocket.sent) == len(websocket.responses)
 
 

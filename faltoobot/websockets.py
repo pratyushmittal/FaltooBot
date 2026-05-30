@@ -87,6 +87,10 @@ class MissingPrewarmResponseIDError(RuntimeError):
     pass
 
 
+class InvalidRequestError(RuntimeError):
+    pass
+
+
 def _int_error_code(value: object) -> int | None:
     if isinstance(value, int):
         return value
@@ -116,6 +120,9 @@ def _get_error_code(exc: Exception) -> int | None:
 
 
 def _is_client_error(exc: Exception) -> bool:
+    if isinstance(exc, InvalidRequestError):
+        return True
+
     error_code = _get_error_code(exc)
     return (
         error_code is not None
@@ -128,12 +135,9 @@ def _raise_for_response_error(event: ResponsesServerEvent) -> None:
         return
 
     error = getattr(event, "error", None)
-    code = str(
-        _error_field(error, "code")
-        or _error_field(error, "type")
-        or getattr(event, "code", None)
-        or "error"
-    )
+    error_code = _error_field(error, "code") or getattr(event, "code", None)
+    error_type = _error_field(error, "type")
+    code = str(error_code or error_type or "error")
     message = (
         _error_field(error, "message")
         or getattr(event, "message", None)
@@ -141,10 +145,13 @@ def _raise_for_response_error(event: ResponsesServerEvent) -> None:
         or "Unknown websocket error"
     )
     exception = f"OpenAI websocket {code}: {message}"
-    if code == "previous_response_not_found":
+    if error_code == "previous_response_not_found":
         raise PreviousResponseNotFoundError(exception)
-    if code == "websocket_connection_limit_reached":
+    if error_code == "websocket_connection_limit_reached":
         raise WebsocketConnectionLimitReachedError(exception)
+    if error_type == "invalid_request_error":
+        # comment: retryable invalid_request_error codes are handled above.
+        raise InvalidRequestError(exception)
     raise RuntimeError(exception)
 
 
@@ -167,7 +174,7 @@ def _get_payload(  # noqa: PLR0913
         "tool_choice": "auto",
         "parallel_tool_calls": True,
         "instructions": instructions,
-        "reasoning": {"summary": "auto", "effort": config.openai_thinking},
+        "reasoning": {"summary": "concise", "effort": config.openai_thinking},
         "include": ["reasoning.encrypted_content", "web_search_call.action.sources"],
         "context_management": [
             {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}

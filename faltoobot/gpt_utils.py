@@ -371,7 +371,7 @@ async def get_streaming_reply(  # noqa: C901
             stream=True,
             parallel_tool_calls=True,
             instructions=instructions,
-            reasoning={"summary": "auto", "effort": config.openai_thinking},
+            reasoning={"summary": "concise", "effort": config.openai_thinking},
             include=["reasoning.encrypted_content", "web_search_call.action.sources"],
             context_management=[
                 {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
