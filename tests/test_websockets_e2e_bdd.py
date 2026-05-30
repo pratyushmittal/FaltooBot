@@ -13,7 +13,13 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from faltoobot import sessions
 from faltoobot import websockets as websocket_utils
 
-pytestmark = pytest.mark.external
+pytestmark = [
+    pytest.mark.external,
+    pytest.mark.skipif(
+        os.environ.get("GITHUB_ACTIONS") == "true",
+        reason="Codex OAuth is not installed on GitHub Actions.",
+    ),
+]
 
 scenarios("features/websocket_e2e.feature")
 
