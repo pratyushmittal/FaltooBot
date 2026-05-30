@@ -370,6 +370,7 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "summary": "concise",
         "effort": "low",
     }
+    assert client.responses.calls[0]["tools"][-1] == {"type": "image_generation"}
     assert client.responses.calls[0]["prompt_cache_key"] == omit
     assert client.responses.calls[0]["extra_headers"] is None
     assert client.responses.calls[1]["input"][-1] == {
@@ -1146,6 +1147,7 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     assert websocket.sent[0]["prompt_cache_key"] == "session-123"
     assert websocket.sent[0]["tool_choice"] == "auto"
     assert websocket.sent[0]["reasoning"] == {"summary": "concise", "effort": "low"}
+    assert websocket.sent[0]["tools"][-1] == {"type": "image_generation"}
     assert "stream" not in websocket.sent[0]
     assert "background" not in websocket.sent[0]
     assert websocket.sent[1]["previous_response_id"] == "resp_warm"
@@ -1279,6 +1281,50 @@ async def test_websocket_prewarm_reuses_previous_response_across_turns(
     assert websocket.sent[1]["input"] == []
     assert websocket.sent[2]["previous_response_id"] == "resp_1"
     assert websocket.sent[2]["input"] == [{"role": "user", "content": "again"}]
+
+
+@pytest.mark.anyio
+async def test_websocket_prewarm_strips_image_generation_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket([_websocket_completed_response("resp_warm")])
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+
+    from faltoobot import websockets as websocket_utils
+
+    history: MessageHistory = [
+        {"role": "user", "content": "draw"},
+        {
+            "type": "image_generation_call",
+            "id": "ig_1",
+            "status": "completed",
+            "action": "generate",
+            "background": "opaque",
+            "output_format": "png",
+            "quality": "medium",
+            "result": "base64",
+            "revised_prompt": "draw a test image",
+            "size": "1122x1402",
+        },
+    ]
+    await websocket_utils.prewarm(
+        config,
+        instructions="system prompt",
+        input=history,
+        tools=[],
+        prompt_cache_key="session-123",
+    )
+
+    assert websocket.sent[0]["input"] == [
+        {"role": "user", "content": "draw"},
+        {
+            "type": "image_generation_call",
+            "id": "ig_1",
+            "status": "completed",
+            "result": "base64",
+        },
+    ]
 
 
 @pytest.mark.anyio

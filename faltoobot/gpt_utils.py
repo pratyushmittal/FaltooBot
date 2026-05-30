@@ -30,6 +30,7 @@ STRIPPED_MESSAGE_KEYS = {
     "usage",
     STANDALONE_COMPACTION_KEY,
 }
+IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -215,10 +216,12 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
+        stripped_keys = STRIPPED_MESSAGE_KEYS
+        if item.get("type") == "image_generation_call":
+            # comment: keep only Response API replay fields; request-only fields fail later turns.
+            stripped_keys = set(item) - IMAGE_GENERATION_REPLAY_KEYS
         trimmed = {
-            key: value
-            for key, value in item.items()
-            if key not in STRIPPED_MESSAGE_KEYS
+            key: value for key, value in item.items() if key not in stripped_keys
         }
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
@@ -293,7 +296,8 @@ def _cloud_tools() -> list[dict[str, Any]]:
                 "city": "Lucknow",
                 "region": "Lucknow",
             },
-        }
+        },
+        {"type": "image_generation"},
     ]
 
 

@@ -1,3 +1,4 @@
+import base64
 from collections.abc import Sequence
 
 import hashlib
@@ -10,6 +11,7 @@ import pytest
 from PIL import Image
 
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageHistory, get_tools_definition
@@ -821,6 +823,29 @@ async def test_get_answer_uses_codex_output_when_output_text_property_fails(
     )
 
     assert answer == "hello from codex"
+
+
+def test_assistant_text_saves_generated_images(tmp_path: Path) -> None:
+    image = tmp_path / "source.png"
+    Image.new("RGB", (4, 4), color="red").save(image)
+    image_call = ImageGenerationCall(
+        id="ig_test",
+        result=base64.b64encode(image.read_bytes()).decode("utf-8"),
+        status="completed",
+        type="image_generation_call",
+    )
+    event = SimpleNamespace(
+        response=SimpleNamespace(output=[image_call], output_text="")
+    )
+
+    answer = sessions._assistant_text_from_completed_event(
+        cast(Any, event), workspace=tmp_path
+    )
+
+    assert answer.startswith("![Generated image](.generated-images/")
+    saved = list((tmp_path / sessions.GENERATED_IMAGES_DIR).glob("*.png"))
+    assert len(saved) == 1
+    assert saved[0].read_bytes() == image.read_bytes()
 
 
 @pytest.mark.anyio

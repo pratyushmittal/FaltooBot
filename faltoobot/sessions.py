@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import logging
@@ -10,10 +11,13 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI, omit
 from openai.types.responses import (
+    Response,
     ResponseCompletedEvent,
+    ResponseOutputItem,
     ResponseOutputMessage,
     ResponseOutputText,
 )
+from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
@@ -36,6 +40,7 @@ from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 MESSAGES_FILE = "messages.json"
 LAST_USED_FILE = "last_used"
 WORKSPACE_DIR = "workspace"
+GENERATED_IMAGES_DIR = ".generated-images"
 
 logger = logging.getLogger("faltoobot")
 
@@ -346,10 +351,7 @@ async def _upload_attachments(
         await client.close()
 
 
-def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
-    response = getattr(event, "response", None)
-    if response is None:
-        return ""
+def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
     try:
         output_text = getattr(response, "output_text", "")
     except TypeError:
@@ -358,10 +360,6 @@ def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
 
-    output = cast(
-        list[object],
-        getattr(response, "output", None) or getattr(response, "codex_output", []),
-    )
     for item in reversed(output):
         if not isinstance(item, ResponseOutputMessage):
             continue
@@ -371,6 +369,40 @@ def _assistant_text_from_completed_event(event: ResponseCompletedEvent) -> str:
         if text:
             return text
     return ""
+
+
+def _generated_image_markdown(
+    output: list[ResponseOutputItem], workspace: Path
+) -> list[str]:
+    images_dir = workspace / GENERATED_IMAGES_DIR
+    lines: list[str] = []
+
+    for item in output:
+        if not isinstance(item, ImageGenerationCall):
+            continue
+        result = item.result
+        if not isinstance(result, str):
+            continue
+
+        images_dir.mkdir(parents=True, exist_ok=True)
+        path = images_dir / f"{uuid4().hex}.png"
+        path.write_bytes(base64.b64decode(result))
+        lines.append(f"![Generated image]({path.relative_to(workspace).as_posix()})")
+
+    return lines
+
+
+def _assistant_text_from_completed_event(
+    event: ResponseCompletedEvent, *, workspace: Path
+) -> str:
+    response = event.response
+    output = cast(
+        list[ResponseOutputItem],
+        response.output or getattr(response, "codex_output", []),
+    )
+    parts = [_output_text(response, output)]
+    parts.extend(_generated_image_markdown(output, workspace))
+    return "\n\n".join(part for part in parts if part).strip()
 
 
 async def append_user_turn(
@@ -526,7 +558,9 @@ async def get_answer(session: Session) -> str:
     answer = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
+            messages_json = get_messages(session)
             answer = _assistant_text_from_completed_event(
-                cast(ResponseCompletedEvent, event)
+                cast(ResponseCompletedEvent, event),
+                workspace=Path(messages_json["workspace"]),
             )
     return answer
