@@ -2,6 +2,19 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.2.0 — 2026-05-30
+
+### Added
+- Added the built-in OpenAI Responses image generation tool, so Faltoobot and WhatsApp can generate images directly without loading the old image-generation skill.
+- Added external WhatsApp image generation coverage with a fake WhatsApp client and real OpenAI image generation.
+
+### Changed
+- WebSocket reasoning summaries now request concise summaries.
+
+### Fixed
+- WebSocket streaming no longer retries OpenAI invalid request errors.
+- WebSocket E2E tests are skipped on GitHub Actions where Codex OAuth is unavailable.
+
 ## 7.1.0 — 2026-05-29
 
 ### Added
