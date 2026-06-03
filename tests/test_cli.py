@@ -566,3 +566,14 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
     changed = cli._ensure_crontab_path()
 
     assert changed is False
+
+
+def test_handle_doctor_command_delegates_to_doctor_runner(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    calls: list[Config | None] = []
+
+    monkeypatch.setattr(cli, "run_doctor_command", lambda config=None: calls.append(config) or ([], []))
+
+    cli.handle_command(cli.argparse.Namespace(command="doctor"), config)
+
+    assert calls == [config]
