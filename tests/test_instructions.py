@@ -1,6 +1,7 @@
 from pathlib import Path
 from faltoobot import instructions
 from faltoobot.config import Config
+from faltoobot.prompts.whatsapp import PROMPT as WHATSAPP_PROMPT
 
 
 def test_get_system_instructions_skips_empty_agents_files(
@@ -35,3 +36,14 @@ def test_get_system_instructions_skips_empty_agents_files(
 
     assert "You are Faltoo, an AI coding agent with shell access." in result
     assert "Session AGENTS.md" not in result
+
+
+def test_whatsapp_prompt_keeps_user_requested_scheduled_content_visible() -> None:
+    prompt = WHATSAPP_PROMPT
+
+    assert "`source: cron:daily-genz-slang`" in prompt
+    assert "User-visible by default" in prompt
+    assert "scheduled or recurring content the user asked to receive" in prompt
+    assert "Do not answer `[noreply]` merely because the source is `cron:*`" in prompt
+    assert "true operational noise" in prompt
+    assert "When unsure" in prompt

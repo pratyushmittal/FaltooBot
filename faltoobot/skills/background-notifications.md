@@ -93,4 +93,6 @@ PY
 - Use `nohup ... &` when launching background work from the shell.
 - Put `2>&1` before the pipe when you also want stderr to reach `faltoobot notify`.
 - Include enough detail in the notification message so you can act on it when it arrives.
+- For user-requested recurring content (for example daily slang, lessons, digests, or reminders), make the notification body the final user-facing content and use a descriptive source such as `cron:daily-genz-slang`. These are expected to be delivered naturally to the user, not suppressed as noise.
+- For true noise (heartbeats, unchanged monitor checks, or internal logs), make that clear in the message so the assistant can safely respond `[noreply]`.
 - Prefer notifications for async completion or monitoring events; prefer normal chat turns for immediate back-and-forth.
