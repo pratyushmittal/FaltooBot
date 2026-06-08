@@ -11,7 +11,7 @@ interface Props {
 
 const {
   title,
-  description = 'A small family of practical AI tools from Mittals AI.',
+  description = 'faltoo.bot pairs a WhatsApp AI bot with a terminal coding chat.',
 } = Astro.props;
 ---
 
@@ -20,11 +20,36 @@ const {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script is:inline>
+      const savedTheme = localStorage.getItem('faltoo-theme');
+      document.documentElement.dataset.theme = savedTheme === 'dark' ? 'dark' : 'light';
+    </script>
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" />
   </head>
   <body>
     <slot />
+    <script is:inline>
+      const root = document.documentElement;
+      const button = document.querySelector('[data-theme-toggle]');
+      const label = document.querySelector('[data-theme-toggle-label]');
+
+      const syncThemeToggle = () => {
+        const isDark = root.dataset.theme === 'dark';
+        button?.setAttribute('aria-label', isDark ? 'Switch to light theme' : 'Switch to dark theme');
+        button?.setAttribute('aria-pressed', String(isDark));
+        label?.replaceChildren(document.createTextNode(isDark ? 'Dark' : 'Light'));
+      };
+
+      button?.addEventListener('click', () => {
+        const nextTheme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        root.dataset.theme = nextTheme;
+        localStorage.setItem('faltoo-theme', nextTheme);
+        syncThemeToggle();
+      });
+
+      syncThemeToggle();
+    </script>
   </body>
 </html>
