@@ -389,9 +389,17 @@ main {
   background: var(--night);
 }
 
+.command__mascot picture,
 .command__mascot img {
   width: 100%;
   height: 100%;
+}
+
+.command__mascot picture {
+  display: block;
+}
+
+.command__mascot img {
   object-fit: cover;
   transition: transform 260ms ease;
 }

@@ -32,7 +32,10 @@ import Header from '../components/Header.astro';
     <main>
       <section class="command command--bot" id="faltoobot">
         <div class="command__mascot">
-          <img src="/faltoobot-art.png" alt="3D faltoobot mascot beside a chat phone" width="1536" height="1024" />
+          <picture>
+            <source srcset="/faltoobot-art.avif" type="image/avif" />
+            <img src="/faltoobot-art.jpg" alt="3D faltoobot mascot beside a chat phone" width="1280" height="853" />
+          </picture>
         </div>
         <div class="command__copy">
           <p class="section__eyebrow">faltoobot</p>
@@ -84,7 +87,10 @@ import Header from '../components/Header.astro';
           <a class="text-link" href="/docs/faltoochat/">Set up faltoochat</a>
         </div>
         <div class="command__mascot">
-          <img src="/faltoochat-art.png" alt="3D faltoochat mascot beside a terminal" width="1536" height="1024" />
+          <picture>
+            <source srcset="/faltoochat-art.avif" type="image/avif" />
+            <img src="/faltoochat-art.jpg" alt="3D faltoochat mascot beside a terminal" width="1280" height="853" />
+          </picture>
         </div>
       </section>
 
