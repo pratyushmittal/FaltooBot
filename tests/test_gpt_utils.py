@@ -1,16 +1,20 @@
 import asyncio
+import base64
 import json
 import ssl
 import threading
 import time
 from enum import Enum
+from io import BytesIO
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from openai import omit
+from PIL import Image
 from websockets.datastructures import Headers
-from websockets.exceptions import InvalidStatus
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.frames import Close
 from websockets.http11 import Response
 from openai.types.responses import (
     ResponseCompactionItem,
@@ -927,7 +931,7 @@ async def test_tool_result_renders_load_image_errors() -> None:
 class FakeWebSocket:
     def __init__(
         self,
-        responses: list[list[dict[str, Any]]],
+        responses: list[list[dict[str, Any]] | Exception],
         *,
         connect_error: Exception | None = None,
     ) -> None:
@@ -935,7 +939,7 @@ class FakeWebSocket:
         self.connect_error = connect_error
         self.sent: list[dict[str, Any]] = []
         self.index = 0
-        self.pending: list[str] = []
+        self.pending: list[str] | Exception = []
 
     def __await__(self) -> Any:
         async def connect() -> "FakeWebSocket":
@@ -956,13 +960,22 @@ class FakeWebSocket:
 
     async def send(self, data: str) -> None:
         self.sent.append(json.loads(data))
-        self.pending = [json.dumps(event) for event in self.responses[self.index]]
+        response = self.responses[self.index]
+        self.pending = (
+            response
+            if isinstance(response, Exception)
+            else [json.dumps(event) for event in response]
+        )
         self.index += 1
 
     def __aiter__(self) -> "FakeWebSocket":
         return self
 
     async def __anext__(self) -> str:
+        if isinstance(self.pending, Exception):
+            exc = self.pending
+            self.pending = []
+            raise exc
         if not self.pending:
             raise StopAsyncIteration
         return self.pending.pop(0)
@@ -1068,6 +1081,14 @@ def _websocket_completed_response_without_id() -> list[dict[str, Any]]:
 
 def _invalid_status(status_code: int = 401) -> InvalidStatus:
     return InvalidStatus(Response(status_code, "Unauthorized", Headers()))
+
+
+def _inline_png_data_url() -> str:
+    image = Image.effect_noise((600, 600), 100).convert("RGB")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 @pytest.mark.anyio
@@ -1426,6 +1447,108 @@ async def test_websocket_prewarm_retries_when_response_id_is_missing(
     assert websocket.sent[1]["generate"] is False
     assert websocket.sent[2]["previous_response_id"] == "resp_warm"
     assert websocket.sent[2]["input"] == []
+
+
+@pytest.mark.anyio
+async def test_websocket_prewarm_resizes_inline_history_after_message_too_big(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exc = ConnectionClosedError(
+        Close(1009, "message too big"),
+        Close(1009, "message too big"),
+        True,
+    )
+    websocket = FakeWebSocket(
+        [
+            exc,
+            _websocket_completed_response("resp_warm"),
+            _websocket_completed_response("resp_1"),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+
+    original_url = _inline_png_data_url()
+    history: MessageHistory = [
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                {"type": "input_image", "image_url": original_url, "detail": "auto"}
+            ],
+        }
+    ]
+
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key="session-123",
+        )
+    ]
+
+    healed_url = websocket.sent[1]["input"][0]["output"][0]["image_url"]
+    assert websocket.sent[0]["input"][0]["output"][0]["image_url"] == original_url
+    assert healed_url.startswith("data:image/jpeg;base64,")
+    assert len(healed_url) < len(original_url)
+    assert history[0]["output"][0]["image_url"] == healed_url
+    assert websocket.sent[2]["previous_response_id"] == "resp_warm"
+    assert websocket.sent[2]["input"] == []
+
+
+@pytest.mark.anyio
+async def test_websocket_prewarm_ignores_text_tool_outputs_when_resizing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exc = ConnectionClosedError(
+        Close(1009, "message too big"),
+        Close(1009, "message too big"),
+        True,
+    )
+    websocket = FakeWebSocket(
+        [
+            exc,
+            _websocket_completed_response("resp_warm"),
+            _websocket_completed_response("resp_1"),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    config = _websocket_config()
+
+    original_url = _inline_png_data_url()
+    history: MessageHistory = [
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "loaded image",
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_2",
+            "output": [
+                {"type": "input_image", "image_url": original_url, "detail": "auto"},
+            ],
+        },
+    ]
+
+    _items = [
+        item
+        async for item in sessions._get_streaming_reply(
+            config=config,
+            instructions="system prompt",
+            input=history,
+            tools=[],
+            prompt_cache_key="session-123",
+        )
+    ]
+
+    healed_url = websocket.sent[1]["input"][1]["output"][0]["image_url"]
+    assert websocket.sent[1]["input"][0]["output"] == "loaded image"
+    assert healed_url.startswith("data:image/jpeg;base64,")
+    assert history[1]["output"][0]["image_url"] == healed_url
 
 
 @pytest.mark.anyio
