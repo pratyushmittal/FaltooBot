@@ -861,7 +861,7 @@ async def test_get_streaming_reply_replaces_unavailable_uploaded_files_for_oauth
 @pytest.mark.anyio
 async def test_tool_result_keeps_structured_image_output() -> None:
     async def load_image(image_path: str) -> list[ResponseInputImage]:
-        """Load image files such as jpg or png. Useful for seeing screenshots and creatives.
+        """Load image files in supported image formats: jpeg, png, gif, or webp. Useful for seeing screenshots and creatives.
 
         Args:
             - image_path: relative or absolute path of the image
@@ -892,6 +892,36 @@ async def test_tool_result_keeps_structured_image_output() -> None:
     assert image.type == "input_image"
     assert image.image_url == "data:image/png;base64,abc"
     assert image.detail == "auto"
+
+
+@pytest.mark.anyio
+async def test_tool_result_renders_load_image_errors() -> None:
+    async def load_image(image_path: str) -> list[ResponseInputImage]:
+        """Load image files in supported image formats: jpeg, png, gif, or webp. Useful for seeing screenshots and creatives.
+
+        Args:
+            - image_path: relative or absolute path of the image
+        """
+        raise ValueError(
+            "Unsupported image format for OpenAI: cat.avif. "
+            "Supported formats: jpeg, png, gif, webp."
+        )
+
+    result = await gpt_utils._tool_result(
+        cast(Any, {"load_image": load_image}),
+        {
+            "type": "function_call",
+            "name": "load_image",
+            "arguments": json.dumps({"image_path": "cat.avif"}),
+            "call_id": "call_1",
+        },
+    )
+
+    assert result.type == "function_call_output"
+    assert result.output == (
+        "ValueError: Unsupported image format for OpenAI: cat.avif. "
+        "Supported formats: jpeg, png, gif, webp."
+    )
 
 
 class FakeWebSocket:

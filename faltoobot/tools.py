@@ -158,7 +158,7 @@ def get_load_image_tool(workspace: Path) -> Callable[[str], Awaitable[ToolOutput
     async def load_image(image_path: str) -> ToolOutput:
         return await load_image_in_workspace(str(workspace), image_path)
 
-    load_image.__doc__ = """Load image files such as jpg or png. Useful for seeing screenshots and creatives.
+    load_image.__doc__ = """Load image files in supported image formats: jpeg, png, gif, or webp. Useful for seeing screenshots and creatives.
 
     Args:
         - image_path: relative or absolute path of the image

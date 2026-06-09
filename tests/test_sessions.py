@@ -424,7 +424,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     assert load_image_tool["type"] == "function"
     assert load_image_tool["strict"] is True
     assert load_image_tool["description"].startswith(
-        "Load image files such as jpg or png. Useful for seeing screenshots and creatives."
+        "Load image files in supported image formats: jpeg, png, gif, or webp."
     )
 
     assert "Commands are run from" in shell_tool["description"]
