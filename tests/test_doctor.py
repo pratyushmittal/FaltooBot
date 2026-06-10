@@ -154,3 +154,50 @@ def test_main_returns_doctor_changes(tmp_path: Path) -> None:
         "doctor:heal-last-used",
         "doctor:heal-function-call-outputs",
     ]
+
+
+def test_inspect_cron_health_reports_stale_paths_broken_venv_and_logs(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    workdir = config.root / "sessions" / "chat" / "session" / "workspace"
+    workdir.mkdir(parents=True)
+    script = workdir / "watch.sh"
+    script.write_text(
+        """#!/usr/bin/env bash
+PYTHON_BIN="${PYTHON_BIN:-$BASE_DIR/.venv/bin/python}"
+FALTOOBOT_BIN="${FALTOOBOT_BIN:-/home/exedev/.local/bin/faltoobot}"
+"$PYTHON_BIN" watch.py
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    log_dir = workdir / ".watch_logs"
+    log_dir.mkdir()
+    (log_dir / "cron.log").write_text(
+        "Missing Python interpreter at .venv/bin/python\n"
+        "RuntimeError: FaltooBot browser did not become ready on CDP port 9222\n",
+        encoding="utf-8",
+    )
+    crontab_text = f"17 * * * * cd {workdir} && ./watch.sh >> .watch_logs/cron.log 2>&1\n"
+
+    issues = [issue.render() for issue in doctor.inspect_cron_health(config, crontab_text=crontab_text)]
+
+    assert any("another home directory: /home/exedev/" in issue for issue in issues)
+    assert any("broken local venv interpreter" in issue for issue in issues)
+    assert any("missing interpreter/path" in issue for issue in issues)
+    assert any("browser startup failure" in issue for issue in issues)
+
+
+def test_inspect_cron_health_reports_missing_cron_targets(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    missing_workdir = config.root / "missing-workdir"
+    workdir = config.root / "workspace"
+    workdir.mkdir(parents=True)
+    crontab_text = (
+        f"0 * * * * cd {missing_workdir} && ./watch.sh\n"
+        f"1 * * * * cd {workdir} && ./missing.sh\n"
+    )
+
+    issues = [issue.render() for issue in doctor.inspect_cron_health(config, crontab_text=crontab_text)]
+
+    assert any("working directory is missing" in issue for issue in issues)
+    assert any("script is missing" in issue for issue in issues)
