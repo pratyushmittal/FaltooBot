@@ -86,6 +86,43 @@ notify_queue.enqueue_notification(
 PY
 ```
 
+
+## Durable Cron Script Practices
+
+When you create or edit a cron-launched shell/Python monitor, make it portable across user/home migrations and package reinstalls:
+
+- Do not hard-code machine-specific paths such as `/home/exedev/...` or a workspace `.venv/bin/python` created on another host.
+- Resolve CLIs at runtime, e.g. `FALTOOBOT_BIN="${FALTOOBOT_BIN:-$(command -v faltoobot)}"`, and fail with a clear message if missing.
+- Prefer `python3` or `uv run --with <packages> python` for cron scripts unless a local virtualenv is actively managed by that same script.
+- If using a local `.venv`, validate that its interpreter is executable before each run and either rebuild it or fall back explicitly; broken absolute symlinks should not silently break recurring jobs.
+- Log startup diagnostics for long-lived monitors: resolved Python, resolved `faltoobot`, working directory, and whether this is a dry run. Keep diagnostics free of secrets.
+- Use `flock` or another lock so overlapping slow runs do not pile up.
+
+Robust wrapper skeleton:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+  if [[ -x "$BASE_DIR/.venv/bin/python" ]]; then
+    PYTHON_BIN="$BASE_DIR/.venv/bin/python"
+  else
+    PYTHON_BIN="$(command -v python3 || true)"
+  fi
+fi
+FALTOOBOT_BIN="${FALTOOBOT_BIN:-$(command -v faltoobot || true)}"
+if [[ -z "$PYTHON_BIN" || ! -x "$PYTHON_BIN" ]]; then
+  echo "Missing usable Python interpreter" >&2
+  exit 1
+fi
+if [[ -z "$FALTOOBOT_BIN" || ! -x "$FALTOOBOT_BIN" ]]; then
+  echo "Missing faltoobot executable" >&2
+  exit 1
+fi
+```
+
 ## Practical Reminders
 
 - Prefer `faltoochat --notify` for AI work and follow-up capable sub-agents.
