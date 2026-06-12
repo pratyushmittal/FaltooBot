@@ -11,11 +11,14 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI, omit
 from openai.types.responses import (
-    Response,
     ResponseCompletedEvent,
+    ResponseContentPartAddedEvent,
+    ResponseContentPartDoneEvent,
     ResponseOutputItem,
     ResponseOutputMessage,
     ResponseOutputText,
+    ResponseTextDeltaEvent,
+    ResponseTextDoneEvent,
 )
 from openai.types.responses.response_output_item import ImageGenerationCall
 
@@ -351,29 +354,34 @@ async def _upload_attachments(
         await client.close()
 
 
-def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
+def _output_text(event: ResponseCompletedEvent) -> str:
+    output = cast(
+        list[ResponseOutputItem],
+        event.response.output or getattr(event.response, "codex_output", []),
+    )
+    # comment: output parts include local image markdown patches and Codex fallbacks.
+    parts: list[str] = []
+    for item in output:
+        if isinstance(item, ResponseOutputMessage):
+            text = "".join(
+                part.text for part in item.content if isinstance(part, ResponseOutputText)
+            ).strip()
+            if text:
+                parts.append(text)
+    if parts:
+        return "\n\n".join(parts)
+
     try:
-        output_text = getattr(response, "output_text", "")
+        output_text = getattr(event.response, "output_text", "")
     except TypeError:
         # comment: OpenAI SDK output_text can crash when response.output is None.
         output_text = ""
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text.strip()
-
-    for item in reversed(output):
-        if not isinstance(item, ResponseOutputMessage):
-            continue
-        text = "".join(
-            part.text for part in item.content if isinstance(part, ResponseOutputText)
-        ).strip()
-        if text:
-            return text
-    return ""
+    return output_text.strip() if isinstance(output_text, str) else ""
 
 
 def _generated_image_markdown(
     output: list[ResponseOutputItem], workspace: Path
-) -> list[str]:
+) -> str:
     images_dir = workspace / GENERATED_IMAGES_DIR
     lines: list[str] = []
 
@@ -389,7 +397,7 @@ def _generated_image_markdown(
         path.write_bytes(base64.b64decode(result))
         lines.append(f"![Generated image]({path.relative_to(workspace).as_posix()})")
 
-    return lines
+    return "\n\n".join(lines)
 
 
 def _assistant_text_from_completed_event(
@@ -505,9 +513,7 @@ async def _get_streaming_reply(
         yield item
 
 
-async def get_answer_streaming(
-    session: Session,
-) -> AsyncIterator[StreamingReplyItem]:
+async def get_answer_streaming(session: Session) -> AsyncIterator[StreamingReplyItem]:
     logger.info("Starting answer stream")
     config = build_config()
     messages_json = get_messages(session)
@@ -527,6 +533,15 @@ async def get_answer_streaming(
         tools=tools,
         prompt_cache_key=messages_json["id"],
     ):
+        if event.type == "response.completed":
+            # comment: add local saved-image paths to assistant text for image generations.
+            event = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                event.response.output or getattr(event.response, "codex_output", []),
+            )
+            image_markdown = _generated_image_markdown(output, workspace)
+            if image_markdown:
         if event.type in {"function_call_output", "response.completed"}:
             set_messages(session, messages_json)
         yield event
@@ -558,9 +573,5 @@ async def get_answer(session: Session) -> str:
     answer = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
-            messages_json = get_messages(session)
-            answer = _assistant_text_from_completed_event(
-                cast(ResponseCompletedEvent, event),
-                workspace=Path(messages_json["workspace"]),
-            )
+            answer = _output_text(cast(ResponseCompletedEvent, event))
     return answer

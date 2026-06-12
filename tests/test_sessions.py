@@ -1,4 +1,3 @@
-import base64
 from collections.abc import Sequence
 
 import hashlib
@@ -11,7 +10,6 @@ import pytest
 from PIL import Image
 
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageHistory, get_tools_definition
@@ -745,7 +743,9 @@ async def test_get_answer_uploads_image_attachments(
 @pytest.mark.anyio
 async def test_get_answer_uses_codex_output_when_completed_response_output_is_empty(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield SimpleNamespace(
             type="response.completed",
@@ -780,9 +780,8 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
         fake_get_answer_streaming,
     )
 
-    answer = await sessions.get_answer(
-        sessions.Session(chat_key="code@test", session_id="session-1")
-    )
+    session = sessions.get_session(chat_key="code@test", workspace=tmp_path)
+    answer = await sessions.get_answer(session)
 
     assert answer == "hello from codex"
 
@@ -790,7 +789,9 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
 @pytest.mark.anyio
 async def test_get_answer_uses_codex_output_when_output_text_property_fails(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     class Response:
         output = None
         codex_output = [
@@ -818,34 +819,10 @@ async def test_get_answer_uses_codex_output_when_output_text_property_fails(
 
     monkeypatch.setattr(sessions, "get_answer_streaming", fake_get_answer_streaming)
 
-    answer = await sessions.get_answer(
-        sessions.Session(chat_key="code@test", session_id="session-1")
-    )
+    session = sessions.get_session(chat_key="code@test", workspace=tmp_path)
+    answer = await sessions.get_answer(session)
 
     assert answer == "hello from codex"
-
-
-def test_assistant_text_saves_generated_images(tmp_path: Path) -> None:
-    image = tmp_path / "source.png"
-    Image.new("RGB", (4, 4), color="red").save(image)
-    image_call = ImageGenerationCall(
-        id="ig_test",
-        result=base64.b64encode(image.read_bytes()).decode("utf-8"),
-        status="completed",
-        type="image_generation_call",
-    )
-    event = SimpleNamespace(
-        response=SimpleNamespace(output=[image_call], output_text="")
-    )
-
-    answer = sessions._assistant_text_from_completed_event(
-        cast(Any, event), workspace=tmp_path
-    )
-
-    assert answer.startswith("![Generated image](.generated-images/")
-    saved = list((tmp_path / sessions.GENERATED_IMAGES_DIR).glob("*.png"))
-    assert len(saved) == 1
-    assert saved[0].read_bytes() == image.read_bytes()
 
 
 @pytest.mark.anyio

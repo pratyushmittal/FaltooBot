@@ -9,7 +9,8 @@ Infra:
 
 Tests:
 - Keep tests small.
-- Prefer BDD for new tests.
+- Prefer pytest-bdd for new tests.
 - E2E tests instead of unit tests.
+- Run full checks with `uv run pre-commit run --all-files --hook-stage pre-push`; it runs tests in parallel with pytest-xdist (`-n auto`).
 - Fix things only after you are able to reproduce the problem. We don't want band-aids all over the code.
 - Use max timeout of 30000 (30s) for tests when using `run_shell_call` tool.

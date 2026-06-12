@@ -27,6 +27,6 @@ jobs:
       - name: Sync deps
         run: uv sync
 
-      - name: Run tests
-        # -ra prints the short summary for skipped and other non-passing test results.
+      - name: Run tests in parallel
+        # -n auto uses pytest-xdist; -ra prints skipped and other non-passing results.
         run: uv run pytest -n auto -vv -ra
