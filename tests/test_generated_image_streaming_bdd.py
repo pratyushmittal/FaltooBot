@@ -98,12 +98,15 @@ def ask_to_generate_cat_image(image_stream_ctx: dict[str, Any]) -> None:
 
 @then("the mocked stream includes a generated image markdown link")
 def stream_includes_generated_image_markdown(image_stream_ctx: dict[str, Any]) -> None:
-    deltas = [
-        getattr(event, "delta", "")
-        for event in cast(list[Any], image_stream_ctx["events"])
+    events = cast(list[Any], image_stream_ctx["events"])
+    event_types = [event.type for event in events]
+    assert "response.content_part.added" in event_types
+    assert "response.output_text.done" in event_types
+    assert any(
+        "![Generated image](.generated-images/" in getattr(event, "delta", "")
+        for event in events
         if event.type == "response.output_text.delta"
-    ]
-    assert any("![Generated image](.generated-images/" in delta for delta in deltas)
+    )
 
 
 @then("the completed response includes the generated image markdown link")
@@ -115,7 +118,7 @@ def completed_response_includes_generated_image_markdown(
         for event in cast(list[Any], image_stream_ctx["events"])
         if event.type == "response.completed"
     )
-    text = sessions._output_text(completed.response, completed.response.output)
+    text = sessions._output_text(completed)
     assert "done\n\n![Generated image](.generated-images/" in text
 
 
@@ -128,4 +131,5 @@ def chat_history_includes_generated_image_markdown(
     latest = messages[-1]
     content = latest.get("content")
     assert isinstance(content, list)
-    assert "![Generated image](.generated-images/" in content[-1]["text"]
+    assert len(content) == 1
+    assert "done\n\n![Generated image](.generated-images/" in content[0]["text"]

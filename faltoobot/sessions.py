@@ -364,7 +364,9 @@ def _output_text(event: ResponseCompletedEvent) -> str:
     for item in output:
         if isinstance(item, ResponseOutputMessage):
             text = "".join(
-                part.text for part in item.content if isinstance(part, ResponseOutputText)
+                part.text
+                for part in item.content
+                if isinstance(part, ResponseOutputText)
             ).strip()
             if text:
                 parts.append(text)
@@ -379,9 +381,7 @@ def _output_text(event: ResponseCompletedEvent) -> str:
     return output_text.strip() if isinstance(output_text, str) else ""
 
 
-def _generated_image_markdown(
-    output: list[ResponseOutputItem], workspace: Path
-) -> str:
+def _generated_image_markdown(output: list[ResponseOutputItem], workspace: Path) -> str:
     images_dir = workspace / GENERATED_IMAGES_DIR
     lines: list[str] = []
 
@@ -400,17 +400,121 @@ def _generated_image_markdown(
     return "\n\n".join(lines)
 
 
-def _assistant_text_from_completed_event(
-    event: ResponseCompletedEvent, *, workspace: Path
-) -> str:
-    response = event.response
-    output = cast(
-        list[ResponseOutputItem],
-        response.output or getattr(response, "codex_output", []),
+def _append_message_output_text(content: list[Any], text: str) -> bool:
+    for part in reversed(content):
+        if (
+            isinstance(part, dict)
+            and part.get("type") == "output_text"
+            and isinstance(part.get("text"), str)
+        ):
+            part["text"] = f"{part['text']}{text}"
+            return True
+    return False
+
+
+def _append_output_text(messages: MessageHistory, text: str) -> None:
+    for item in reversed(messages):
+        if item.get("type") == "message" and item.get("role") == "assistant":
+            content = item.get("content")
+            if isinstance(content, list):
+                if _append_message_output_text(content, text):
+                    return
+                content.append({"type": "output_text", "text": text, "annotations": []})
+                return
+            if isinstance(content, str):
+                # comment: old/simple histories can store assistant content as plain text.
+                item["content"] = f"{content}{text}"
+                return
+    messages.append(
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
+        }
     )
-    parts = [_output_text(response, output)]
-    parts.extend(_generated_image_markdown(output, workspace))
-    return "\n\n".join(part for part in parts if part).strip()
+
+
+def _append_response_output_text(output: list[ResponseOutputItem], text: str) -> None:
+    for item in reversed(output):
+        if isinstance(item, ResponseOutputMessage):
+            for part in reversed(item.content):
+                if isinstance(part, ResponseOutputText):
+                    part.text = f"{part.text}{text}"
+                    return
+            item.content.append(
+                ResponseOutputText(type="output_text", text=text, annotations=[])
+            )
+            return
+
+    output.append(
+        ResponseOutputMessage(
+            id=f"msg_{uuid4().hex}",
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+        )
+    )
+
+
+def _synthetic_output_text_events(text: str) -> list[StreamingReplyItem]:
+    item_id = f"msg_{uuid4().hex}"
+    empty_part = ResponseOutputText(type="output_text", text="", annotations=[])
+    done_part = ResponseOutputText(type="output_text", text=text, annotations=[])
+    return [
+        ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            part=empty_part,
+            sequence_number=0,
+            type="response.content_part.added",
+        ),
+        ResponseTextDeltaEvent(
+            content_index=0,
+            delta=text,
+            item_id=item_id,
+            logprobs=[],
+            output_index=0,
+            sequence_number=0,
+            type="response.output_text.delta",
+        ),
+        ResponseTextDoneEvent(
+            content_index=0,
+            item_id=item_id,
+            logprobs=[],
+            output_index=0,
+            sequence_number=0,
+            text=text,
+            type="response.output_text.done",
+        ),
+        ResponseContentPartDoneEvent(
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            part=done_part,
+            sequence_number=0,
+            type="response.content_part.done",
+        ),
+    ]
+
+
+def _last_assistant_text(messages: MessageHistory) -> str:
+    for item in reversed(messages):
+        if item.get("type") != "message" or item.get("role") != "assistant":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            # comment: old/simple histories can store assistant content as plain text.
+            return content.strip()
+        if isinstance(content, list):
+            # comment: Responses histories store assistant text in output parts.
+            return "".join(
+                part["text"]
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            ).strip()
+    return ""
 
 
 async def append_user_turn(
@@ -542,6 +646,12 @@ async def get_answer_streaming(session: Session) -> AsyncIterator[StreamingReply
             )
             image_markdown = _generated_image_markdown(output, workspace)
             if image_markdown:
+                image_markdown = f"\n\n{image_markdown}"
+                _append_output_text(messages_json["messages"], image_markdown)
+                _append_response_output_text(output, image_markdown)
+                for item in _synthetic_output_text_events(image_markdown):
+                    yield item
+
         if event.type in {"function_call_output", "response.completed"}:
             set_messages(session, messages_json)
         yield event

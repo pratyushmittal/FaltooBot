@@ -746,6 +746,7 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+
     async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield SimpleNamespace(
             type="response.completed",
@@ -792,6 +793,7 @@ async def test_get_answer_uses_codex_output_when_output_text_property_fails(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+
     class Response:
         output = None
         codex_output = [
