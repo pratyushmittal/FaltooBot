@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Sequence
+from types import SimpleNamespace
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
+    DISPLAY_ONLY_CONTENT_KEY,
     MessageHistory,
     STANDALONE_COMPACTION_KEY,
     StreamingReplyItem,
@@ -352,23 +354,24 @@ async def _upload_attachments(
 
 
 def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
-    try:
-        output_text = getattr(response, "output_text", "")
-    except TypeError:
-        # comment: OpenAI SDK output_text can crash when response.output is None.
-        output_text = ""
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text.strip()
-
-    for item in reversed(output):
+    parts: list[str] = []
+    for item in output:
         if not isinstance(item, ResponseOutputMessage):
             continue
         text = "".join(
             part.text for part in item.content if isinstance(part, ResponseOutputText)
         ).strip()
         if text:
-            return text
-    return ""
+            parts.append(text)
+    if parts:
+        return "\n\n".join(parts)
+
+    try:
+        output_text = getattr(response, "output_text", "")
+    except TypeError:
+        # comment: OpenAI SDK output_text can crash when response.output is None.
+        output_text = ""
+    return output_text.strip() if isinstance(output_text, str) else ""
 
 
 def _generated_image_markdown(
@@ -392,17 +395,53 @@ def _generated_image_markdown(
     return lines
 
 
-def _assistant_text_from_completed_event(
-    event: ResponseCompletedEvent, *, workspace: Path
-) -> str:
-    response = event.response
-    output = cast(
-        list[ResponseOutputItem],
-        response.output or getattr(response, "codex_output", []),
+def _append_display_output_text(messages: MessageHistory, text: str) -> None:
+    part = {
+        "type": "output_text",
+        "text": text,
+        "annotations": [],
+        DISPLAY_ONLY_CONTENT_KEY: True,
+    }
+    for index in range(len(messages) - 1, -1, -1):
+        item = messages[index]
+        if item.get("type") == "message" and item.get("role") == "user":
+            break
+        if item.get("type") == "message" and item.get("role") == "assistant":
+            content = item.get("content")
+            if isinstance(content, list):
+                content.append(part)
+                return
+    messages.append(
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [part],
+        }
     )
-    parts = [_output_text(response, output)]
-    parts.extend(_generated_image_markdown(output, workspace))
-    return "\n\n".join(part for part in parts if part).strip()
+
+
+def _append_response_output_text(output: list[ResponseOutputItem], text: str) -> None:
+    for item in reversed(output):
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        for part in reversed(item.content):
+            if isinstance(part, ResponseOutputText):
+                part.text = f"{part.text}{text}"
+                return
+        item.content.append(
+            ResponseOutputText(type="output_text", text=text, annotations=[])
+        )
+        return
+
+    output.append(
+        ResponseOutputMessage(
+            id=f"msg_{uuid4().hex}",
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+        )
+    )
 
 
 async def append_user_turn(
@@ -446,6 +485,7 @@ async def append_user_turn(
             "type": "message",
             "role": "user",
             "content": content,
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     )
     messages_json["message_ids"].extend(fresh_message_ids)
@@ -520,6 +560,7 @@ async def get_answer_streaming(
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
+    new_message_index = len(messages_json["messages"])
     async for event in _get_streaming_reply(
         config=config,
         instructions=instructions,
@@ -527,7 +568,27 @@ async def get_answer_streaming(
         tools=tools,
         prompt_cache_key=messages_json["id"],
     ):
+        if event.type == "response.completed":
+            event = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                event.response.output or getattr(event.response, "codex_output", []),
+            )
+            image_markdown = "\n\n".join(_generated_image_markdown(output, workspace))
+            if image_markdown:
+                image_markdown = f"\n\n{image_markdown}"
+                _append_display_output_text(messages_json["messages"], image_markdown)
+                _append_response_output_text(output, image_markdown)
+                yield cast(
+                    StreamingReplyItem,
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta=image_markdown
+                    ),
+                )
         if event.type in {"function_call_output", "response.completed"}:
+            created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            for item in messages_json["messages"][new_message_index:]:
+                item.setdefault("created_at", created_at)
             set_messages(session, messages_json)
         yield event
     logger.info("Finished answer stream")
@@ -558,9 +619,11 @@ async def get_answer(session: Session) -> str:
     answer = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
-            messages_json = get_messages(session)
-            answer = _assistant_text_from_completed_event(
-                cast(ResponseCompletedEvent, event),
-                workspace=Path(messages_json["workspace"]),
+            completed = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                completed.response.output
+                or getattr(completed.response, "codex_output", []),
             )
+            answer = _output_text(completed.response, output)
     return answer

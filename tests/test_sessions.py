@@ -1,4 +1,3 @@
-import base64
 from collections.abc import Sequence
 
 import hashlib
@@ -11,7 +10,6 @@ import pytest
 from PIL import Image
 
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot import sessions
 from faltoobot.gpt_utils import MessageHistory, get_tools_definition
@@ -19,6 +17,13 @@ from faltoobot.gpt_utils import MessageHistory, get_tools_definition
 
 def _listed_name(session: sessions.Session, name: str) -> str:
     return sessions._session_label(name, session.messages_path)
+
+
+def _without_created_at(messages: MessageHistory) -> MessageHistory:
+    return [
+        {key: value for key, value in item.items() if key != "created_at"}
+        for item in messages
+    ]
 
 
 def _fake_output_item(
@@ -110,7 +115,7 @@ def test_get_session_creates_messages_json_and_workspace(
     assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
-    assert payload["messages"] == []
+    assert _without_created_at(payload["messages"]) == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
     assert (Path(payload["workspace"]) / "AGENTS.md").exists()
@@ -400,7 +405,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     assert payload["system_prompt"] == "system prompt"
     assert duplicate == ""
     assert len(calls) == 1
-    assert calls[0] == [
+    assert _without_created_at(calls[0]) == [
         {
             "type": "message",
             "role": "user",
@@ -466,7 +471,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
         "additionalProperties": False,
     }
     assert payload["message_ids"] == ["msg-1"]
-    assert payload["messages"] == [
+    assert _without_created_at(payload["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -732,7 +737,7 @@ async def test_get_answer_uploads_image_attachments(
     if case["expected_name_suffix"]:
         uploaded = client.files.calls[0]["file"]
         assert uploaded.name.endswith(str(case["expected_name_suffix"]))
-    assert payload["messages"] == [
+    assert _without_created_at(payload["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -823,29 +828,6 @@ async def test_get_answer_uses_codex_output_when_output_text_property_fails(
     )
 
     assert answer == "hello from codex"
-
-
-def test_assistant_text_saves_generated_images(tmp_path: Path) -> None:
-    image = tmp_path / "source.png"
-    Image.new("RGB", (4, 4), color="red").save(image)
-    image_call = ImageGenerationCall(
-        id="ig_test",
-        result=base64.b64encode(image.read_bytes()).decode("utf-8"),
-        status="completed",
-        type="image_generation_call",
-    )
-    event = SimpleNamespace(
-        response=SimpleNamespace(output=[image_call], output_text="")
-    )
-
-    answer = sessions._assistant_text_from_completed_event(
-        cast(Any, event), workspace=tmp_path
-    )
-
-    assert answer.startswith("![Generated image](.generated-images/")
-    saved = list((tmp_path / sessions.GENERATED_IMAGES_DIR).glob("*.png"))
-    assert len(saved) == 1
-    assert saved[0].read_bytes() == image.read_bytes()
 
 
 @pytest.mark.anyio
@@ -940,7 +922,7 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
     )
 
     assert sessions.get_messages(session)["message_ids"] == ["msg-1", "msg-2"]
-    assert sessions.get_messages(session)["messages"] == [
+    assert _without_created_at(sessions.get_messages(session)["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -1026,6 +1008,8 @@ async def test_get_answer_reuses_existing_user_turn(
     answer = await sessions.get_answer(session)
 
     assert answer == "hello"
+    user_item = calls[0][0]
+    assert isinstance(user_item.pop("created_at"), str)
     assert calls == [
         [
             {
@@ -1035,7 +1019,10 @@ async def test_get_answer_reuses_existing_user_turn(
             }
         ]
     ]
-    assert sessions.get_messages(session)["messages"] == [
+    messages = sessions.get_messages(session)["messages"]
+    assert isinstance(messages[0].pop("created_at"), str)
+    assert isinstance(messages[1].pop("created_at"), str)
+    assert messages == [
         {
             "type": "message",
             "role": "user",

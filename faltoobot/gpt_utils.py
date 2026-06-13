@@ -28,9 +28,11 @@ STRIPPED_MESSAGE_KEYS = {
     "parsed_arguments",
     "response_id",
     "usage",
+    "created_at",
     STANDALONE_COMPACTION_KEY,
 }
-UNREPLAYABLE_RESPONSE_ITEM_TYPES = {"image_generation_call"}
+IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
+DISPLAY_ONLY_CONTENT_KEY = "_faltoobot_display_only"
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -171,6 +173,12 @@ def _to_message_item(value: Any) -> MessageItem:
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
+    if value.get("type") == "image_generation_call" and isinstance(
+        value.get("result"), str
+    ):
+        # comment: streamed image calls can arrive as generating even after result exists;
+        # store them as completed once so replay stays simple and stable.
+        return {**value, "status": "completed"}
     return value
 
 
@@ -189,6 +197,42 @@ def _replace_unavailable_upload(value: Any) -> Any:
         # comment: Codex OAuth cannot fetch prior uploaded files from platform storage either.
         return {"type": "input_text", "text": "[file-not-available-now]"}
     return {key: _replace_unavailable_upload(item) for key, item in value.items()}
+
+
+def _strip_display_only_content(item: MessageItem) -> MessageItem | None:
+    content = item.get("content")
+    if not isinstance(content, list):
+        return item
+
+    content = [
+        part
+        for part in content
+        if not (isinstance(part, dict) and part.get(DISPLAY_ONLY_CONTENT_KEY))
+    ]
+    if not content and item.get("type") == "message":
+        # comment: generated-image markdown is display-only; don't send empty UI shims back.
+        return None
+    return {**item, "content": content}
+
+
+def _with_message_timestamp(item: MessageItem, created_at: str | None) -> MessageItem:
+    if item.get("type") != "message" or not created_at:
+        return item
+
+    timestamp = f"[Message sent at {created_at}]"
+    content = item["content"]
+    if isinstance(content, str):
+        return {**item, "content": f"{timestamp}\n{content}" if content else timestamp}
+
+    for index, part in enumerate(content):
+        if part["type"] not in {"input_text", "output_text"}:
+            continue
+        content = list(content)
+        text = part["text"]
+        content[index] = {**part, "text": f"{timestamp}\n{text}" if text else timestamp}
+        return {**item, "content": content}
+
+    return item
 
 
 def trim_input(
@@ -216,14 +260,24 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
-        if item.get("type") in UNREPLAYABLE_RESPONSE_ITEM_TYPES:
-            # comment: store=false response items cannot be sent back as input.
+        if item.get("type") == "image_generation_call":
+            # comment: replay the documented image call shape so store=false/ZDR follow-ups
+            # can refer to generated images without leaking rejected response metadata.
+            trimmed = {
+                key: value
+                for key, value in item.items()
+                if key in IMAGE_GENERATION_REPLAY_KEYS
+            }
+        else:
+            trimmed = {
+                key: value
+                for key, value in item.items()
+                if key not in STRIPPED_MESSAGE_KEYS
+            }
+        trimmed = _strip_display_only_content(trimmed)
+        if trimmed is None:
             continue
-        trimmed = {
-            key: value
-            for key, value in item.items()
-            if key not in STRIPPED_MESSAGE_KEYS
-        }
+        trimmed = _with_message_timestamp(trimmed, item.get("created_at"))
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)
