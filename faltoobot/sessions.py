@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Sequence
+from types import SimpleNamespace
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -11,19 +12,17 @@ from uuid import uuid4
 
 from openai import AsyncOpenAI, omit
 from openai.types.responses import (
+    Response,
     ResponseCompletedEvent,
-    ResponseContentPartAddedEvent,
-    ResponseContentPartDoneEvent,
     ResponseOutputItem,
     ResponseOutputMessage,
     ResponseOutputText,
-    ResponseTextDeltaEvent,
-    ResponseTextDoneEvent,
 )
 from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
+    DISPLAY_ONLY_CONTENT_KEY,
     MessageHistory,
     STANDALONE_COMPACTION_KEY,
     StreamingReplyItem,
@@ -354,34 +353,30 @@ async def _upload_attachments(
         await client.close()
 
 
-def _output_text(event: ResponseCompletedEvent) -> str:
-    output = cast(
-        list[ResponseOutputItem],
-        event.response.output or getattr(event.response, "codex_output", []),
-    )
-    # comment: output parts include local image markdown patches and Codex fallbacks.
+def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
     parts: list[str] = []
     for item in output:
-        if isinstance(item, ResponseOutputMessage):
-            text = "".join(
-                part.text
-                for part in item.content
-                if isinstance(part, ResponseOutputText)
-            ).strip()
-            if text:
-                parts.append(text)
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        text = "".join(
+            part.text for part in item.content if isinstance(part, ResponseOutputText)
+        ).strip()
+        if text:
+            parts.append(text)
     if parts:
         return "\n\n".join(parts)
 
     try:
-        output_text = getattr(event.response, "output_text", "")
+        output_text = getattr(response, "output_text", "")
     except TypeError:
         # comment: OpenAI SDK output_text can crash when response.output is None.
         output_text = ""
     return output_text.strip() if isinstance(output_text, str) else ""
 
 
-def _generated_image_markdown(output: list[ResponseOutputItem], workspace: Path) -> str:
+def _generated_image_markdown(
+    output: list[ResponseOutputItem], workspace: Path
+) -> list[str]:
     images_dir = workspace / GENERATED_IMAGES_DIR
     lines: list[str] = []
 
@@ -397,54 +392,46 @@ def _generated_image_markdown(output: list[ResponseOutputItem], workspace: Path)
         path.write_bytes(base64.b64decode(result))
         lines.append(f"![Generated image]({path.relative_to(workspace).as_posix()})")
 
-    return "\n\n".join(lines)
+    return lines
 
 
-def _append_message_output_text(content: list[Any], text: str) -> bool:
-    for part in reversed(content):
-        if (
-            isinstance(part, dict)
-            and part.get("type") == "output_text"
-            and isinstance(part.get("text"), str)
-        ):
-            part["text"] = f"{part['text']}{text}"
-            return True
-    return False
-
-
-def _append_output_text(messages: MessageHistory, text: str) -> None:
-    for item in reversed(messages):
+def _append_display_output_text(messages: MessageHistory, text: str) -> None:
+    part = {
+        "type": "output_text",
+        "text": text,
+        "annotations": [],
+        DISPLAY_ONLY_CONTENT_KEY: True,
+    }
+    for index in range(len(messages) - 1, -1, -1):
+        item = messages[index]
+        if item.get("type") == "message" and item.get("role") == "user":
+            break
         if item.get("type") == "message" and item.get("role") == "assistant":
             content = item.get("content")
             if isinstance(content, list):
-                if _append_message_output_text(content, text):
-                    return
-                content.append({"type": "output_text", "text": text, "annotations": []})
-                return
-            if isinstance(content, str):
-                # comment: old/simple histories can store assistant content as plain text.
-                item["content"] = f"{content}{text}"
+                content.append(part)
                 return
     messages.append(
         {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "output_text", "text": text, "annotations": []}],
+            "content": [part],
         }
     )
 
 
 def _append_response_output_text(output: list[ResponseOutputItem], text: str) -> None:
     for item in reversed(output):
-        if isinstance(item, ResponseOutputMessage):
-            for part in reversed(item.content):
-                if isinstance(part, ResponseOutputText):
-                    part.text = f"{part.text}{text}"
-                    return
-            item.content.append(
-                ResponseOutputText(type="output_text", text=text, annotations=[])
-            )
-            return
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        for part in reversed(item.content):
+            if isinstance(part, ResponseOutputText):
+                part.text = f"{part.text}{text}"
+                return
+        item.content.append(
+            ResponseOutputText(type="output_text", text=text, annotations=[])
+        )
+        return
 
     output.append(
         ResponseOutputMessage(
@@ -455,66 +442,6 @@ def _append_response_output_text(output: list[ResponseOutputItem], text: str) ->
             content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
         )
     )
-
-
-def _synthetic_output_text_events(text: str) -> list[StreamingReplyItem]:
-    item_id = f"msg_{uuid4().hex}"
-    empty_part = ResponseOutputText(type="output_text", text="", annotations=[])
-    done_part = ResponseOutputText(type="output_text", text=text, annotations=[])
-    return [
-        ResponseContentPartAddedEvent(
-            content_index=0,
-            item_id=item_id,
-            output_index=0,
-            part=empty_part,
-            sequence_number=0,
-            type="response.content_part.added",
-        ),
-        ResponseTextDeltaEvent(
-            content_index=0,
-            delta=text,
-            item_id=item_id,
-            logprobs=[],
-            output_index=0,
-            sequence_number=0,
-            type="response.output_text.delta",
-        ),
-        ResponseTextDoneEvent(
-            content_index=0,
-            item_id=item_id,
-            logprobs=[],
-            output_index=0,
-            sequence_number=0,
-            text=text,
-            type="response.output_text.done",
-        ),
-        ResponseContentPartDoneEvent(
-            content_index=0,
-            item_id=item_id,
-            output_index=0,
-            part=done_part,
-            sequence_number=0,
-            type="response.content_part.done",
-        ),
-    ]
-
-
-def _last_assistant_text(messages: MessageHistory) -> str:
-    for item in reversed(messages):
-        if item.get("type") != "message" or item.get("role") != "assistant":
-            continue
-        content = item.get("content")
-        if isinstance(content, str):
-            # comment: old/simple histories can store assistant content as plain text.
-            return content.strip()
-        if isinstance(content, list):
-            # comment: Responses histories store assistant text in output parts.
-            return "".join(
-                part["text"]
-                for part in content
-                if isinstance(part, dict) and isinstance(part.get("text"), str)
-            ).strip()
-    return ""
 
 
 async def append_user_turn(
@@ -617,7 +544,9 @@ async def _get_streaming_reply(
         yield item
 
 
-async def get_answer_streaming(session: Session) -> AsyncIterator[StreamingReplyItem]:
+async def get_answer_streaming(
+    session: Session,
+) -> AsyncIterator[StreamingReplyItem]:
     logger.info("Starting answer stream")
     config = build_config()
     messages_json = get_messages(session)
@@ -638,20 +567,22 @@ async def get_answer_streaming(session: Session) -> AsyncIterator[StreamingReply
         prompt_cache_key=messages_json["id"],
     ):
         if event.type == "response.completed":
-            # comment: add local saved-image paths to assistant text for image generations.
             event = cast(ResponseCompletedEvent, event)
             output = cast(
                 list[ResponseOutputItem],
                 event.response.output or getattr(event.response, "codex_output", []),
             )
-            image_markdown = _generated_image_markdown(output, workspace)
+            image_markdown = "\n\n".join(_generated_image_markdown(output, workspace))
             if image_markdown:
                 image_markdown = f"\n\n{image_markdown}"
-                _append_output_text(messages_json["messages"], image_markdown)
+                _append_display_output_text(messages_json["messages"], image_markdown)
                 _append_response_output_text(output, image_markdown)
-                for item in _synthetic_output_text_events(image_markdown):
-                    yield item
-
+                yield cast(
+                    StreamingReplyItem,
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta=image_markdown
+                    ),
+                )
         if event.type in {"function_call_output", "response.completed"}:
             set_messages(session, messages_json)
         yield event
@@ -683,5 +614,11 @@ async def get_answer(session: Session) -> str:
     answer = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
-            answer = _output_text(cast(ResponseCompletedEvent, event))
+            completed = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                completed.response.output
+                or getattr(completed.response, "codex_output", []),
+            )
+            answer = _output_text(completed.response, output)
     return answer

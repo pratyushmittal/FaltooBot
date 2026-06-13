@@ -71,19 +71,6 @@ async def get_streaming_reply(
         yield item
 
 
-def test_trim_input_drops_image_generation_calls() -> None:
-    history: MessageHistory = [
-        {"role": "user", "content": "draw"},
-        {"type": "image_generation_call", "id": "ig_1", "status": "failed"},
-        {"role": "user", "content": "thanks"},
-    ]
-
-    assert gpt_utils.trim_input(history) == [
-        {"role": "user", "content": "draw"},
-        {"role": "user", "content": "thanks"},
-    ]
-
-
 def test_get_openai_client_uses_codex_retry_limits() -> None:
     client = gpt_utils.get_openai_client(_api_config())
 
@@ -1348,7 +1335,7 @@ async def test_websocket_prewarm_reuses_previous_response_across_turns(
 
 
 @pytest.mark.anyio
-async def test_websocket_prewarm_drops_image_generation_calls(
+async def test_websocket_prewarm_replays_sanitized_image_generation_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket = FakeWebSocket([_websocket_completed_response("resp_warm")])
@@ -1382,6 +1369,12 @@ async def test_websocket_prewarm_drops_image_generation_calls(
 
     assert websocket.sent[0]["input"] == [
         {"role": "user", "content": "draw"},
+        {
+            "type": "image_generation_call",
+            "id": "ig_1",
+            "status": "completed",
+            "result": "base64",
+        },
     ]
 
 

@@ -743,10 +743,7 @@ async def test_get_answer_uploads_image_attachments(
 @pytest.mark.anyio
 async def test_get_answer_uses_codex_output_when_completed_response_output_is_empty(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-
     async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield SimpleNamespace(
             type="response.completed",
@@ -781,8 +778,9 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
         fake_get_answer_streaming,
     )
 
-    session = sessions.get_session(chat_key="code@test", workspace=tmp_path)
-    answer = await sessions.get_answer(session)
+    answer = await sessions.get_answer(
+        sessions.Session(chat_key="code@test", session_id="session-1")
+    )
 
     assert answer == "hello from codex"
 
@@ -790,10 +788,7 @@ async def test_get_answer_uses_codex_output_when_completed_response_output_is_em
 @pytest.mark.anyio
 async def test_get_answer_uses_codex_output_when_output_text_property_fails(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-
     class Response:
         output = None
         codex_output = [
@@ -821,8 +816,9 @@ async def test_get_answer_uses_codex_output_when_output_text_property_fails(
 
     monkeypatch.setattr(sessions, "get_answer_streaming", fake_get_answer_streaming)
 
-    session = sessions.get_session(chat_key="code@test", workspace=tmp_path)
-    answer = await sessions.get_answer(session)
+    answer = await sessions.get_answer(
+        sessions.Session(chat_key="code@test", session_id="session-1")
+    )
 
     assert answer == "hello from codex"
 

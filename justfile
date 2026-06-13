@@ -5,14 +5,14 @@ run:
 
 [positional-arguments]
 @test *args='':
-	uv run pytest -n auto $@
+	uv run pytest $@
 
 [positional-arguments]
 @test-local *args='':
-	uv run pytest -n auto -m "not external" $@
+	uv run pytest -m "not external" $@
 
 test-failed:
-	uv run pytest -n auto --lf
+	uv run pytest --lf
 
 website:
 	cd website && npm run build && npm run preview
