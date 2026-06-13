@@ -485,6 +485,7 @@ async def append_user_turn(
             "type": "message",
             "role": "user",
             "content": content,
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     )
     messages_json["message_ids"].extend(fresh_message_ids)
@@ -559,6 +560,7 @@ async def get_answer_streaming(
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
+    new_message_index = len(messages_json["messages"])
     async for event in _get_streaming_reply(
         config=config,
         instructions=instructions,
@@ -584,6 +586,9 @@ async def get_answer_streaming(
                     ),
                 )
         if event.type in {"function_call_output", "response.completed"}:
+            created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            for item in messages_json["messages"][new_message_index:]:
+                item.setdefault("created_at", created_at)
             set_messages(session, messages_json)
         yield event
     logger.info("Finished answer stream")
