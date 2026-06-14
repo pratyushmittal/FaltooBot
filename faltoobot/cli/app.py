@@ -592,6 +592,14 @@ def run_notify_command(args: argparse.Namespace) -> str:
     return notification_id
 
 
+def run_doctor_command(config: Config | None = None) -> list[str]:
+    """Run self-healing checks without upgrading or restarting services."""
+    changes = run_doctor(config or build_config())
+    summary = ", ".join(changes) if changes else "none"
+    console.print(f"[green]Doctor complete.[/] changes: {summary}")
+    return changes
+
+
 def parse_args() -> argparse.Namespace:
     # comment: keep the service entrypoint hidden from public help while still accepting it.
     if sys.argv[1:2] == [SERVICE_COMMAND]:
@@ -606,7 +614,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,logs,browser,notify,codex-login}",
+        metavar="{update,whatsapp,logs,browser,notify,doctor,codex-login}",
     )
 
     sub.add_parser(
@@ -618,6 +626,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     sub.add_parser("logs", help="show logs in follow mode")
+    sub.add_parser("doctor", help="run self-healing checks without upgrading")
     browser = sub.add_parser("browser", help="launch a persistent browser with CDP")
     browser.add_argument("url", nargs="?", help="optional URL to open")
     notify = sub.add_parser("notify", help="enqueue a notification for a chat")
@@ -649,6 +658,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_browser_command(args, config)
     elif args.command == "notify":
         run_notify_command(args)
+    elif args.command == "doctor":
+        run_doctor_command(config)
     elif args.command == "codex-login":
         run_openai_login(console)
     else:

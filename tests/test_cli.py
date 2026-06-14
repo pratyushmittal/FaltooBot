@@ -504,6 +504,35 @@ def test_run_whatsapp_auth_surfaces_libmagic_help(monkeypatch, tmp_path: Path) -
         raise AssertionError("expected SystemExit")
 
 
+
+def test_run_doctor_command_runs_without_update(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    doctor_calls: list[Config] = []
+    uv_calls: list[str] = []
+
+    monkeypatch.setattr(cli, "build_config", lambda: config)
+    monkeypatch.setattr(cli, "_run_cmd", lambda *args: uv_calls.append("ran"))
+    monkeypatch.setattr(
+        cli, "run_doctor", lambda config: doctor_calls.append(config) or ["doctor:ok"]
+    )
+
+    changes = cli.run_doctor_command()
+
+    assert changes == ["doctor:ok"]
+    assert doctor_calls == [config]
+    assert uv_calls == []
+
+
+def test_handle_doctor_command_runs_doctor(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    calls: list[Config | None] = []
+
+    monkeypatch.setattr(cli, "run_doctor_command", lambda config=None: calls.append(config) or [])
+
+    cli.handle_command(cli.argparse.Namespace(command="doctor"), config)
+
+    assert calls == [config]
+
 def test_non_whatsapp_commands_do_not_import_whatsapp(monkeypatch) -> None:
     calls: list[str] = []
 
