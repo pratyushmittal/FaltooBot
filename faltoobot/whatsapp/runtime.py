@@ -882,11 +882,26 @@ async def _handle_album_event(  # noqa: PLR0913
 
 
 def _message_summary(user_text: str, audio: Any, image_message: bool) -> str:
-    if user_text:
-        return user_text
+    """Return a privacy-preserving message summary for operational logs.
+
+    The full prompt is already stored in the per-chat session history for model
+    context. Operational logs are broader and easier to tail/share while debugging,
+    so avoid duplicating private message text, voice transcripts, captions, or
+    document notes there.
+    """
+    text_len = len(user_text.strip()) if user_text else 0
+    if audio is not None:
+        seconds = int(getattr(audio, "seconds", 0) or 0)
+        if text_len:
+            return f"<voice note transcript; {seconds}s; {text_len} chars>"
+        return f"<voice note {seconds}s>"
     if image_message:
+        if text_len:
+            return f"<image with caption; {text_len} chars>"
         return "<image>"
-    return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
+    if text_len:
+        return f"<text; {text_len} chars>"
+    return "<empty message>"
 
 
 async def _transcribe_audio_or_reply(
