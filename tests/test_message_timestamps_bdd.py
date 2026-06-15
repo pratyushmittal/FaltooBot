@@ -87,13 +87,25 @@ def transcript_stores_timestamps(timestamp_ctx: dict[str, Any]) -> None:
     assert all(isinstance(message.get("created_at"), str) for message in messages)
 
 
-@given("a saved text message with a timestamp")
-def saved_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> None:
+@given("a saved user text message with a timestamp")
+def saved_user_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> None:
     timestamp_ctx["history"] = [
         {
             "type": "message",
             "role": "user",
             "content": "Hi",
+            "created_at": "2026-06-13T17:24:33+05:30",
+        }
+    ]
+
+
+@given("a saved assistant text message with a timestamp")
+def saved_assistant_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> None:
+    timestamp_ctx["history"] = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Hello"}],
             "created_at": "2026-06-13T17:24:33+05:30",
         }
     ]
@@ -157,5 +169,16 @@ def trimmed_histories_match_without_mutating_history(
             "type": "message",
             "role": "user",
             "content": "[Message sent at 2026-06-13T17:24:33+05:30]\nHi",
+        }
+    ]
+
+
+@then("the timestamp is not included in the assistant text sent to OpenAI")
+def timestamp_is_not_included_in_assistant_text(timestamp_ctx: dict[str, Any]) -> None:
+    assert timestamp_ctx["trimmed"] == [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Hello"}],
         }
     ]

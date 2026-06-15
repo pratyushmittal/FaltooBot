@@ -216,7 +216,7 @@ def _strip_display_only_content(item: MessageItem) -> MessageItem | None:
 
 
 def _with_message_timestamp(item: MessageItem, created_at: str | None) -> MessageItem:
-    if item.get("type") != "message" or not created_at:
+    if item.get("type") != "message" or item.get("role") != "user" or not created_at:
         return item
 
     timestamp = f"[Message sent at {created_at}]"
