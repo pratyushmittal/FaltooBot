@@ -243,6 +243,27 @@ def inspect_cron_health(
 
 
 
+LARGE_SESSION_HISTORY_BYTES = 25 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class SessionHealthSummary:
+    histories: int = 0
+    total_bytes: int = 0
+    largest_bytes: int = 0
+    large_histories: int = 0
+    incomplete_histories: int = 0
+    unreadable_histories: int = 0
+
+    @property
+    def has_issues(self) -> bool:
+        return (
+            self.large_histories > 0
+            or self.incomplete_histories > 0
+            or self.unreadable_histories > 0
+        )
+
+
 def _call_id(item: MessageItem, item_type: str) -> str | None:
     if item.get("type") != item_type:
         return None
@@ -372,6 +393,91 @@ def heal_function_call_outputs(config: Config) -> bool:
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
         changed = True
     return changed
+
+
+def _history_is_incomplete(messages: MessageHistory) -> bool:
+    """Return True when a saved run ended without a final assistant message.
+
+    This usually means a one-shot/sub-agent process was killed or crashed after doing
+    tool work. Reporting it at the aggregate level helps monitor owners find silent
+    failures without exposing private prompt or output text.
+    """
+    dict_messages = [item for item in messages if isinstance(item, dict)]
+    if not dict_messages:
+        return False
+    if not any(item.get("role") == "user" for item in dict_messages):
+        return False
+    for item in reversed(dict_messages):
+        if item.get("type") == "reasoning":
+            continue
+        return not (item.get("type") == "message" and item.get("role") == "assistant")
+    return True
+
+
+def summarize_session_health(
+    config: Config,
+    *,
+    large_history_bytes: int = LARGE_SESSION_HISTORY_BYTES,
+) -> SessionHealthSummary:
+    """Return privacy-safe aggregate health counters for saved sessions."""
+    sessions_dir = config.sessions_dir
+    if not sessions_dir.exists():
+        return SessionHealthSummary()
+
+    histories = 0
+    total_bytes = 0
+    largest_bytes = 0
+    large_histories = 0
+    incomplete_histories = 0
+    unreadable_histories = 0
+
+    for path in sessions_dir.rglob("messages.json"):
+        histories += 1
+        try:
+            size = path.stat().st_size
+        except OSError:
+            unreadable_histories += 1
+            continue
+        total_bytes += size
+        largest_bytes = max(largest_bytes, size)
+        if size >= large_history_bytes:
+            large_histories += 1
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            unreadable_histories += 1
+            continue
+        messages = data.get("messages") if isinstance(data, dict) else None
+        if not isinstance(messages, list):
+            unreadable_histories += 1
+            continue
+        if _history_is_incomplete(cast(MessageHistory, messages)):
+            incomplete_histories += 1
+
+    return SessionHealthSummary(
+        histories=histories,
+        total_bytes=total_bytes,
+        largest_bytes=largest_bytes,
+        large_histories=large_histories,
+        incomplete_histories=incomplete_histories,
+        unreadable_histories=unreadable_histories,
+    )
+
+
+def format_session_health_summary(summary: SessionHealthSummary) -> list[str]:
+    """Format non-sensitive doctor lines for session-health diagnostics."""
+    lines = [
+        f"doctor:session-histories={summary.histories}",
+        f"doctor:session-history-bytes={summary.total_bytes}",
+    ]
+    if summary.large_histories:
+        lines.append(f"doctor:large-session-histories={summary.large_histories}")
+    if summary.incomplete_histories:
+        lines.append(f"doctor:incomplete-session-histories={summary.incomplete_histories}")
+    if summary.unreadable_histories:
+        lines.append(f"doctor:unreadable-session-histories={summary.unreadable_histories}")
+    return lines
 
 
 def main(config: Config) -> list[str]:

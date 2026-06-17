@@ -203,3 +203,55 @@ def test_inspect_cron_health_reports_missing_workdir_and_script(tmp_path: Path) 
 
     assert any("working directory missing" in item for item in rendered)
     assert any("script missing" in item for item in rendered)
+def test_summarize_session_health_counts_large_incomplete_and_unreadable(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    sessions_root = config.sessions_dir
+
+    complete = sessions_root / "code@test" / "complete" / "messages.json"
+    complete.parent.mkdir(parents=True)
+    complete.write_text(
+        '{"messages":[{"type":"message","role":"user","content":"hi"},'
+        '{"type":"message","role":"assistant","content":"hello"}]}\n',
+        encoding="utf-8",
+    )
+
+    incomplete = sessions_root / "sub-agent@test" / "incomplete" / "messages.json"
+    incomplete.parent.mkdir(parents=True)
+    incomplete.write_text(
+        '{"messages":[{"type":"message","role":"user","content":"run"},'
+        '{"type":"function_call","call_id":"call_1","name":"tool","arguments":"{}"},'
+        '{"type":"function_call_output","call_id":"call_1","output":"ok"}]}\n',
+        encoding="utf-8",
+    )
+
+    large = sessions_root / "code@test" / "large" / "messages.json"
+    large.parent.mkdir(parents=True)
+    large.write_text(
+        '{"messages":[{"type":"message","role":"user","content":"big"},'
+        '{"type":"message","role":"assistant","content":"done"}],'
+        f'"padding":"{"x" * 200}"}}\n',
+        encoding="utf-8",
+    )
+
+    corrupt = sessions_root / "code@test" / "corrupt" / "messages.json"
+    corrupt.parent.mkdir(parents=True)
+    corrupt.write_text("{not-json\n", encoding="utf-8")
+
+    expected_histories = 4
+    summary = doctor.summarize_session_health(config, large_history_bytes=250)
+
+    assert summary.histories == expected_histories
+    assert summary.large_histories == 1
+    assert summary.incomplete_histories == 1
+    assert summary.unreadable_histories == 1
+    assert summary.total_bytes >= complete.stat().st_size + incomplete.stat().st_size
+    assert summary.largest_bytes == large.stat().st_size
+    assert summary.has_issues is True
+
+    assert doctor.format_session_health_summary(summary) == [
+        f"doctor:session-histories={expected_histories}",
+        f"doctor:session-history-bytes={summary.total_bytes}",
+        "doctor:large-session-histories=1",
+        "doctor:incomplete-session-histories=1",
+        "doctor:unreadable-session-histories=1",
+    ]
