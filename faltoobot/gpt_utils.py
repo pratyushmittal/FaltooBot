@@ -197,8 +197,6 @@ def _replace_unavailable_upload(value: Any) -> Any:
     return {key: _replace_unavailable_upload(item) for key, item in value.items()}
 
 
-
-
 def _has_oversized_encrypted_content(item: MessageItem) -> bool:
     encrypted_content = item.get("encrypted_content")
     return (
@@ -237,28 +235,50 @@ def _trim_history_item(item: MessageItem) -> MessageItem | None:
     }
 
 
-def trim_input(
-    items: MessageHistory,
-    *,
-    replace_unavailable_uploads: bool = False,
-) -> MessageHistory:
+def _auto_compaction_window_start(items: MessageHistory) -> int | None:
     # Auto-compaction items can replace history before that turn.
     for index in range(len(items) - 1, -1, -1):
         if items[index].get("type") != "compaction":
             continue
         if items[index].get(STANDALONE_COMPACTION_KEY):
             # comment: standalone compact output must be replayed as-is.
-            break
+            return None
 
         # Include the user turn that produced this auto-compaction item.
         for start in range(index - 1, -1, -1):
             if items[start].get("role") == "user":
-                items = items[start:]
-                break
-        else:
-            # comment: old/corrupt histories may not have a user item before compaction.
-            items = items[index:]
-        break
+                return start
+
+        # comment: old/corrupt histories may not have a user item before compaction.
+        return index
+    return None
+
+
+def prune_auto_compacted_history(items: MessageHistory) -> bool:
+    """Drop persisted history already superseded by the latest auto-compaction.
+
+    The Responses API can emit auto-compaction items during normal streaming. Those
+    items are enough context to replay the window from the triggering user turn, so
+    keeping every older turn plus prior compaction blobs makes messages.json grow
+    without improving future requests. Mutate in place so active streaming callers
+    keep appending to the same list object.
+    """
+
+    start = _auto_compaction_window_start(items)
+    if start is None or start <= 0:
+        return False
+    del items[:start]
+    return True
+
+
+def trim_input(
+    items: MessageHistory,
+    *,
+    replace_unavailable_uploads: bool = False,
+) -> MessageHistory:
+    start = _auto_compaction_window_start(items)
+    if start is not None:
+        items = items[start:]
 
     trimmed_items: MessageHistory = []
     for item in items:
