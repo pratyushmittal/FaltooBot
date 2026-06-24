@@ -84,6 +84,46 @@ def test_trim_input_drops_image_generation_calls() -> None:
     ]
 
 
+
+def test_prune_auto_compacted_history_mutates_to_latest_window() -> None:
+    history: MessageHistory = [
+        {"type": "message", "role": "user", "content": "old"},
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "old answer"}]},
+        {"type": "message", "role": "user", "content": "trigger"},
+        {"type": "compaction", "encrypted_content": "summary"},
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "new answer"}]},
+    ]
+
+    assert gpt_utils.prune_auto_compacted_history(history) is True
+
+    assert history == [
+        {"type": "message", "role": "user", "content": "trigger"},
+        {"type": "compaction", "encrypted_content": "summary"},
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "new answer"}]},
+    ]
+
+
+def test_prune_auto_compacted_history_ignores_standalone_compaction() -> None:
+    history: MessageHistory = [
+        {"type": "message", "role": "user", "content": "old"},
+        {
+            "type": "compaction",
+            "encrypted_content": "summary",
+            gpt_utils.STANDALONE_COMPACTION_KEY: True,
+        },
+    ]
+
+    assert gpt_utils.prune_auto_compacted_history(history) is False
+
+    assert history == [
+        {"type": "message", "role": "user", "content": "old"},
+        {
+            "type": "compaction",
+            "encrypted_content": "summary",
+            gpt_utils.STANDALONE_COMPACTION_KEY: True,
+        },
+    ]
+
 def test_get_openai_client_uses_codex_retry_limits() -> None:
     client = gpt_utils.get_openai_client(_api_config())
 
