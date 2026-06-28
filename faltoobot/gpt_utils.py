@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
@@ -21,6 +22,10 @@ from faltoobot.config import Config
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 200_000
+# OpenAI currently rejects individual encrypted_content strings above 10 MiB.
+# Keep a small margin so oversized auto-compaction/reasoning blobs do not
+# permanently brick a session history.
+MAX_ENCRYPTED_CONTENT_CHARS = 10_000_000
 STANDALONE_COMPACTION_KEY = "_standalone_compaction"
 REQUEST_MAX_RETRIES = 4
 STREAM_IDLE_TIMEOUT_SECONDS = 300
@@ -38,6 +43,7 @@ ToolOutput: TypeAlias = (
 Tool: TypeAlias = Callable[..., ToolOutput] | Callable[..., Awaitable[ToolOutput]]
 MessageItem: TypeAlias = dict[str, Any]
 MessageHistory: TypeAlias = list[MessageItem]
+logger = logging.getLogger(__name__)
 StreamingReplyItem: TypeAlias = (
     ResponsesServerEvent | ResponseFunctionToolCallOutputItem
 )
@@ -191,6 +197,46 @@ def _replace_unavailable_upload(value: Any) -> Any:
     return {key: _replace_unavailable_upload(item) for key, item in value.items()}
 
 
+
+
+def _has_oversized_encrypted_content(item: MessageItem) -> bool:
+    encrypted_content = item.get("encrypted_content")
+    return (
+        isinstance(encrypted_content, str)
+        and len(encrypted_content) > MAX_ENCRYPTED_CONTENT_CHARS
+    )
+
+
+def _trim_history_item(item: MessageItem) -> MessageItem | None:
+    if item.get("type") in UNREPLAYABLE_RESPONSE_ITEM_TYPES:
+        # comment: store=false response items cannot be sent back as input.
+        return None
+
+    if _has_oversized_encrypted_content(item):
+        item_type = item.get("type")
+        logger.warning(
+            "Dropping oversized encrypted response history item; type=%s length=%s",
+            item_type,
+            len(cast(str, item.get("encrypted_content"))),
+        )
+        if item_type in {"compaction", "reasoning"}:
+            # comment: these opaque state items are only useful with encrypted_content.
+            # When the blob exceeds the API per-string limit, replaying it bricks the
+            # session; dropping it preserves newer visible turns and lets the chat heal.
+            return None
+
+    return {
+        key: value
+        for key, value in item.items()
+        if key not in STRIPPED_MESSAGE_KEYS
+        and not (
+            key == "encrypted_content"
+            and isinstance(value, str)
+            and len(value) > MAX_ENCRYPTED_CONTENT_CHARS
+        )
+    }
+
+
 def trim_input(
     items: MessageHistory,
     *,
@@ -216,14 +262,9 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
-        if item.get("type") in UNREPLAYABLE_RESPONSE_ITEM_TYPES:
-            # comment: store=false response items cannot be sent back as input.
+        trimmed = _trim_history_item(item)
+        if trimmed is None:
             continue
-        trimmed = {
-            key: value
-            for key, value in item.items()
-            if key not in STRIPPED_MESSAGE_KEYS
-        }
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)

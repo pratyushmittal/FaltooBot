@@ -84,6 +84,43 @@ def test_trim_input_drops_image_generation_calls() -> None:
     ]
 
 
+def test_trim_input_drops_oversized_encrypted_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gpt_utils, "MAX_ENCRYPTED_CONTENT_CHARS", 8)
+    history: MessageHistory = [
+        {"role": "user", "content": "before"},
+        {"type": "compaction", "id": "cmp_1", "encrypted_content": "x" * 9},
+        {"role": "assistant", "content": "after"},
+    ]
+
+    assert gpt_utils.trim_input(history) == [
+        {"role": "user", "content": "before"},
+        {"role": "assistant", "content": "after"},
+    ]
+
+
+def test_trim_input_drops_oversized_encrypted_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gpt_utils, "MAX_ENCRYPTED_CONTENT_CHARS", 8)
+    history: MessageHistory = [
+        {"role": "user", "content": "before"},
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [],
+            "encrypted_content": "x" * 9,
+        },
+        {"role": "assistant", "content": "after"},
+    ]
+
+    assert gpt_utils.trim_input(history) == [
+        {"role": "user", "content": "before"},
+        {"role": "assistant", "content": "after"},
+    ]
+
+
 def test_get_openai_client_uses_codex_retry_limits() -> None:
     client = gpt_utils.get_openai_client(_api_config())
 
