@@ -150,6 +150,14 @@ faltoobot logs
 
 Shows log output in follow mode.
 
+### `faltoobot whatsapp-login`
+
+```bash
+faltoobot whatsapp-login
+```
+
+Reruns WhatsApp linking. Use it to scan the Link Device QR code again.
+
 ### `faltoobot codex-login`
 
 ```bash

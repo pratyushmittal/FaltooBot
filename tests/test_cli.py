@@ -339,6 +339,25 @@ def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) 
     assert result == config
 
 
+def test_handle_whatsapp_login_command(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    calls: list[Config] = []
+
+    monkeypatch.setattr(cli, "_run_whatsapp_auth", lambda config: calls.append(config))
+
+    cli.handle_command(cli.argparse.Namespace(command="whatsapp-login"), config)
+
+    assert calls == [config]
+
+
+def test_parse_args_accepts_whatsapp_login(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["faltoobot", "whatsapp-login"])
+
+    args = cli.parse_args()
+
+    assert args.command == "whatsapp-login"
+
+
 def test_handle_codex_login_command(monkeypatch) -> None:
     calls: list[str] = []
 
