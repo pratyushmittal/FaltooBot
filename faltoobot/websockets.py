@@ -33,6 +33,7 @@ from faltoobot.gpt_utils import (
     get_tools_definition,
     trim_input,
 )
+from faltoobot.images import resize_inline_images_in_history
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 logger = logging.getLogger("faltoobot")
@@ -45,6 +46,7 @@ WEBSOCKET_STREAM_RETRIES = 5
 WEBSOCKET_SESSIONS: dict[str, "OpenAIWebsocketSession"] = {}
 HTTP_CLIENT_ERROR_MIN = 400
 HTTP_CLIENT_ERROR_MAX = 499
+WEBSOCKET_MESSAGE_TOO_BIG_CODE = 1009
 
 
 async def _auth_headers(
@@ -116,6 +118,12 @@ def _get_error_code(exc: Exception) -> int | None:
     if code is not None:
         return code
 
+    for key in ("rcvd", "sent"):
+        close = getattr(exc, key, None)
+        code = _int_error_code(getattr(close, "code", None))
+        if code is not None:
+            return code
+
     return _int_error_code(getattr(exc, "code", None))
 
 
@@ -128,6 +136,31 @@ def _is_client_error(exc: Exception) -> bool:
         error_code is not None
         and HTTP_CLIENT_ERROR_MIN <= error_code <= HTTP_CLIENT_ERROR_MAX
     )
+
+
+def _heal_history_for_websocket_retry(
+    input: MessageHistory,
+    exc: Exception,
+) -> bool:
+    error_code = _get_error_code(exc)
+    error_text = str(exc).lower()
+    if (
+        error_code != WEBSOCKET_MESSAGE_TOO_BIG_CODE
+        and "message too big" not in error_text
+    ):
+        # comment: only oversized websocket payloads can be fixed by shrinking inline images.
+        return False
+
+    resized = resize_inline_images_in_history(input)
+    if not resized:
+        # comment: retry normally if there are no inline images to shrink.
+        return False
+    logger.warning(
+        "Resized inline image history after OpenAI websocket message-too-big error; "
+        "images=%s",
+        resized,
+    )
+    return True
 
 
 def _raise_for_response_error(event: ResponsesServerEvent) -> None:
@@ -243,10 +276,12 @@ async def _prewarm_if_needed(  # noqa: PLR0913
     if session.previous_response_id:
         return
 
+    replace_unavailable_uploads = uses_chatgpt_oauth(config)
     request_input = trim_input(
-        input, replace_unavailable_uploads=uses_chatgpt_oauth(config)
+        input, replace_unavailable_uploads=replace_unavailable_uploads
     )
     logger.info("Starting OpenAI websocket prewarm; input_items=%s", len(request_input))
+
     for attempt in range(WEBSOCKET_PREWARM_RETRIES + 1):
         payload = _get_payload(
             config,
@@ -279,6 +314,11 @@ async def _prewarm_if_needed(  # noqa: PLR0913
             if _is_client_error(exc):
                 # comment: bad auth/payload will not succeed by retrying prewarm.
                 raise
+            if _heal_history_for_websocket_retry(input, exc):
+                # comment: retry must use the smaller inline image history.
+                request_input = trim_input(
+                    input, replace_unavailable_uploads=replace_unavailable_uploads
+                )
             if attempt < WEBSOCKET_PREWARM_RETRIES:
                 logger.warning(
                     "Retrying OpenAI websocket prewarm (%s/%s): %s",

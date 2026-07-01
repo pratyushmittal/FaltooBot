@@ -13,3 +13,6 @@ run:
 
 test-failed:
 	uv run pytest --lf
+
+website:
+	cd website && npm run build && npm run preview

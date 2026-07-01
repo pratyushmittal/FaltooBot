@@ -30,7 +30,7 @@ STRIPPED_MESSAGE_KEYS = {
     "usage",
     STANDALONE_COMPACTION_KEY,
 }
-IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
+UNREPLAYABLE_RESPONSE_ITEM_TYPES = {"image_generation_call"}
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -216,12 +216,13 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
-        stripped_keys = STRIPPED_MESSAGE_KEYS
-        if item.get("type") == "image_generation_call":
-            # comment: keep only Response API replay fields; request-only fields fail later turns.
-            stripped_keys = set(item) - IMAGE_GENERATION_REPLAY_KEYS
+        if item.get("type") in UNREPLAYABLE_RESPONSE_ITEM_TYPES:
+            # comment: store=false response items cannot be sent back as input.
+            continue
         trimmed = {
-            key: value for key, value in item.items() if key not in stripped_keys
+            key: value
+            for key, value in item.items()
+            if key not in STRIPPED_MESSAGE_KEYS
         }
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)

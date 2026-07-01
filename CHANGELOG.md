@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.2.2 — 2026-06-30
+
+### Added
+- Restored `faltoobot whatsapp-login` for rerunning WhatsApp Link Device authentication.
+
+## 7.2.1 — 2026-06-06
+
+### Fixed
+- Avoid replaying OpenAI image generation response items when `store=false`, preventing stale `ig_...` item errors while keeping local histories unchanged.
+
 ## 7.2.0 — 2026-05-30
 
 ### Added

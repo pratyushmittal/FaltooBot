@@ -12,7 +12,7 @@ const docs = (await getCollection('docs')).sort(
   (left, right) => left.data.order - right.data.order,
 );
 const currentPath = Astro.url.pathname;
-const { title = 'Docs — Mittals AI', description } = Astro.props;
+const { title = 'Docs — faltoo.bot', description } = Astro.props;
 ---
 
 <BaseLayout title={title} description={description}>
@@ -20,7 +20,7 @@ const { title = 'Docs — Mittals AI', description } = Astro.props;
     <Header />
     <main class="docs-frame">
       <aside class="docs-sidebar" aria-label="Documentation">
-        <p class="docs-sidebar__label">Family guides</p>
+        <p class="docs-sidebar__label">Guides</p>
         <ul class="docs-sidebar__list">
           {docs.map((entry) => {
             const href = `/docs/${entry.slug}/`;

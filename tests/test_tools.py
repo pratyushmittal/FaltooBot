@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 from openai.types.responses import ResponseInputImage
+from PIL import Image
 
 from faltoobot import images, tools
 from faltoobot.gpt_utils import get_tools_definition
@@ -129,7 +130,7 @@ def test_get_load_image_tool_builds_valid_tool_definition(tmp_path: Path) -> Non
     assert definition["name"] == "load_image"
     assert definition["strict"] is True
     assert description.startswith(
-        "Load image files such as jpg or png. Useful for seeing screenshots and creatives."
+        "Load image files in supported image formats: jpeg, png, gif, or webp."
     )
     assert parameters == {
         "type": "object",
@@ -219,3 +220,42 @@ async def test_load_image_in_workspace_returns_uploaded_images_for_api_key(
     assert item.file_id == "file:browser-home.png"
     assert item.detail == "auto"
     assert closed == ["closed"]
+
+
+def test_inline_image_item_rejects_avif(tmp_path: Path) -> None:
+    image = tmp_path / "small.avif"
+    image.write_bytes(b"avif")
+
+    with pytest.raises(ValueError, match="Unsupported image format for OpenAI"):
+        images.inline_image_item(tmp_path, image)
+
+
+def test_inline_image_item_rejects_oversized_inline_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(images, "MAX_INLINE_IMAGE_BYTES", 1)
+    image = tmp_path / "small.png"
+    Image.new("RGB", (8, 8), color="red").save(image)
+
+    with pytest.raises(ValueError, match="Image is too large to send inline"):
+        images.inline_image_item(tmp_path, image)
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_lets_openai_validate_future_image_formats(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "small.avif"
+    image.write_bytes(b"avif")
+    created: list[str] = []
+
+    async def create_file(file: Any, purpose: str) -> SimpleNamespace:
+        created.append(Path(file.name).name)
+        return SimpleNamespace(id="file_123")
+
+    client = SimpleNamespace(files=SimpleNamespace(create=create_file))
+
+    item = await images.upload_attachment(cast(Any, client), tmp_path, image)
+
+    assert item.file_id == "file_123"
+    assert created == ["small.avif"]

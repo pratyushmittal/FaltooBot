@@ -1,18 +1,18 @@
 ---
 title: Recipes
-description: Small workflows that make the family more useful.
+description: Small workflows that make faltoo.bot more useful.
 order: 4
 ---
 
 ## What recipes are for
 
-Recipes are the reusable prompts, conventions, and habits that help the Mittals family do better work.
+Recipes are reusable prompts, conventions, and habits that help faltoobot and faltoochat do better work.
 
 ## Good examples
 
 ### Release prep
 
-Use Coder Mittal to:
+Use faltoochat to:
 - inspect modified files
 - add review comments
 - ask it to address those comments
@@ -20,7 +20,7 @@ Use Coder Mittal to:
 
 ### WhatsApp triage
 
-Use Claw Mittal to:
+Use faltoobot to:
 - summarize messages from a thread
 - draft a clean reply
 - rewrite it in a warmer or shorter tone
