@@ -217,6 +217,8 @@ In terminal chat:
 /tree
 ```
 
+Custom terminal slash commands are loaded from `~/.faltoobot/prompts/*.md`. For example, `~/.faltoobot/prompts/switch.md` is available as `/switch`. Arguments are substituted as `$1`, `$2`, and `$*`, so `/switch somebranch` can expand `$1` to `somebranch`.
+
 `faltoochat` supports image input, queued prompts while answering, and `Shift+Enter` for multiline input. Paste an image file path or use `Ctrl+V` to attach the current macOS clipboard image. WhatsApp chats now also support incoming image messages, including captioned images, image-only prompts, and multi-image albums.
 
 ## Development

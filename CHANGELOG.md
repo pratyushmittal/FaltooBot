@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## Unreleased
+
+### Added
+- Custom `faltoochat` slash commands now accept arguments and substitute `$1`, `$2`, and `$*` in saved prompt files.
+
 ## 7.2.2 — 2026-06-30
 
 ### Added
