@@ -11,7 +11,7 @@ from pytest_bdd import given, scenarios, then, when
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 from openai.types.responses.response_output_item import ImageGenerationCall
 
-from faltoobot import sessions
+from faltoobot import gpt_utils, sessions
 from faltoobot.gpt_utils import MessageHistory
 
 scenarios("features/generated_image_local_ui.feature")
@@ -29,11 +29,13 @@ def image_ui_ctx(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, A
     return {"tmp_path": tmp_path, "events": []}
 
 
-def _image_call(tmp_path: Path) -> ImageGenerationCall:
-    image = tmp_path / "source.png"
-    Image.new("RGB", (4, 4), color="red").save(image)
+def _image_call(
+    tmp_path: Path, image_id: str = "ig_test", color: str = "red"
+) -> ImageGenerationCall:
+    image = tmp_path / f"source_{image_id}.png"
+    Image.new("RGB", (4, 4), color=color).save(image)
     return ImageGenerationCall(
-        id="ig_test",
+        id=image_id,
         result=base64.b64encode(image.read_bytes()).decode("utf-8"),
         status="completed",
         type="image_generation_call",
@@ -64,12 +66,20 @@ def faltoochat_session(
         tools: list[Any],
         prompt_cache_key: str | None = None,
     ):
-        input.append(
-            {
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": "done"}],
-            }
+        input.extend(
+            [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+                {
+                    "type": "image_generation_call",
+                    "id": image_call.id,
+                    "status": image_call.status,
+                    "result": image_call.result,
+                },
+            ]
         )
         yield SimpleNamespace(
             type="response.completed",
@@ -109,6 +119,45 @@ def faltoochat_session_with_image_only_response(
         yield SimpleNamespace(
             type="response.completed",
             response=SimpleNamespace(output=[image_call], output_text=""),
+        )
+
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
+    image_ui_ctx["session"] = sessions.get_session(
+        chat_key="code@test", workspace=tmp_path
+    )
+
+
+@given("a Faltoochat session with a mocked multiple generated image response")
+def faltoochat_session_with_multiple_images(
+    image_ui_ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp_path = cast(Path, image_ui_ctx["tmp_path"])
+    image_calls = [
+        _image_call(tmp_path, "ig_one", "red"),
+        _image_call(tmp_path, "ig_two", "blue"),
+    ]
+
+    async def fake_get_streaming_reply(
+        config: Any,
+        instructions: str,
+        input: MessageHistory,
+        tools: list[Any],
+        prompt_cache_key: str | None = None,
+    ):
+        input.extend(
+            {
+                "type": "image_generation_call",
+                "id": image_call.id,
+                "status": image_call.status,
+                "result": image_call.result,
+            }
+            for image_call in image_calls
+        )
+        yield SimpleNamespace(
+            type="response.completed",
+            response=SimpleNamespace(
+                output=[_output_message(), *image_calls], output_text=""
+            ),
         )
 
     monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
@@ -159,13 +208,50 @@ def completed_response_includes_markdown(image_ui_ctx: dict[str, Any]) -> None:
 def chat_history_includes_display_only_markdown(image_ui_ctx: dict[str, Any]) -> None:
     session = cast(sessions.Session, image_ui_ctx["session"])
     messages = sessions.get_messages(session)["messages"]
-    latest = messages[-1]
-    content = latest.get("content")
+    assistant = next(
+        item
+        for item in messages
+        if item.get("role") == "assistant"
+        and any(
+            isinstance(part, dict) and part.get(sessions.DISPLAY_ONLY_CONTENT_KEY)
+            for part in item.get("content", [])
+        )
+    )
+    content = assistant.get("content")
     assert isinstance(content, list)
     text_part, image_part = content
     assert text_part["text"] == "done"
     assert "![Generated image](.generated-images/" in image_part["text"]
     assert image_part[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
+
+
+@then("the chat history includes a developer note with the generated image path")
+def chat_history_includes_developer_image_note(image_ui_ctx: dict[str, Any]) -> None:
+    session = cast(sessions.Session, image_ui_ctx["session"])
+    messages = gpt_utils.trim_input(sessions.get_messages(session)["messages"])
+    image_count = sum(
+        1 for item in messages if item.get("type") == "image_generation_call"
+    )
+    developer_paths: list[str] = []
+    prefix = "Generated images are saved locally at: "
+    for item in messages:
+        if item.get("type") != "message" or item.get("role") != "developer":
+            continue
+        content = item.get("content")
+        assert isinstance(content, list)
+        assert content[0]["type"] == "input_text"
+        text = content[0]["text"]
+        assert text.startswith(prefix)
+        developer_paths.append(text.removeprefix(prefix))
+
+    tmp_path = cast(Path, image_ui_ctx["tmp_path"])
+    saved_paths = {
+        path.relative_to(tmp_path).as_posix()
+        for path in (tmp_path / sessions.GENERATED_IMAGES_DIR).glob("*.png")
+    }
+    assert image_count
+    assert len(developer_paths) == image_count
+    assert set(developer_paths) == saved_paths
 
 
 @then("the latest chat history item is a display-only generated image markdown link")

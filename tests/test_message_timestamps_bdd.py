@@ -79,12 +79,12 @@ def ask_timestamped_question(timestamp_ctx: dict[str, Any]) -> None:
     asyncio.run(run())
 
 
-@then("the local transcript stores timestamps for the new messages")
+@then("the local transcript stores timestamp keys for the new messages")
 def transcript_stores_timestamps(timestamp_ctx: dict[str, Any]) -> None:
     session = cast(sessions.Session, timestamp_ctx["session"])
     messages = sessions.get_messages(session)["messages"]
     assert [message["role"] for message in messages] == ["user", "assistant"]
-    assert all(isinstance(message.get("created_at"), str) for message in messages)
+    assert all(isinstance(message.get("timestamp"), str) for message in messages)
 
 
 @given("a saved user text message with a timestamp")
@@ -94,7 +94,7 @@ def saved_user_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> Non
             "type": "message",
             "role": "user",
             "content": "Hi",
-            "created_at": "2026-06-13T17:24:33+05:30",
+            "timestamp": "2026-06-13T17:24:33+05:30",
         }
     ]
 
@@ -106,7 +106,7 @@ def saved_assistant_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -
             "type": "message",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "Hello"}],
-            "created_at": "2026-06-13T17:24:33+05:30",
+            "timestamp": "2026-06-13T17:24:33+05:30",
         }
     ]
 
@@ -118,7 +118,7 @@ def saved_image_only_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> No
             "type": "message",
             "role": "user",
             "content": [{"type": "input_image", "file_id": "file_123"}],
-            "created_at": "2026-06-13T17:24:33+05:30",
+            "timestamp": "2026-06-13T17:24:33+05:30",
         }
     ]
 
@@ -136,19 +136,21 @@ def trim_history_for_openai_twice(timestamp_ctx: dict[str, Any]) -> None:
     timestamp_ctx["second_trimmed"] = gpt_utils.trim_input(history)
 
 
-@then("the timestamp is included in the text sent to OpenAI")
-def timestamp_is_included_in_text(timestamp_ctx: dict[str, Any]) -> None:
+@then("the timestamp key is stripped from the user message sent to OpenAI")
+def timestamp_key_is_stripped_from_user_text(timestamp_ctx: dict[str, Any]) -> None:
     assert timestamp_ctx["trimmed"] == [
         {
             "type": "message",
             "role": "user",
-            "content": "[Message sent at 2026-06-13T17:24:33+05:30]\nHi",
+            "content": "Hi",
         }
     ]
 
 
-@then("no timestamp text block is added to the image message")
-def no_timestamp_block_is_added_to_image(timestamp_ctx: dict[str, Any]) -> None:
+@then("the timestamp key is stripped without adding text to the image message")
+def timestamp_key_is_stripped_without_adding_text_to_image(
+    timestamp_ctx: dict[str, Any],
+) -> None:
     assert timestamp_ctx["trimmed"] == [
         {
             "type": "message",
@@ -168,13 +170,15 @@ def trimmed_histories_match_without_mutating_history(
         {
             "type": "message",
             "role": "user",
-            "content": "[Message sent at 2026-06-13T17:24:33+05:30]\nHi",
+            "content": "Hi",
         }
     ]
 
 
-@then("the timestamp is not included in the assistant text sent to OpenAI")
-def timestamp_is_not_included_in_assistant_text(timestamp_ctx: dict[str, Any]) -> None:
+@then("the timestamp key is stripped from the assistant message sent to OpenAI")
+def timestamp_key_is_stripped_from_assistant_text(
+    timestamp_ctx: dict[str, Any],
+) -> None:
     assert timestamp_ctx["trimmed"] == [
         {
             "type": "message",

@@ -374,11 +374,11 @@ def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
     return output_text.strip() if isinstance(output_text, str) else ""
 
 
-def _generated_image_markdown(
+def _save_generated_images(
     output: list[ResponseOutputItem], workspace: Path
 ) -> list[str]:
     images_dir = workspace / GENERATED_IMAGES_DIR
-    lines: list[str] = []
+    paths: list[str] = []
 
     for item in output:
         if not isinstance(item, ImageGenerationCall):
@@ -390,9 +390,22 @@ def _generated_image_markdown(
         images_dir.mkdir(parents=True, exist_ok=True)
         path = images_dir / f"{uuid4().hex}.png"
         path.write_bytes(base64.b64decode(result))
-        lines.append(f"![Generated image]({path.relative_to(workspace).as_posix()})")
+        paths.append(path.relative_to(workspace).as_posix())
 
-    return lines
+    return paths
+
+
+def _generated_image_developer_message(path: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "developer",
+        "content": [
+            {
+                "type": "input_text",
+                "text": f"Generated images are saved locally at: {path}",
+            }
+        ],
+    }
 
 
 def _append_display_output_text(messages: MessageHistory, text: str) -> None:
@@ -485,7 +498,7 @@ async def append_user_turn(
             "type": "message",
             "role": "user",
             "content": content,
-            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     )
     messages_json["message_ids"].extend(fresh_message_ids)
@@ -574,9 +587,15 @@ async def get_answer_streaming(
                 list[ResponseOutputItem],
                 event.response.output or getattr(event.response, "codex_output", []),
             )
-            image_markdown = "\n\n".join(_generated_image_markdown(output, workspace))
-            if image_markdown:
-                image_markdown = f"\n\n{image_markdown}"
+            image_paths = _save_generated_images(output, workspace)
+            if image_paths:
+                for image_path in image_paths:
+                    messages_json["messages"].append(
+                        _generated_image_developer_message(image_path)
+                    )
+                image_markdown = "\n\n" + "\n\n".join(
+                    f"![Generated image]({image_path})" for image_path in image_paths
+                )
                 _append_display_output_text(messages_json["messages"], image_markdown)
                 _append_response_output_text(output, image_markdown)
                 yield cast(
@@ -586,9 +605,9 @@ async def get_answer_streaming(
                     ),
                 )
         if event.type in {"function_call_output", "response.completed"}:
-            created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
             for item in messages_json["messages"][new_message_index:]:
-                item.setdefault("created_at", created_at)
+                item.setdefault("timestamp", timestamp)
             set_messages(session, messages_json)
         yield event
     logger.info("Finished answer stream")

@@ -19,9 +19,9 @@ def _listed_name(session: sessions.Session, name: str) -> str:
     return sessions._session_label(name, session.messages_path)
 
 
-def _without_created_at(messages: MessageHistory) -> MessageHistory:
+def _without_timestamp(messages: MessageHistory) -> MessageHistory:
     return [
-        {key: value for key, value in item.items() if key != "created_at"}
+        {key: value for key, value in item.items() if key != "timestamp"}
         for item in messages
     ]
 
@@ -115,7 +115,7 @@ def test_get_session_creates_messages_json_and_workspace(
     assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
-    assert _without_created_at(payload["messages"]) == []
+    assert _without_timestamp(payload["messages"]) == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
     assert (Path(payload["workspace"]) / "AGENTS.md").exists()
@@ -405,7 +405,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     assert payload["system_prompt"] == "system prompt"
     assert duplicate == ""
     assert len(calls) == 1
-    assert _without_created_at(calls[0]) == [
+    assert _without_timestamp(calls[0]) == [
         {
             "type": "message",
             "role": "user",
@@ -471,7 +471,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
         "additionalProperties": False,
     }
     assert payload["message_ids"] == ["msg-1"]
-    assert _without_created_at(payload["messages"]) == [
+    assert _without_timestamp(payload["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -737,7 +737,7 @@ async def test_get_answer_uploads_image_attachments(
     if case["expected_name_suffix"]:
         uploaded = client.files.calls[0]["file"]
         assert uploaded.name.endswith(str(case["expected_name_suffix"]))
-    assert _without_created_at(payload["messages"]) == [
+    assert _without_timestamp(payload["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -922,7 +922,7 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
     )
 
     assert sessions.get_messages(session)["message_ids"] == ["msg-1", "msg-2"]
-    assert _without_created_at(sessions.get_messages(session)["messages"]) == [
+    assert _without_timestamp(sessions.get_messages(session)["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -1009,7 +1009,7 @@ async def test_get_answer_reuses_existing_user_turn(
 
     assert answer == "hello"
     user_item = calls[0][0]
-    assert isinstance(user_item.pop("created_at"), str)
+    assert isinstance(user_item.pop("timestamp"), str)
     assert calls == [
         [
             {
@@ -1020,8 +1020,8 @@ async def test_get_answer_reuses_existing_user_turn(
         ]
     ]
     messages = sessions.get_messages(session)["messages"]
-    assert isinstance(messages[0].pop("created_at"), str)
-    assert isinstance(messages[1].pop("created_at"), str)
+    assert isinstance(messages[0].pop("timestamp"), str)
+    assert isinstance(messages[1].pop("timestamp"), str)
     assert messages == [
         {
             "type": "message",

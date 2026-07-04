@@ -69,12 +69,12 @@ def store_response_item(image_replay_ctx: dict[str, Any]) -> None:
     )
 
 
-@then("the stored image call is completed")
-def stored_image_call_is_completed(image_replay_ctx: dict[str, Any]) -> None:
+@then("the stored image call keeps the OpenAI status")
+def stored_image_call_keeps_openai_status(image_replay_ctx: dict[str, Any]) -> None:
     assert image_replay_ctx["stored"] == {
         "type": "image_generation_call",
         "id": "ig_1",
-        "status": "completed",
+        "status": "generating",
         "result": "base64",
     }
 

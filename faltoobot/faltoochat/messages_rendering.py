@@ -204,10 +204,12 @@ def _tool_text(item: MessageItem) -> str | None:
             return None
 
 
-def get_item_text(item: MessageItem) -> tuple[str, str] | None:
+def get_item_text(item: MessageItem) -> tuple[str, str] | None:  # noqa: PLR0911
     if text := _tool_text(item):
         return text, "tool"
     match item:
+        case {"type": "message", "role": "developer"}:
+            return None
         case {"type": "message", "role": "user", "content": content}:
             text = _get_text(content)
             return (text, "user") if text else None

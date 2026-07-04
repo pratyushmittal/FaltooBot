@@ -28,7 +28,7 @@ STRIPPED_MESSAGE_KEYS = {
     "parsed_arguments",
     "response_id",
     "usage",
-    "created_at",
+    "timestamp",
     STANDALONE_COMPACTION_KEY,
 }
 IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
@@ -173,12 +173,6 @@ def _to_message_item(value: Any) -> MessageItem:
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
-    if value.get("type") == "image_generation_call" and isinstance(
-        value.get("result"), str
-    ):
-        # comment: streamed image calls can arrive as generating even after result exists;
-        # store them as completed once so replay stays simple and stable.
-        return {**value, "status": "completed"}
     return value
 
 
@@ -213,26 +207,6 @@ def _strip_display_only_content(item: MessageItem) -> MessageItem | None:
         # comment: generated-image markdown is display-only; don't send empty UI shims back.
         return None
     return {**item, "content": content}
-
-
-def _with_message_timestamp(item: MessageItem, created_at: str | None) -> MessageItem:
-    if item.get("type") != "message" or item.get("role") != "user" or not created_at:
-        return item
-
-    timestamp = f"[Message sent at {created_at}]"
-    content = item["content"]
-    if isinstance(content, str):
-        return {**item, "content": f"{timestamp}\n{content}" if content else timestamp}
-
-    for index, part in enumerate(content):
-        if part["type"] not in {"input_text", "output_text"}:
-            continue
-        content = list(content)
-        text = part["text"]
-        content[index] = {**part, "text": f"{timestamp}\n{text}" if text else timestamp}
-        return {**item, "content": content}
-
-    return item
 
 
 def trim_input(
@@ -277,7 +251,6 @@ def trim_input(
         trimmed = _strip_display_only_content(trimmed)
         if trimmed is None:
             continue
-        trimmed = _with_message_timestamp(trimmed, item.get("created_at"))
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)
