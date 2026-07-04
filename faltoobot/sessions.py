@@ -559,7 +559,9 @@ async def get_answer_streaming(
                 yield cast(
                     StreamingReplyItem,
                     SimpleNamespace(
-                        type="response.output_text.delta", delta=image_markdown
+                        type="response.output_text.delta",
+                        delta=image_markdown,
+                        faltoobot_display_only=True,
                     ),
                 )
         if event.type in {"function_call_output", "response.completed"}:
@@ -594,6 +596,7 @@ async def prewarm_openai_websocket(session: Session) -> None:
 
 async def get_answer(session: Session) -> str:
     answer = ""
+    display_answer = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
             completed = cast(ResponseCompletedEvent, event)
@@ -603,4 +606,6 @@ async def get_answer(session: Session) -> str:
                 or getattr(completed.response, "codex_output", []),
             )
             answer = _output_text(completed.response, output)
-    return answer
+        elif getattr(event, "faltoobot_display_only", False):
+            display_answer += str(getattr(event, "delta", ""))
+    return f"{answer}{display_answer}".strip()
