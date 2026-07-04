@@ -606,7 +606,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,logs,browser,notify,codex-login}",
+        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login}",
     )
 
     sub.add_parser(
@@ -615,6 +615,9 @@ def parse_args() -> argparse.Namespace:
     )
     sub.add_parser(
         "whatsapp", help="run update, refresh the WhatsApp service, and follow logs"
+    )
+    sub.add_parser(
+        "whatsapp-login", help="link a WhatsApp device by scanning a QR code"
     )
 
     sub.add_parser("logs", help="show logs in follow mode")
@@ -643,6 +646,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_update_command(config)
     elif args.command == "whatsapp":
         run_whatsapp_command(config)
+    elif args.command == "whatsapp-login":
+        _run_whatsapp_auth(config or build_config())
     elif args.command == "logs":
         show_logs(config)
     elif args.command == "browser":

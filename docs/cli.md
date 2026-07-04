@@ -23,6 +23,10 @@ Use this when you want to make the bot work.
 
 Shows logs in follow mode.
 
+### `faltoobot whatsapp-login`
+
+Reruns WhatsApp linking. Use it to scan the Link Device QR code again.
+
 ### `faltoobot codex-login`
 
 Signs in with Codex / ChatGPT OAuth and saves the auth file path in `~/.faltoobot/config.toml`.

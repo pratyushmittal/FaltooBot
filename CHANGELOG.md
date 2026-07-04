@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.2.2 — 2026-06-30
+
+### Added
+- Restored `faltoobot whatsapp-login` for rerunning WhatsApp Link Device authentication.
+
 ## 7.2.1 — 2026-06-06
 
 ### Fixed
