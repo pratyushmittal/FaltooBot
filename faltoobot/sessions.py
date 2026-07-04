@@ -354,24 +354,23 @@ async def _upload_attachments(
 
 
 def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
-    parts: list[str] = []
-    for item in output:
+    try:
+        output_text = getattr(response, "output_text", "")
+    except TypeError:
+        # comment: OpenAI SDK output_text can crash when response.output is None.
+        output_text = ""
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    for item in reversed(output):
         if not isinstance(item, ResponseOutputMessage):
             continue
         text = "".join(
             part.text for part in item.content if isinstance(part, ResponseOutputText)
         ).strip()
         if text:
-            parts.append(text)
-    if parts:
-        return "\n\n".join(parts)
-
-    try:
-        output_text = getattr(response, "output_text", "")
-    except TypeError:
-        # comment: OpenAI SDK output_text can crash when response.output is None.
-        output_text = ""
-    return output_text.strip() if isinstance(output_text, str) else ""
+            return text
+    return ""
 
 
 def _save_generated_images(
@@ -393,68 +392,6 @@ def _save_generated_images(
         paths.append(path.relative_to(workspace).as_posix())
 
     return paths
-
-
-def _generated_image_developer_message(path: str) -> dict[str, Any]:
-    return {
-        "type": "message",
-        "role": "developer",
-        "content": [
-            {
-                "type": "input_text",
-                "text": f"Generated images are saved locally at: {path}",
-            }
-        ],
-    }
-
-
-def _append_display_output_text(messages: MessageHistory, text: str) -> None:
-    part = {
-        "type": "output_text",
-        "text": text,
-        "annotations": [],
-        DISPLAY_ONLY_CONTENT_KEY: True,
-    }
-    for index in range(len(messages) - 1, -1, -1):
-        item = messages[index]
-        if item.get("type") == "message" and item.get("role") == "user":
-            break
-        if item.get("type") == "message" and item.get("role") == "assistant":
-            content = item.get("content")
-            if isinstance(content, list):
-                content.append(part)
-                return
-    messages.append(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [part],
-        }
-    )
-
-
-def _append_response_output_text(output: list[ResponseOutputItem], text: str) -> None:
-    for item in reversed(output):
-        if not isinstance(item, ResponseOutputMessage):
-            continue
-        for part in reversed(item.content):
-            if isinstance(part, ResponseOutputText):
-                part.text = f"{part.text}{text}"
-                return
-        item.content.append(
-            ResponseOutputText(type="output_text", text=text, annotations=[])
-        )
-        return
-
-    output.append(
-        ResponseOutputMessage(
-            id=f"msg_{uuid4().hex}",
-            type="message",
-            role="assistant",
-            status="completed",
-            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
-        )
-    )
 
 
 async def append_user_turn(
@@ -591,13 +528,34 @@ async def get_answer_streaming(
             if image_paths:
                 for image_path in image_paths:
                     messages_json["messages"].append(
-                        _generated_image_developer_message(image_path)
+                        {
+                            "type": "message",
+                            "role": "developer",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": f"Generated images are saved locally at: {image_path}",
+                                }
+                            ],
+                        }
                     )
                 image_markdown = "\n\n" + "\n\n".join(
                     f"![Generated image]({image_path})" for image_path in image_paths
                 )
-                _append_display_output_text(messages_json["messages"], image_markdown)
-                _append_response_output_text(output, image_markdown)
+                messages_json["messages"].append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": image_markdown,
+                                "annotations": [],
+                                DISPLAY_ONLY_CONTENT_KEY: True,
+                            }
+                        ],
+                    }
+                )
                 yield cast(
                     StreamingReplyItem,
                     SimpleNamespace(

@@ -5,7 +5,7 @@ Feature: Generated image local UI
     When I ask to generate an image for the local UI
     Then the generated image is saved in the workspace
     And the streamed answer includes a generated image markdown link
-    And the completed response includes a generated image markdown link
+    And the completed OpenAI response does not include the display-only markdown
     And the chat history includes a display-only generated image markdown link
     And the chat history includes a developer note with the generated image path
 

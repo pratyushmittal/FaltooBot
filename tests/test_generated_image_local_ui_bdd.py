@@ -193,15 +193,17 @@ def streamed_answer_includes_markdown(image_ui_ctx: dict[str, Any]) -> None:
     )
 
 
-@then("the completed response includes a generated image markdown link")
-def completed_response_includes_markdown(image_ui_ctx: dict[str, Any]) -> None:
+@then("the completed OpenAI response does not include the display-only markdown")
+def completed_response_excludes_display_only_markdown(
+    image_ui_ctx: dict[str, Any],
+) -> None:
     completed = next(
         event
         for event in cast(list[Any], image_ui_ctx["events"])
         if event.type == "response.completed"
     )
     text = sessions._output_text(completed.response, completed.response.output)
-    assert "done\n\n![Generated image](.generated-images/" in text
+    assert text == "done"
 
 
 @then("the chat history includes a display-only generated image markdown link")
@@ -219,8 +221,7 @@ def chat_history_includes_display_only_markdown(image_ui_ctx: dict[str, Any]) ->
     )
     content = assistant.get("content")
     assert isinstance(content, list)
-    text_part, image_part = content
-    assert text_part["text"] == "done"
+    (image_part,) = content
     assert "![Generated image](.generated-images/" in image_part["text"]
     assert image_part[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
 
