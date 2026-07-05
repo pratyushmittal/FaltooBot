@@ -624,6 +624,25 @@ def run_hand_off_command(args: argparse.Namespace) -> None:
         "Stop the WhatsApp service first if it is running: `faltoobot whatsapp` restarts it."
     )
     asyncio.run(_hand_off_chats(args))
+def run_doctor_command(config: Config | None = None) -> tuple[list[str], list[str]]:
+    """Run self-healing checks and print cron health diagnostics."""
+    config = config or build_config()
+    changes = run_doctor(config)
+    if changes:
+        console.print(f"[green]Doctor healed:[/] {', '.join(changes)}")
+    else:
+        console.print("[dim]Doctor healers: no changes.[/]")
+
+    from faltoobot.doctor import inspect_cron_health
+
+    issues = [issue.render() for issue in inspect_cron_health(config)]
+    if issues:
+        console.print("[yellow]Cron health warnings:[/]")
+        for issue in issues:
+            console.print(f"- {issue}")
+    else:
+        console.print("[green]Cron health: no obvious recurring issues found.[/]")
+    return changes, issues
 
 
 def parse_args() -> argparse.Namespace:
@@ -640,7 +659,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login,hand-off}",
+        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login,hand-off,doctor}",
     )
 
     sub.add_parser(
@@ -686,6 +705,7 @@ def parse_args() -> argparse.Namespace:
     hand_off.add_argument(
         "--no-verify", action="store_true", help="skip the new backend's recap turn"
     )
+    sub.add_parser("doctor", help="run self-healing checks and cron health diagnostics")
     return parser.parse_args()
 
 
@@ -710,6 +730,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_openai_login(console)
     elif args.command == "hand-off":
         run_hand_off_command(args)
+    elif args.command == "doctor":
+        run_doctor_command(config)
     else:
         # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
         raise SystemExit(f"unknown command: {args.command}")
