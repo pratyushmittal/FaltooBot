@@ -1,3 +1,4 @@
+import argparse
 import io
 import shlex
 import subprocess
@@ -585,3 +586,28 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
     changed = cli._ensure_crontab_path()
 
     assert changed is False
+
+
+def test_handle_doctor_command_runs_doctor_command(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    calls: list[Config] = []
+    monkeypatch.setattr(cli, "run_doctor_command", lambda cfg: calls.append(cfg) or ([], []))
+
+    cli.handle_command(argparse.Namespace(command="doctor"), config)
+
+    assert calls == [config]
+
+
+def test_run_doctor_command_prints_cron_warnings(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    monkeypatch.setattr(cli, "run_doctor", lambda cfg: ["doctor:ok"])
+
+    class FakeIssue:
+        def render(self) -> str:
+            return "cron: warning"
+
+    import faltoobot.doctor as doctor_module
+
+    monkeypatch.setattr(doctor_module, "inspect_cron_health", lambda cfg: [FakeIssue()])
+
+    assert cli.run_doctor_command(config) == (["doctor:ok"], ["cron: warning"])

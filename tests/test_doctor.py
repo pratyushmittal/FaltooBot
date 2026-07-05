@@ -154,3 +154,52 @@ def test_main_returns_doctor_changes(tmp_path: Path) -> None:
         "doctor:heal-last-used",
         "doctor:heal-function-call-outputs",
     ]
+
+
+def test_inspect_cron_health_reports_missing_venv_stale_home_and_logs(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    script = workdir / "monitor.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "PYTHON_BIN=\"${PYTHON_BIN:-$PWD/.venv/bin/python}\"\n"
+        "FALTOOBOT_BIN=/home/exedev/.local/bin/faltoobot\n"
+        "echo run\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    log_dir = workdir / "logs"
+    log_dir.mkdir()
+    log_file = log_dir / "cron.log"
+    log_file.write_text(
+        "Missing Python interpreter at /tmp/job/.venv/bin/python\n"
+        "Traceback (most recent call last):\n",
+        encoding="utf-8",
+    )
+
+    crontab = f"17 * * * * cd {workdir} && ./monitor.sh >> logs/cron.log 2>&1\n"
+
+    rendered = [issue.render() for issue in doctor.inspect_cron_health(config, crontab_text=crontab)]
+
+    assert any("missing local venv interpreter" in item for item in rendered)
+    assert any("references another home directory: /home/exedev/" in item for item in rendered)
+    assert any("missing interpreter/path" in item for item in rendered)
+    assert any("python traceback" in item for item in rendered)
+
+
+def test_inspect_cron_health_reports_missing_workdir_and_script(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    crontab = "\n".join(
+        [
+            f"1 * * * * cd {tmp_path / 'missing'} && ./run.sh",
+            f"2 * * * * cd {workdir} && ./missing.sh",
+        ]
+    )
+
+    rendered = [issue.render() for issue in doctor.inspect_cron_health(config, crontab_text=crontab)]
+
+    assert any("working directory missing" in item for item in rendered)
+    assert any("script missing" in item for item in rendered)

@@ -1,5 +1,9 @@
 import json
 import os
+import re
+import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias, cast
 
@@ -10,6 +14,233 @@ MessageItem: TypeAlias = dict[str, Any]
 MessageHistory: TypeAlias = list[MessageItem]
 
 MISSING_FUNCTION_CALL_OUTPUT = "Tool call failed before output was saved."
+MIN_QUOTED_LENGTH = 2
+CRON_COMMAND_FIELDS = 6
+CRON_LOG_MAX_BYTES = 256_000
+CRON_RECENT_SECONDS = 7 * 24 * 60 * 60
+SKIPPED_LOG_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
+
+CRON_LINE_RE = re.compile(r"\bcd\s+(?P<cwd>\"[^\"]+\"|'[^']+'|\S+)\s+&&\s+(?P<cmd>.*)")
+ABSOLUTE_HOME_RE = re.compile(r"/home/[A-Za-z0-9._-]+/")
+CRON_LOG_ERROR_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("missing interpreter/path", r"Missing Python interpreter|No such file or directory"),
+    ("browser startup failure", r"CDP port 9222|browser did not become ready"),
+    ("python traceback", r"Traceback \(most recent call last\)|RuntimeError|Exception"),
+    ("HTTP/service error", r"\bHTTP/1\.1\"?\s+(?:429|500|502|503)\b|Internal Server Error|Bad Gateway"),
+)
+
+
+@dataclass(slots=True, frozen=True)
+class CronHealthIssue:
+    kind: str
+    detail: str
+
+    def render(self) -> str:
+        return f"{self.kind}: {self.detail}"
+
+
+def _strip_shell_quotes(value: str) -> str:
+    value = value.strip()
+    if (
+        len(value) >= MIN_QUOTED_LENGTH
+        and value[0] == value[-1]
+        and value[0] in {"\"", "'"}
+    ):
+        return value[1:-1]
+    return value
+
+
+def _load_crontab_text() -> str:
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"], check=False, text=True, capture_output=True
+        )
+    except FileNotFoundError:
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _iter_cron_commands(crontab_text: str) -> list[tuple[int, Path | None, str]]:
+    commands: list[tuple[int, Path | None, str]] = []
+    for line_no, line in enumerate(crontab_text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" in stripped.split(maxsplit=1)[0]:
+            continue
+        match = CRON_LINE_RE.search(stripped)
+        if match:
+            commands.append(
+                (
+                    line_no,
+                    Path(_strip_shell_quotes(match.group("cwd"))).expanduser(),
+                    match.group("cmd"),
+                )
+            )
+            continue
+        parts = stripped.split(maxsplit=5)
+        if len(parts) == CRON_COMMAND_FIELDS:
+            commands.append((line_no, None, parts[5]))
+    return commands
+
+
+def _referenced_script(cwd: Path, command: str) -> Path | None:
+    token = command.strip().split(maxsplit=1)[0] if command.strip() else ""
+    if token.startswith("./"):
+        return cwd / token[2:]
+    if token.startswith("/") and token.endswith((".sh", ".py")):
+        return Path(token)
+    return None
+
+
+def _script_text(script: Path) -> str:
+    try:
+        return script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _script_home_references(script: Path, config: Config) -> list[str]:
+    text = _script_text(script)
+    current_home = config.home.as_posix().rstrip("/") + "/"
+    stale = sorted({match.group(0) for match in ABSOLUTE_HOME_RE.finditer(text)})
+    return [path for path in stale if path != current_home]
+
+
+def _script_uses_local_venv_python(script: Path) -> bool:
+    return ".venv/bin/python" in _script_text(script)
+
+
+def _recent_log_error_summary(path: Path, *, max_bytes: int) -> list[str]:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+
+    summaries: list[str] = []
+    for label, pattern in CRON_LOG_ERROR_PATTERNS:
+        count = len(re.findall(pattern, text, flags=re.IGNORECASE))
+        if count:
+            summaries.append(f"{label} x{count}")
+    return summaries
+
+
+def _inspect_cron_command(
+    *,
+    config: Config,
+    line_no: int,
+    cwd: Path | None,
+    command: str,
+    seen_workdirs: set[Path],
+) -> list[CronHealthIssue]:
+    issues: list[CronHealthIssue] = []
+    if cwd is None:
+        return issues
+    seen_workdirs.add(cwd)
+    if not cwd.exists():
+        return [CronHealthIssue("cron", f"line {line_no} working directory missing: {cwd}")]
+
+    script = _referenced_script(cwd, command)
+    if script is None:
+        return issues
+    if not script.exists():
+        return [CronHealthIssue("cron", f"line {line_no} script missing: {script}")]
+    if not os.access(script, os.X_OK):
+        issues.append(CronHealthIssue("cron", f"line {line_no} script not executable: {script}"))
+    for stale_home in _script_home_references(script, config):
+        issues.append(
+            CronHealthIssue(
+                "cron",
+                f"line {line_no} script references another home directory: {stale_home}",
+            )
+        )
+    if _script_uses_local_venv_python(script):
+        python_bin = cwd / ".venv" / "bin" / "python"
+        if not os.access(python_bin, os.X_OK):
+            issues.append(
+                CronHealthIssue(
+                    "cron",
+                    f"line {line_no} uses missing local venv interpreter: {python_bin}",
+                )
+            )
+    return issues
+
+
+def _recent_log_paths(root: Path, *, recursive: bool, cutoff: float) -> list[Path]:
+    if not recursive:
+        try:
+            return [
+                path
+                for path in root.glob("*.log")
+                if path.is_file() and path.stat().st_mtime >= cutoff
+            ]
+        except OSError:
+            return []
+
+    paths: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in SKIPPED_LOG_DIRS]
+        directory = Path(dirpath)
+        for filename in filenames:
+            if not filename.endswith(".log"):
+                continue
+            path = directory / filename
+            try:
+                if path.is_file() and path.stat().st_mtime >= cutoff:
+                    paths.append(path)
+            except OSError:
+                continue
+    return paths
+
+
+def _recent_logs(workdirs: set[Path], config: Config, cutoff: float) -> list[Path]:
+    paths: list[Path] = []
+    for root in [*sorted(workdirs), config.root]:
+        if not root.exists():
+            continue
+        paths.extend(
+            _recent_log_paths(root, recursive=root != config.root, cutoff=cutoff)
+        )
+    return sorted(set(paths))
+
+
+def inspect_cron_health(
+    config: Config,
+    *,
+    crontab_text: str | None = None,
+    recent_seconds: int = CRON_RECENT_SECONDS,
+    max_log_bytes: int = CRON_LOG_MAX_BYTES,
+) -> list[CronHealthIssue]:
+    """Return non-mutating diagnostics for cron jobs and their recent logs."""
+    workdirs: set[Path] = set()
+    issues: list[CronHealthIssue] = []
+    text = _load_crontab_text() if crontab_text is None else crontab_text
+
+    for line_no, cwd, command in _iter_cron_commands(text):
+        issues.extend(
+            _inspect_cron_command(
+                config=config,
+                line_no=line_no,
+                cwd=cwd,
+                command=command,
+                seen_workdirs=workdirs,
+            )
+        )
+
+    cutoff = time.time() - recent_seconds
+    for log_path in _recent_logs(workdirs, config, cutoff):
+        summary = _recent_log_error_summary(log_path, max_bytes=max_log_bytes)
+        if summary:
+            issues.append(
+                CronHealthIssue("cron-log", f"{log_path}: {', '.join(summary)}")
+            )
+
+    # Preserve order while deduplicating repeated warnings from overlapping roots.
+    deduped = list(dict.fromkeys(issues))
+    return deduped
+
 
 
 def _call_id(item: MessageItem, item_type: str) -> str | None:
