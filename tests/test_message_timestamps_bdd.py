@@ -50,11 +50,13 @@ def faltoochat_session_with_mocked_text_response(
         prompt_cache_key: str | None = None,
     ):
         input.append(
-            {
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": "hello"}],
-            }
+            gpt_utils._to_message_item(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}],
+                }
+            )
         )
         yield SimpleNamespace(
             type="response.completed",

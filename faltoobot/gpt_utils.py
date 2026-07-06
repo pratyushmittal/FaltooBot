@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+from datetime import datetime
 from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
@@ -173,6 +174,9 @@ def _to_message_item(value: Any) -> MessageItem:
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
+    value.setdefault(
+        "timestamp", datetime.now().astimezone().isoformat(timespec="seconds")
+    )
     return value
 
 
@@ -218,24 +222,14 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
-        # comment: image calls replay only the documented input shape; other items just
-        # lose local bookkeeping keys.
         kept_keys = (
             IMAGE_GENERATION_REPLAY_KEYS
             if item.get("type") == "image_generation_call"
             else item.keys() - STRIPPED_MESSAGE_KEYS
         )
         trimmed = {key: value for key, value in item.items() if key in kept_keys}
-        content = trimmed.get("content")
-        if isinstance(content, list):
-            content = [
-                part
-                for part in content
-                if not (isinstance(part, dict) and part.get(DISPLAY_ONLY_CONTENT_KEY))
-            ]
-            if not content and trimmed.get("type") == "message":
-                continue
-            trimmed = {**trimmed, "content": content}
+        if item.get(DISPLAY_ONLY_CONTENT_KEY):
+            continue
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)

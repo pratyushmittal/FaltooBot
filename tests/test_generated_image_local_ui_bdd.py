@@ -214,16 +214,13 @@ def chat_history_includes_display_only_markdown(image_ui_ctx: dict[str, Any]) ->
         item
         for item in messages
         if item.get("role") == "assistant"
-        and any(
-            isinstance(part, dict) and part.get(sessions.DISPLAY_ONLY_CONTENT_KEY)
-            for part in item.get("content", [])
-        )
+        and item.get(sessions.DISPLAY_ONLY_CONTENT_KEY)
     )
     content = assistant.get("content")
     assert isinstance(content, list)
     (image_part,) = content
     assert "![Generated image](.generated-images/" in image_part["text"]
-    assert image_part[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
+    assert assistant[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
 
 
 @then("the chat history includes a developer note with the generated image path")
@@ -262,8 +259,8 @@ def latest_chat_history_item_is_display_only_markdown(
     session = cast(sessions.Session, image_ui_ctx["session"])
     latest = sessions.get_messages(session)["messages"][-1]
     assert latest["role"] == "assistant"
+    assert latest[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
     content = latest.get("content")
     assert isinstance(content, list)
     (image_part,) = content
     assert "![Generated image](.generated-images/" in image_part["text"]
-    assert image_part[sessions.DISPLAY_ONLY_CONTENT_KEY] is True

@@ -8,6 +8,7 @@ from enum import Enum
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import ANY
 
 import pytest
 from openai import omit
@@ -459,6 +460,7 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
             "call_id": "call_1",
             "name": "greet",
             "arguments": '{"name":"Faltoobot"}',
+            "timestamp": ANY,
         },
         {
             "id": "fco_call_1",
@@ -466,12 +468,14 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
             "call_id": "call_1",
             "output": "hello Faltoobot",
             "status": "completed",
+            "timestamp": ANY,
         },
         {
             "type": "message",
             "id": "msg_2",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "Done."}],
+            "timestamp": ANY,
         },
     ]
     assert cast(Any, items[1]).response.codex_output[0].to_dict() == {
@@ -480,12 +484,14 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
         "call_id": "call_1",
         "name": "greet",
         "arguments": '{"name":"Faltoobot"}',
+        "timestamp": ANY,
     }
     assert cast(Any, items[4]).response.codex_output[0].to_dict() == {
         "type": "message",
         "id": "msg_2",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "Done."}],
+        "timestamp": ANY,
     }
     assert client.closed is True
 
@@ -536,6 +542,7 @@ async def test_get_streaming_reply_accepts_completed_output_none(
         "id": "msg_1",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "Done."}],
+        "timestamp": ANY,
     }
 
 
@@ -583,6 +590,7 @@ async def test_get_streaming_reply_updates_history_before_completed_yield(
                 "id": "msg_1",
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": "Hi."}],
+                "timestamp": ANY,
             }
 
     assert seen_completed is True
@@ -1214,12 +1222,13 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
         }
     ]
     assert history[-2:] == [
-        websocket.sent[2]["input"][0],
+        {**websocket.sent[2]["input"][0], "timestamp": ANY},
         {
             "type": "message",
             "id": "msg_2",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "Done."}],
+            "timestamp": ANY,
             "response_id": "resp_2",
         },
     ]
@@ -1350,13 +1359,7 @@ async def test_websocket_prewarm_replays_sanitized_image_generation_calls(
             "type": "image_generation_call",
             "id": "ig_1",
             "status": "completed",
-            "action": "generate",
-            "background": "opaque",
-            "output_format": "png",
-            "quality": "medium",
             "result": "base64",
-            "revised_prompt": "draw a test image",
-            "size": "1122x1402",
         },
     ]
     await websocket_utils.prewarm(
@@ -1859,6 +1862,7 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
         "id": "msg_2",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "Hello"}],
+        "timestamp": ANY,
         "response_id": "resp_2",
     }
 

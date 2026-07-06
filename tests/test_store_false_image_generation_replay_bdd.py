@@ -1,5 +1,4 @@
 from typing import Any
-
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
@@ -71,41 +70,35 @@ def store_response_item(image_replay_ctx: dict[str, Any]) -> None:
 
 @then("the stored image call keeps the OpenAI status")
 def stored_image_call_keeps_openai_status(image_replay_ctx: dict[str, Any]) -> None:
-    assert image_replay_ctx["stored"] == {
-        "type": "image_generation_call",
-        "id": "ig_1",
-        "status": "generating",
-        "result": "base64",
-    }
+    stored = image_replay_ctx["stored"]
+    assert stored["type"] == "image_generation_call"
+    assert stored["id"] == "ig_1"
+    assert stored["status"] == "generating"
+    assert stored["result"] == "base64"
 
 
-@given("an assistant message with display-only generated image markdown")
-def assistant_message_with_display_only_markdown(
+@given("a display-only generated image markdown message")
+def display_only_generated_image_markdown_message(
     image_replay_ctx: dict[str, Any],
 ) -> None:
     image_replay_ctx["history"] = [
         {
             "type": "message",
             "role": "assistant",
+            gpt_utils.DISPLAY_ONLY_CONTENT_KEY: True,
             "content": [
-                {"type": "output_text", "text": "done", "annotations": []},
                 {
                     "type": "output_text",
                     "text": "![Generated image](.generated-images/cat.png)",
                     "annotations": [],
-                    gpt_utils.DISPLAY_ONLY_CONTENT_KEY: True,
                 },
             ],
         }
     ]
 
 
-@then("the display-only generated image markdown is omitted")
-def display_only_markdown_is_omitted(image_replay_ctx: dict[str, Any]) -> None:
-    assert image_replay_ctx["trimmed"] == [
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "done", "annotations": []}],
-        }
-    ]
+@then("the display-only generated image markdown message is omitted")
+def display_only_markdown_message_is_omitted(
+    image_replay_ctx: dict[str, Any],
+) -> None:
+    assert image_replay_ctx["trimmed"] == []

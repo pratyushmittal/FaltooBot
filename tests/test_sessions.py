@@ -12,7 +12,7 @@ from PIL import Image
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from faltoobot import sessions
-from faltoobot.gpt_utils import MessageHistory, get_tools_definition
+from faltoobot.gpt_utils import MessageHistory, _to_message_item, get_tools_definition
 
 
 def _listed_name(session: sessions.Session, name: str) -> str:
@@ -348,13 +348,12 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
         assert prompt_cache_key == session.session_id
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         input.append(
-            cast(
-                Any,
+            _to_message_item(
                 {
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": "hello"}],
-                },
+                }
             )
         )
         input[-1]["usage"] = {
@@ -575,7 +574,7 @@ async def test_get_answer_refreshes_whatsapp_system_prompt(
             "role": "assistant",
             "content": [{"type": "output_text", "text": "ok"}],
         }
-        input.append(cast(Any, reply))
+        input.append(_to_message_item(reply))
         yield FakeCompletedEvent(
             [reply],
             {
@@ -632,7 +631,7 @@ async def test_get_answer_refreshes_system_prompt_snapshot(
             "role": "assistant",
             "content": [{"type": "output_text", "text": "ok"}],
         }
-        input.append(cast(Any, reply))
+        input.append(_to_message_item(reply))
         yield FakeCompletedEvent(
             [reply],
             {
@@ -976,13 +975,12 @@ async def test_get_answer_reuses_existing_user_turn(
     ):
         calls.append(list(input))
         input.append(
-            cast(
-                Any,
+            _to_message_item(
                 {
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": "hello"}],
-                },
+                }
             )
         )
         yield FakeCompletedEvent(
@@ -1008,21 +1006,14 @@ async def test_get_answer_reuses_existing_user_turn(
     answer = await sessions.get_answer(session)
 
     assert answer == "hello"
-    user_item = calls[0][0]
-    assert isinstance(user_item.pop("timestamp"), str)
-    assert calls == [
-        [
-            {
-                "type": "message",
-                "role": "user",
-                "content": "Hi",
-            }
-        ]
+    assert _without_timestamp(calls[0]) == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": "Hi",
+        }
     ]
-    messages = sessions.get_messages(session)["messages"]
-    assert isinstance(messages[0].pop("timestamp"), str)
-    assert isinstance(messages[1].pop("timestamp"), str)
-    assert messages == [
+    assert _without_timestamp(sessions.get_messages(session)["messages"]) == [
         {
             "type": "message",
             "role": "user",

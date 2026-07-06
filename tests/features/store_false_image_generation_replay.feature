@@ -11,6 +11,6 @@ Feature: Store false image generation replay
     Then the stored image call keeps the OpenAI status
 
   Scenario: Display-only generated image markdown is not replayed
-    Given an assistant message with display-only generated image markdown
+    Given a display-only generated image markdown message
     When the history is trimmed for a follow-up
-    Then the display-only generated image markdown is omitted
+    Then the display-only generated image markdown message is omitted
