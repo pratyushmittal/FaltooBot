@@ -25,6 +25,7 @@ STANDALONE_COMPACTION_KEY = "_standalone_compaction"
 REQUEST_MAX_RETRIES = 4
 STREAM_IDLE_TIMEOUT_SECONDS = 300
 STRIPPED_MESSAGE_KEYS = {
+    "created_at",
     "parsed_arguments",
     "response_id",
     "usage",
