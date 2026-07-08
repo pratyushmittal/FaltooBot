@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -5,28 +6,30 @@ from typing import Any
 from .diff import Diff
 
 
-def _run_git(
+def run_git(
     workspace: Path,
     *args: str,
     input: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str] | None:
+    """Run git and return None only when the command cannot be started."""
     try:
         return subprocess.run(
             ["git", *args],
             cwd=workspace,
             input=input,
+            env={**os.environ, **env} if env is not None else None,
             capture_output=True,
             text=True,
             check=False,
         )
     except FileNotFoundError:
-        # comment: missing workspace/git should behave like an empty git result.
         return None
 
 
 def stage_file(workspace: Path, file_path: Path) -> str | None:
     """Stage the full file in git."""
-    result = _run_git(workspace, "add", "--", str(file_path))
+    result = run_git(workspace, "add", "--", str(file_path))
     if result is not None and result.returncode == 0:
         return None
     if result is None:
@@ -61,7 +64,7 @@ def apply_selected_diff_lines(
     patch = _selected_patch(file_path, selected_entries)
     if patch is None:
         return "No modified lines to stage or unstage here."
-    result = _run_git(
+    result = run_git(
         workspace,
         "apply",
         "--cached",
@@ -99,24 +102,24 @@ def get_selected_change_state(
 
 
 def is_git_workspace(workspace: Path) -> bool:
-    result = _run_git(workspace, "rev-parse", "--show-toplevel")
+    result = run_git(workspace, "rev-parse", "--show-toplevel")
     return result is not None and result.returncode == 0
 
 
 def get_workspace_label(workspace: Path) -> str:
-    root = _run_git(workspace, "rev-parse", "--show-toplevel")
+    root = run_git(workspace, "rev-parse", "--show-toplevel")
     if root is None or root.returncode != 0:
         return ""
 
     root_name = Path(root.stdout.strip()).name
-    branch = _run_git(workspace, "branch", "--show-current")
+    branch = run_git(workspace, "branch", "--show-current")
     if branch is None or branch.returncode != 0 or not branch.stdout.strip():
         return root_name
     return f"{root_name} •  {branch.stdout.strip()}"
 
 
 def _git_paths(workspace: Path, *args: str) -> list[Path]:
-    result = _run_git(workspace, *args)
+    result = run_git(workspace, *args)
     if result is None or result.returncode not in {0, 1}:
         return []
     return [Path(path) for path in result.stdout.split("\0") if path]
@@ -165,10 +168,10 @@ def get_unstaged_files(workspace: Path) -> list[Path]:
 
 
 def _ensure_index_entry(workspace: Path, file_path: Path) -> None:
-    result = _run_git(workspace, "ls-files", "--error-unmatch", str(file_path))
+    result = run_git(workspace, "ls-files", "--error-unmatch", str(file_path))
     if result is None or result.returncode == 0:
         return
-    _run_git(workspace, "add", "--intent-to-add", str(file_path))
+    run_git(workspace, "add", "--intent-to-add", str(file_path))
 
 
 def _stage_entries(diff: Diff, start: int, end: int) -> list[dict[str, Any]]:

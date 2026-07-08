@@ -40,6 +40,25 @@ from faltoobot.faltoochat.stream import get_event_text
         ),
         (
             SimpleNamespace(
+                type="faltoobot.post_response_hook.status",
+                hook_name="Refactor Code",
+                status="running",
+            ),
+            (True, "tool", "Running post-response hook: Refactor Code"),
+        ),
+        (
+            SimpleNamespace(
+                type="faltoobot.post_response_hook.feedback",
+                feedback="## Post-response hook feedback\n\n### Refactor\n\nfull feedback",
+            ),
+            (
+                True,
+                "tool",
+                "## Post-response hook feedback\n\n### Refactor\n\nfull feedback",
+            ),
+        ),
+        (
+            SimpleNamespace(
                 type="codex.rate_limits",
                 plan_type="prolite",
                 rate_limits={
