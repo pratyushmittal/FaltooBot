@@ -36,21 +36,6 @@ TRIGGER_RESPONSE_FORMAT: dict[str, Any] = {
     },
 }
 
-REVIEW_RESPONSE_FORMAT: dict[str, Any] = {
-    "type": "json_schema",
-    "name": "post_response_hook_review",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "changes_required": {"type": "boolean"},
-            "feedback": {"type": "string"},
-        },
-        "required": ["changes_required", "feedback"],
-        "additionalProperties": False,
-    },
-}
-
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
@@ -133,31 +118,28 @@ async def run_hook_events(
             continue
 
         yield _hook_event("status", hook_name=hook.name, status="triggered")
-        review_response = await _run_hook_sub_agent(
-            _review_prompt(hook, diff_text),
-            model,
-            response_format=REVIEW_RESPONSE_FORMAT,
-            messages=messages,
-            instructions=instructions,
-        )
-        review = json.loads(review_response)
-        if review["changes_required"]:
-            feedback_item = HookFeedback(hook.name, review["feedback"].strip())
-            feedback_items = [feedback_item]
-            yield _hook_event(
-                "feedback",
-                feedback=format_feedback(feedback_items),
-                feedback_items=feedback_items,
+        feedback_text = (
+            await _run_hook_sub_agent(
+                _review_prompt(hook, diff_text),
+                model,
+                response_format=None,
+                messages=messages,
+                instructions=instructions,
             )
+        ).strip()
+        feedback_item = HookFeedback(hook.name, feedback_text)
+        feedback_items = [feedback_item]
+        yield _hook_event(
+            "feedback",
+            feedback=format_feedback(feedback_items),
+            feedback_items=feedback_items,
+        )
 
 
 def _hook_event(event_name: str, **values: object) -> StreamingReplyItem:
     return cast(
         StreamingReplyItem,
-        SimpleNamespace(
-            **{"type": f"faltoobot.post_response_hook.{event_name}"},
-            **values,
-        ),
+        SimpleNamespace(type=f"faltoobot.post_response_hook.{event_name}", **values),
     )
 
 
@@ -237,9 +219,7 @@ def _review_prompt(hook: HookCheck, diff_text: str) -> str:
 Incremental diff from the assistant's last response:
 <diff>
 {diff_text}
-</diff>
-
-Set changes_required to false when no follow-up is needed.""".strip()
+</diff>""".strip()
 
 
 def _write_worktree_tree(repo_root: Path) -> str:

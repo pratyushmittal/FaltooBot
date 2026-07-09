@@ -240,7 +240,7 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
             return hook_bdd.trigger_output
         hook_bdd.seen_messages.append(messages)
         hook_bdd.seen_instructions.append(instructions)
-        return '{"changes_required": true, "feedback": "feedback"}'
+        return "feedback"
 
     monkeypatch.setattr(
         post_response_hooks, "_run_hook_sub_agent", fake_structured_sub_agent
@@ -285,12 +285,12 @@ def hook_feedback_is(hook_bdd: HookBDD, feedback: str) -> None:
     ]
 
 
-@then("trigger and review use structured response formats")
-def trigger_and_review_use_structured_formats(hook_bdd: HookBDD) -> None:
+@then("only the trigger uses a structured response format")
+def only_trigger_uses_structured_format(hook_bdd: HookBDD) -> None:
     assert [call[1] for call in hook_bdd.calls] == ["hook-model", "hook-model"]
     assert [call[2] for call in hook_bdd.calls] == [
         post_response_hooks.TRIGGER_RESPONSE_FORMAT,
-        post_response_hooks.REVIEW_RESPONSE_FORMAT,
+        None,
     ]
 
 
@@ -305,6 +305,8 @@ def review_receives_transcript_context(hook_bdd: HookBDD) -> None:
     assert _hook_statuses(hook_bdd.events) == ["running", "triggered"]
     assert "Trigger condition" in hook_bdd.calls[0][0]
     assert hook_bdd.calls[1][0].startswith("Review HTML.")
+    assert "Incremental diff" in hook_bdd.calls[1][0]
+    assert "html diff" in hook_bdd.calls[1][0]
     assert hook_bdd.seen_messages == [
         None,
         [{"role": "assistant", "content": "existing context"}],
@@ -462,7 +464,7 @@ def hook_run_result_has_feedback(
             return '{"run": true}'
         assert messages is not None
         assert instructions
-        return f'{{"changes_required": true, "feedback": "{feedback}"}}'
+        return feedback
 
     monkeypatch.setattr(post_response_hooks, "_run_hook_sub_agent", fake_hook_sub_agent)
 

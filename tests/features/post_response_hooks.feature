@@ -24,7 +24,7 @@ Feature: Post-response hooks
     When I run the hook
     Then the hook is triggered
     And the hook feedback is "feedback"
-    And trigger and review use structured response formats
+    And only the trigger uses a structured response format
 
   Scenario: Hook trigger skips review
     Given a hook file named "Check HTML" with model "hook-model"
