@@ -249,7 +249,6 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
     snapshot = post_response_hooks.capture_snapshot(workspace)
     (workspace / "page.html").write_text("<main>html diff</main>\n", encoding="utf-8")
     kwargs: dict[str, Any] = {
-        "hook_model": "config-model",
         "messages": [],
         "instructions": "",
     }
@@ -396,7 +395,6 @@ def hook_enabled_session_with_one_hook(
             root=hook_bdd.tmp_path,
             bot_name="Faltoo",
             hook_enabled=True,
-            hook_model="hook-model",
         ),
     )
     session = sessions.get_session(

@@ -522,7 +522,6 @@ async def _run_post_response_hooks(
     session: Session,
     workspace: Path,
     snapshot: post_response_hooks.Snapshot | None,
-    hook_model: str,
     iteration: int,
 ) -> AsyncIterator[StreamingReplyItem]:
     messages_json = get_messages(session)
@@ -530,7 +529,6 @@ async def _run_post_response_hooks(
     async for hook_event in post_response_hooks.run_hook_events(
         workspace,
         snapshot,
-        hook_model=hook_model,
         messages=[*messages_json["messages"]],
         instructions=messages_json["system_prompt"],
     ):
@@ -593,7 +591,7 @@ async def _get_answer_streaming(
 
     if hooks_enabled:
         async for hook_event in _run_post_response_hooks(
-            session, workspace, snapshot, config.hook_model, hook_iteration
+            session, workspace, snapshot, hook_iteration
         ):
             yield hook_event
     logger.info("Finished answer stream")

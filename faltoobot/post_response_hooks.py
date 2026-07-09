@@ -95,7 +95,6 @@ async def run_hook_events(
     workspace: Path,
     snapshot: Snapshot | None,
     *,
-    hook_model: str,
     messages: MessageHistory,
     instructions: str,
 ) -> AsyncIterator[StreamingReplyItem]:
@@ -105,10 +104,9 @@ async def run_hook_events(
 
     for hook in load_hooks(workspace):
         yield _hook_event("status", hook_name=hook.name, status="running")
-        model = hook.model or hook_model
         trigger_response = await _run_hook_sub_agent(
             _trigger_prompt(hook, diff_text),
-            model,
+            hook.model,
             response_format=TRIGGER_RESPONSE_FORMAT,
             messages=None,
             instructions="",
@@ -121,7 +119,7 @@ async def run_hook_events(
         feedback_text = (
             await _run_hook_sub_agent(
                 _review_prompt(hook, diff_text),
-                model,
+                hook.model,
                 response_format=None,
                 messages=messages,
                 instructions=instructions,
@@ -152,7 +150,7 @@ async def _run_hook_sub_agent(
     instructions: str,
 ) -> str:
     config = build_config()
-    hook_model = model or config.openai_model
+    hook_model = model or config.hook_model
     input_items = trim_input(
         [*(messages or []), {"type": "message", "role": "user", "content": prompt}],
         replace_unavailable_uploads=uses_chatgpt_oauth(config),
