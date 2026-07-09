@@ -24,14 +24,28 @@ from faltoobot.openai_auth import uses_chatgpt_oauth
 
 HOOKS_DIR = "hooks"
 DEFAULT_MAX_ITERATIONS = 3
+HOOK_REVIEW_CONTEXT_TOKEN_BUDGET = 100_000
 TRIGGER_RESPONSE_FORMAT: dict[str, Any] = {
     "type": "json_schema",
-    "name": "post_response_hook_trigger",
+    "name": "post_response_hook_triggers",
     "strict": True,
     "schema": {
         "type": "object",
-        "properties": {"run": {"type": "boolean"}},
-        "required": ["run"],
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "run": {"type": "boolean"},
+                    },
+                    "required": ["index", "run"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["results"],
         "additionalProperties": False,
     },
 }
@@ -102,36 +116,65 @@ async def run_hook_events(
     if not diff_text.strip():
         return
 
-    for hook in load_hooks(workspace):
+    hooks = load_hooks(workspace)
+    if not hooks:
+        return
+    for hook in hooks:
         yield _hook_event("status", hook_name=hook.name, status="running")
-        trigger_response = await _run_hook_sub_agent(
-            _trigger_prompt(hook, diff_text),
-            hook.model,
-            response_format=TRIGGER_RESPONSE_FORMAT,
-            messages=None,
-            instructions="",
-        )
-        if not json.loads(trigger_response)["run"]:
+
+    trigger_response = await _run_hook_sub_agent(
+        _trigger_prompt(hooks, diff_text),
+        None,
+        response_format=TRIGGER_RESPONSE_FORMAT,
+        messages=None,
+        instructions="",
+    )
+    trigger_results = {
+        int(item["index"]): bool(item["run"])
+        for item in json.loads(trigger_response)["results"]
+    }
+
+    triggered_hooks: list[HookCheck] = []
+    for index, hook in enumerate(hooks):
+        if not trigger_results[index]:
             yield _hook_event("status", hook_name=hook.name, status="skipped")
             continue
-
         yield _hook_event("status", hook_name=hook.name, status="triggered")
-        feedback_text = (
-            await _run_hook_sub_agent(
+        triggered_hooks.append(hook)
+
+    feedback_texts = await asyncio.gather(
+        *(
+            _run_hook_sub_agent(
                 _review_prompt(hook, diff_text),
                 hook.model,
                 response_format=None,
-                messages=messages,
+                messages=_recent_messages(messages),
                 instructions=instructions,
             )
-        ).strip()
-        feedback_item = HookFeedback(hook.name, feedback_text)
+            for hook in triggered_hooks
+        )
+    )
+    for hook, feedback_text in zip(triggered_hooks, feedback_texts, strict=True):
+        feedback_item = HookFeedback(hook.name, feedback_text.strip())
         feedback_items = [feedback_item]
         yield _hook_event(
             "feedback",
             feedback=format_feedback(feedback_items),
             feedback_items=feedback_items,
         )
+
+
+def _recent_messages(messages: MessageHistory) -> MessageHistory:
+    char_budget = HOOK_REVIEW_CONTEXT_TOKEN_BUDGET * 4
+    kept: MessageHistory = []
+    total_chars = 0
+    for message in reversed(messages):
+        message_size = len(json.dumps(message, ensure_ascii=False))
+        if total_chars + message_size > char_budget:
+            break
+        kept.append(message)
+        total_chars += message_size
+    return list(reversed(kept))
 
 
 def _hook_event(event_name: str, **values: object) -> StreamingReplyItem:
@@ -198,12 +241,15 @@ def _hook_from_yaml(item: Any) -> HookCheck:
     )
 
 
-def _trigger_prompt(hook: HookCheck, diff_text: str) -> str:
-    return f"""You are deciding whether a post-response hook should run.
+def _trigger_prompt(hooks: Sequence[HookCheck], diff_text: str) -> str:
+    hook_lines = "\n\n".join(
+        f"Hook index: {index}\nHook name: {hook.name}\nTrigger condition:\n{hook.trigger}"
+        for index, hook in enumerate(hooks)
+    )
+    return f"""You are deciding which post-response hooks should run.
+Return one result for each hook index.
 
-Hook name: {hook.name}
-Trigger condition:
-{hook.trigger}
+{hook_lines}
 
 Incremental diff from the assistant's last response:
 <diff>

@@ -40,6 +40,13 @@ Feature: Post-response hooks
     When I run the hook
     Then review receives the transcript context
 
+  Scenario: Hook triggers are checked together
+    Given two hook files
+    And the structured hook trigger skips the first hook and runs the second hook
+    When I run the hook
+    Then batched hook statuses show one skipped and one triggered
+    And trigger is called once
+
   Scenario: Hook sub-agent calls Responses API directly
     Given a fake streaming Responses client
     When the structured hook sub-agent runs

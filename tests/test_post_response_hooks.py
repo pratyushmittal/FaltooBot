@@ -202,14 +202,33 @@ def hook_file_named_with_model(hook_bdd: HookBDD, name: str, model: str) -> None
     _write_hook(hook_bdd, name=name, model=model)
 
 
+@given("two hook files")
+def two_hook_files(hook_bdd: HookBDD) -> None:
+    _write_hook(hook_bdd, name="Check HTML", model="hook-model")
+    (_hooks_dir(hook_bdd) / "second.yaml").write_text(
+        "- name: Check CSS\n"
+        "  model: hook-model\n"
+        "  trigger: CSS changed\n"
+        "  prompt: Review CSS.\n",
+        encoding="utf-8",
+    )
+
+
+@given("the structured hook trigger skips the first hook and runs the second hook")
+def structured_hook_trigger_skips_first_and_runs_second(hook_bdd: HookBDD) -> None:
+    hook_bdd.trigger_output = (
+        '{"results": [{"index": 0, "run": false}, {"index": 1, "run": true}]}'
+    )
+
+
 @given("the structured hook trigger returns true")
 def structured_hook_trigger_returns_true(hook_bdd: HookBDD) -> None:
-    hook_bdd.trigger_output = '{"run": true}'
+    hook_bdd.trigger_output = '{"results": [{"index": 0, "run": true}]}'
 
 
 @given("the structured hook trigger returns false")
 def structured_hook_trigger_returns_false(hook_bdd: HookBDD) -> None:
-    hook_bdd.trigger_output = '{"run": false}'
+    hook_bdd.trigger_output = '{"results": [{"index": 0, "run": false}]}'
 
 
 @given("transcript context exists")
@@ -223,6 +242,9 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
         post_response_hooks,
         "build_config",
         lambda: SimpleNamespace(hook_model="config-model"),
+    )
+    monkeypatch.setattr(
+        post_response_hooks, "app_root", lambda: hook_bdd.tmp_path / "home"
     )
 
     async def fake_structured_sub_agent(
@@ -286,11 +308,32 @@ def hook_feedback_is(hook_bdd: HookBDD, feedback: str) -> None:
 
 @then("only the trigger uses a structured response format")
 def only_trigger_uses_structured_format(hook_bdd: HookBDD) -> None:
-    assert [call[1] for call in hook_bdd.calls] == ["hook-model", "hook-model"]
+    assert [call[1] for call in hook_bdd.calls] == [None, "hook-model"]
     assert [call[2] for call in hook_bdd.calls] == [
         post_response_hooks.TRIGGER_RESPONSE_FORMAT,
         None,
     ]
+
+
+@then("batched hook statuses show one skipped and one triggered")
+def batched_hook_statuses_show_one_skipped_and_one_triggered(hook_bdd: HookBDD) -> None:
+    assert _hook_statuses(hook_bdd.events) == [
+        "running",
+        "running",
+        "skipped",
+        "triggered",
+    ]
+
+
+@then("trigger is called once")
+def trigger_is_called_once(hook_bdd: HookBDD) -> None:
+    trigger_calls = [
+        call
+        for call in hook_bdd.calls
+        if call[2] == post_response_hooks.TRIGGER_RESPONSE_FORMAT
+    ]
+    assert len(trigger_calls) == 1
+    assert trigger_calls[0][1] is None
 
 
 @then("review is not called")
@@ -434,7 +477,7 @@ def hook_run_result_is_skipped(
         assert response_format == post_response_hooks.TRIGGER_RESPONSE_FORMAT
         assert messages is None
         assert instructions == ""
-        return '{"run": false}'
+        return '{"results": [{"index": 0, "run": false}]}'
 
     monkeypatch.setattr(post_response_hooks, "_run_hook_sub_agent", fake_hook_sub_agent)
 
@@ -459,7 +502,7 @@ def hook_run_result_has_feedback(
         if response_format == post_response_hooks.TRIGGER_RESPONSE_FORMAT:
             assert messages is None
             assert instructions == ""
-            return '{"run": true}'
+            return '{"results": [{"index": 0, "run": true}]}'
         assert messages is not None
         assert instructions
         return feedback
