@@ -174,7 +174,12 @@ def _recent_messages(messages: MessageHistory) -> MessageHistory:
             break
         kept.append(message)
         total_chars += message_size
-    return list(reversed(kept))
+    trimmed = list(reversed(kept))
+    # Tool call outputs without preceding tool calls cause OpenAI input errors,
+    # so remove orphaned outputs from the trimmed transcript.
+    while trimmed and trimmed[0].get("type") == "function_call_output":
+        trimmed.pop(0)
+    return trimmed
 
 
 def _hook_event(event_name: str, **values: object) -> StreamingReplyItem:
