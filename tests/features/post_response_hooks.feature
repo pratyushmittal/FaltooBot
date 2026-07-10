@@ -13,6 +13,18 @@ Feature: Post-response hooks
     And the assistant creates a new file
     Then the incremental diff contains the new file
 
+  Scenario: Manual all hook diff includes staged and unstaged changes
+    Given a git workspace with staged and unstaged changes
+    When I build the hook diff for "all"
+    Then the hook diff contains "cached-change.txt"
+    And the hook diff contains "worktree-change.txt"
+
+  Scenario: Manual unstaged hook diff skips staged changes
+    Given a git workspace with staged and unstaged changes
+    When I build the hook diff for "unstaged"
+    Then the hook diff does not contain "cached-change.txt"
+    And the hook diff contains "worktree-change.txt"
+
   Scenario: Hooks load from global and project scopes
     Given global and project hook files
     When I load hooks for the workspace

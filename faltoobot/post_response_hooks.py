@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -51,6 +52,11 @@ TRIGGER_RESPONSE_FORMAT: dict[str, Any] = {
 }
 
 
+class HookDiffScope(StrEnum):
+    ALL = "all"
+    UNSTAGED = "unstaged"
+
+
 @dataclass(frozen=True, slots=True)
 class Snapshot:
     repo_root: Path
@@ -81,13 +87,24 @@ def capture_snapshot(workspace: Path) -> Snapshot | None:
 def diff_since(snapshot: Snapshot | None) -> str:
     if snapshot is None:
         return ""
-    after_tree = _write_worktree_tree(snapshot.repo_root)
-    result = run_git(snapshot.repo_root, "diff", snapshot.tree, after_tree)
-    if result is None:
-        raise RuntimeError("Git executable not found.")
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout).strip())
-    return result.stdout.strip()
+    return _diff_trees(
+        snapshot.repo_root, snapshot.tree, _write_worktree_tree(snapshot.repo_root)
+    )
+
+
+def diff_for_scope(workspace: Path, scope: HookDiffScope) -> str:
+    repo_root = _repo_root(workspace)
+    if repo_root is None:
+        return ""
+    after_tree = _write_worktree_tree(repo_root)
+    if scope == HookDiffScope.UNSTAGED:
+        before_tree = _checked_git(repo_root, "write-tree").stdout.strip()
+    elif _has_head(repo_root):
+        before_tree = _checked_git(repo_root, "rev-parse", "HEAD^{tree}").stdout.strip()
+    else:
+        # Git's well-known empty tree lets diffs work before the first commit.
+        before_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    return _diff_trees(repo_root, before_tree, after_tree)
 
 
 def load_hooks(workspace: Path, *, hooks_dir: Path | None = None) -> list[HookCheck]:
@@ -107,12 +124,11 @@ def load_hooks(workspace: Path, *, hooks_dir: Path | None = None) -> list[HookCh
 
 async def run_hook_events(
     workspace: Path,
-    snapshot: Snapshot | None,
+    diff_text: str,
     *,
     messages: MessageHistory,
     instructions: str,
 ) -> AsyncIterator[StreamingReplyItem]:
-    diff_text = await asyncio.to_thread(diff_since, snapshot)
     if not diff_text.strip():
         return
 
@@ -287,6 +303,15 @@ def _write_worktree_tree(repo_root: Path) -> str:
         return _checked_git(repo_root, "write-tree", env=env).stdout.strip()
     finally:
         Path(index_name).unlink(missing_ok=True)
+
+
+def _diff_trees(repo_root: Path, before_tree: str, after_tree: str) -> str:
+    result = run_git(repo_root, "diff", before_tree, after_tree)
+    if result is None:
+        raise RuntimeError("Git executable not found.")
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return result.stdout.strip()
 
 
 def _checked_git(

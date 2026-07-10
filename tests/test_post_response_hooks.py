@@ -278,11 +278,13 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
         kwargs["messages"] = [{"role": "assistant", "content": "existing context"}]
         kwargs["instructions"] = "system prompt"
 
+    diff_text = post_response_hooks.diff_since(snapshot)
+
     async def collect_events() -> list[Any]:
         return [
             event
             async for event in post_response_hooks.run_hook_events(
-                workspace, snapshot, **kwargs
+                workspace, diff_text, **kwargs
             )
         ]
 
@@ -559,3 +561,33 @@ def assistant_is_rerun_after_hook_feedback(hook_bdd: HookBDD) -> None:
     assert (
         sessions.get_messages(_session(hook_bdd))["messages"][-1]["role"] == "developer"
     )
+
+
+@given("a git workspace with staged and unstaged changes")
+def git_workspace_with_staged_and_unstaged_changes(hook_bdd: HookBDD) -> None:
+    workspace = hook_bdd.tmp_path / "workspace"
+    init_repo(workspace)
+    (workspace / "page.html").write_text("<main>before</main>\n", encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "-m", "initial")
+    (workspace / "cached-change.txt").write_text("staged\n", encoding="utf-8")
+    git(workspace, "add", "cached-change.txt")
+    (workspace / "worktree-change.txt").write_text("unstaged\n", encoding="utf-8")
+    hook_bdd.workspace = workspace
+
+
+@when(parsers.parse('I build the hook diff for "{scope}"'))
+def build_hook_diff_for_scope(hook_bdd: HookBDD, scope: str) -> None:
+    hook_bdd.diff = post_response_hooks.diff_for_scope(
+        _workspace(hook_bdd), post_response_hooks.HookDiffScope(scope)
+    )
+
+
+@then(parsers.parse('the hook diff contains "{text}"'))
+def hook_diff_contains(hook_bdd: HookBDD, text: str) -> None:
+    assert text in hook_bdd.diff
+
+
+@then(parsers.parse('the hook diff does not contain "{text}"'))
+def hook_diff_does_not_contain(hook_bdd: HookBDD, text: str) -> None:
+    assert text not in hook_bdd.diff

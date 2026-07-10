@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 from textual import events
 
-from faltoobot import sessions
+from faltoobot import post_response_hooks, sessions
 from faltoobot.faltoochat import submit_queue
 from faltoobot.faltoochat.app import (
     AttachmentCheckbox,
@@ -25,6 +25,7 @@ from faltoobot.faltoochat.widgets import (
     TextInputModal,
 )
 from faltoobot.faltoochat.widgets.search_file import SearchFile
+from faltoobot.faltoochat.widgets.telescope import Telescope
 from textual.widgets import Input, Markdown, OptionList, Static, TabbedContent
 
 
@@ -224,6 +225,7 @@ async def test_minchat_shows_slash_command_suggestions(
             "/name — name the current session",
             "/reset — start a fresh session",
             "/resume — resume another session",
+            "/run-hooks — run hooks for git changes",
             "/status — show bot status",
             "/tree — open the current session messages file",
         ]
@@ -565,6 +567,54 @@ async def test_minchat_enter_applies_highlighted_slash_command(
 
         assert composer.text == "/reset"
         assert composer.cursor_location == (0, len("/reset"))
+
+
+@pytest.mark.anyio
+async def test_minchat_run_hooks_command_streams_selected_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    seen_diff_scopes: list[post_response_hooks.HookDiffScope] = []
+    seen_hook_runs: list[tuple[sessions.Session, str]] = []
+    streamed: list[object] = []
+
+    def fake_diff_for_scope(
+        _workspace: Path, scope: post_response_hooks.HookDiffScope
+    ) -> str:
+        seen_diff_scopes.append(scope)
+        return "manual diff"
+
+    async def fake_enqueue_hooks_for_diff(
+        session: sessions.Session,
+        diff_text: str,
+    ) -> bool:
+        seen_hook_runs.append((session, diff_text))
+        return True
+
+    async def fake_start_streaming(transcript: object) -> None:
+        streamed.append(transcript)
+        app.is_answering = False
+
+    monkeypatch.setattr(post_response_hooks, "diff_for_scope", fake_diff_for_scope)
+    monkeypatch.setattr(sessions, "enqueue_hooks_for_diff", fake_enqueue_hooks_for_diff)
+    monkeypatch.setattr(app, "_start_streaming", fake_start_streaming)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/run-hooks")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: isinstance(app.screen, Telescope))
+        await wait_for_condition(lambda: bool(cast(Telescope[Any], app.screen).results))
+        await pilot.press("down", "enter")
+        await pilot.pause(0)
+
+        await wait_for_condition(lambda: bool(streamed))
+
+        assert seen_diff_scopes == [post_response_hooks.HookDiffScope.UNSTAGED]
+        assert seen_hook_runs == [(app.session, "manual diff")]
+        assert streamed == [app.transcript]
 
 
 @pytest.mark.anyio
