@@ -3,6 +3,7 @@ import json
 import ssl
 from collections.abc import Awaitable, Callable
 from email.message import Message
+from io import BytesIO
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError, URLError
@@ -192,6 +193,84 @@ def test_request_token_refresh_sends_codex_headers(monkeypatch) -> None:
         "grant_type": ["refresh_token"],
         "refresh_token": ["refresh-token"],
     }
+
+
+def test_oauth_provider_caches_reauthentication_required_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    auth_file = tmp_path / ".faltoobot" / "auth.json"
+    _write_auth(
+        auth_file,
+        {
+            "tokens": {
+                "refresh_token": "refresh-token",
+                "account_id": "account-123",
+            }
+        },
+    )
+    calls = 0
+
+    def fail_refresh(refresh_token: str) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        raise openai_auth._ReauthenticationRequiredError(
+            "ChatGPT refresh token was already used. Run `faltoobot codex-login` again."
+        )
+
+    monkeypatch.setattr(openai_auth, "_request_token_refresh", fail_refresh)
+    api_key, _, _ = openai_auth.get_openai_client_options(
+        _config(tmp_path, api_key="", oauth=str(auth_file))
+    )
+
+    for _ in range(2):
+        with pytest.raises(openai_auth.OpenAIAuthError, match="already used"):
+            asyncio.run(_oauth_token(api_key))
+
+    _write_auth(
+        auth_file,
+        {
+            "tokens": {
+                "access_token": "new-access-token",
+                "refresh_token": "refresh-token",
+                "account_id": "account-123",
+            }
+        },
+    )
+
+    assert asyncio.run(_oauth_token(api_key)) == "new-access-token"
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "payload", "message"),
+    [
+        (400, {"error": {"code": "refresh_token_reused"}}, "already used"),
+        (400, {"error": "refresh_token_expired"}, "expired"),
+        (400, {"code": "refresh_token_invalidated"}, "invalidated"),
+        (401, {"error": {"code": "unknown"}}, "unauthorized"),
+    ],
+)
+def test_request_token_refresh_classifies_permanent_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    error = HTTPError(
+        "https://auth.openai.com/oauth/token",
+        status,
+        "Refresh failed",
+        Message(),
+        BytesIO(json.dumps(payload).encode()),
+    )
+
+    def fail_open_url(request: Request, *, timeout: int) -> None:
+        raise error
+
+    monkeypatch.setattr(openai_auth, "open_url", fail_open_url)
+
+    with pytest.raises(openai_auth.OpenAIAuthError, match=message):
+        openai_auth._request_token_refresh("refresh-token")
 
 
 class FakeResponse:

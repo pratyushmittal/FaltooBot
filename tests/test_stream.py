@@ -40,6 +40,16 @@ from faltoobot.faltoochat.stream import get_event_text
         ),
         (
             SimpleNamespace(
+                type="codex.response.metadata",
+                headers={
+                    "x-codex-safety-buffering-enabled": "true",
+                    "x-codex-safety-buffering-faster-model": "gpt-5.6-luna",
+                },
+            ),
+            (False, "", ""),
+        ),
+        (
+            SimpleNamespace(
                 type="codex.rate_limits",
                 plan_type="prolite",
                 rate_limits={

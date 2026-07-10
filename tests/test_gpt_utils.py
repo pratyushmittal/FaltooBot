@@ -682,6 +682,7 @@ async def test_get_streaming_reply_trims_input(
                 "role": "assistant",
                 "content": "hi",
                 "created_at": 1783427511,
+                "timestamp": 1783427511,
                 "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
             },
         ],

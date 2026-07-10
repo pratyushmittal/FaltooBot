@@ -7,6 +7,11 @@ All notable changes to `faltoobot` will be documented in this file.
 ### Added
 - Custom `faltoochat` slash commands now accept arguments and substitute `$1`, `$2`, and `$*` in saved prompt files.
 
+### Fixed
+- Internal `codex.response.metadata` stream events no longer appear as unknown messages in Faltoochat.
+- Codex OAuth login falls back to the registered localhost port 1457 when port 1455 is busy.
+- When renewing a Codex OAuth access token, Faltoobot now stops retrying refresh tokens that are expired, reused, invalidated, or otherwise rejected, and asks the user to sign in again.
+
 ## 7.2.2 — 2026-06-30
 
 ### Added
