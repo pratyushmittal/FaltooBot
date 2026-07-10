@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import json
 import os
 from collections import defaultdict
@@ -40,6 +41,20 @@ from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, inspect, runtime
 from faltoobot.whatsapp.allowlist import matches_allowed_chats
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
+
+
+def test_neonize_send_response_preserves_nul_bytes() -> None:
+    from neonize._binder import Bytes
+
+    response = Neonize_pb2.SendMessageReturnFunction(Error="")
+    response.SendResponse.SetInParent()
+    payload = response.SerializePartialToString()
+    raw = ctypes.create_string_buffer(payload)
+    buffer = Bytes(ctypes.cast(raw, ctypes.c_char_p), len(payload))
+
+    assert (
+        Neonize_pb2.SendMessageReturnFunction.FromString(buffer.get_bytes()) == response
+    )
 
 
 def make_config(
