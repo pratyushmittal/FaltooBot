@@ -29,6 +29,7 @@ STRIPPED_MESSAGE_KEYS = {
     "created_at",
     "parsed_arguments",
     "response_id",
+    "timestamp",
     "usage",
     "timestamp",
     STANDALONE_COMPACTION_KEY,

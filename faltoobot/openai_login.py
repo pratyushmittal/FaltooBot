@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import webbrowser
 from dataclasses import dataclass, field
+from errno import EADDRINUSE
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Event, Thread
 from typing import Any
@@ -31,6 +32,7 @@ DEFAULT_SCOPE = (
 )
 CALLBACK_PATH = "/auth/callback"
 CALLBACK_PORT = 1455
+CALLBACK_FALLBACK_PORT = 1457
 LOGIN_TIMEOUT_SECONDS = 300
 SUCCESS_HTML = (
     "<html><body><h1>OpenAI login complete</h1>"
@@ -231,15 +233,27 @@ def _save_oauth_path(auth_file: Path) -> Path:
 
 
 def _start_callback_server(state: _CallbackState) -> tuple[HTTPServer, Thread, str]:
-    try:
-        server = HTTPServer(("127.0.0.1", CALLBACK_PORT), _handler(state))
-    except OSError as exc:
+    last_error: OSError | None = None
+    for port in (CALLBACK_PORT, CALLBACK_FALLBACK_PORT):
+        try:
+            server = HTTPServer(("127.0.0.1", port), _handler(state))
+            break
+        except OSError as exc:
+            if exc.errno != EADDRINUSE:
+                # comment: the fallback only helps when the preferred port is occupied.
+                raise _OpenAILoginError(
+                    f"Couldn't bind localhost:{port}: {exc}"
+                ) from exc
+            last_error = exc
+    else:
         raise _OpenAILoginError(
-            f"Couldn't bind localhost:{CALLBACK_PORT}. Close any previous faltoobot login window and try again."
-        ) from exc
+            f"Couldn't bind localhost:{CALLBACK_PORT} or localhost:{CALLBACK_FALLBACK_PORT}. "
+            "Close any previous faltoobot login window and try again."
+        ) from last_error
+
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    redirect_uri = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
+    redirect_uri = f"http://localhost:{port}{CALLBACK_PATH}"
     return server, thread, redirect_uri
 
 
