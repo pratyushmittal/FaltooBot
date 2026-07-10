@@ -11,6 +11,9 @@ All notable changes to `faltoobot` will be documented in this file.
 ### Changed
 - Updated Neonize to 0.4.1.post0 for newer Whatsmeow compatibility and connection reliability fixes.
 
+### Fixed
+- WhatsApp group mentions now resolve LID participants correctly.
+
 ## 7.3.1 — 2026-07-10
 
 ### Changed

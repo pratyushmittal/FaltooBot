@@ -299,6 +299,7 @@ class FakePresenceClient:
         self.calls: list[tuple[str, str]] = []
         self.replies: list[str] = []
         self.reply_ids: list[str] = []
+        self.reply_mentions_are_lids: list[bool] = []
         self.sent_messages: list[str] = []
         self.sent_interactive_messages: list[Message] = []
         self.sent_message_chats: list[str] = []
@@ -334,12 +335,20 @@ class FakePresenceClient:
         self.calls.append((state.name, media.name))
         return "ok"
 
-    async def reply_message(self, text: str, event: object) -> str:
+    async def reply_message(
+        self,
+        text: str,
+        event: object,
+        *,
+        mentions_are_lids: bool = False,
+        **_: object,
+    ) -> str:
         self.replies.append(text)
         self.reply_ids.append(str(getattr(getattr(event, "Info", None), "ID", "")))
+        self.reply_mentions_are_lids.append(mentions_are_lids)
         return "ok"
 
-    async def send_message(self, chat: Neonize_pb2.JID, text: str) -> str:
+    async def send_message(self, chat: Neonize_pb2.JID, text: str, **_: object) -> str:
         self.sent_message_chats.append(Jid2String(chat))
         self.sent_messages.append(text)
         return "ok"
@@ -351,7 +360,9 @@ class FakePresenceClient:
         self.sent_interactive_messages.append(await message.prepare_asend(self))
         return "ok"
 
-    async def build_reply_message(self, message: str, quoted: MessageEv) -> Message:
+    async def build_reply_message(
+        self, message: str, quoted: MessageEv, **_: object
+    ) -> Message:
         return Message(
             extendedTextMessage=ExtendedTextMessage(
                 contextInfo=ContextInfo(
@@ -2718,6 +2729,27 @@ def test_message_text_reads_interactive_reply(
     )
 
     assert runtime._message_text(message) == expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("server", "expected"),
+    [("g.us", True), ("s.whatsapp.net", False)],
+)
+async def test_send_text_uses_lid_mentions_for_groups(
+    tmp_path: Path, server: str, expected: bool
+) -> None:
+    client = FakePresenceClient()
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", server),
+        text="@15555555555555 hello",
+        event=fake_event(),
+        workspace=tmp_path,
+    )
+
+    assert client.reply_mentions_are_lids == [expected]
 
 
 @pytest.mark.anyio
