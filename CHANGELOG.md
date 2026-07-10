@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## Unreleased
+
+### Added
+- WhatsApp can now render Markdown tables as native rich tables while preserving surrounding text.
+- Group approval requests now include Approve and Deny buttons.
+
+### Changed
+- Updated Neonize to 0.4.1.post0 for newer Whatsmeow compatibility and connection reliability fixes.
+
 ## 7.3.1 — 2026-07-10
 
 ### Changed

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from http import HTTPStatus
 import mimetypes
@@ -7,8 +8,11 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 from uuid import uuid4
 
+from markdown_it import MarkdownIt
+from markdown_it.tree import SyntaxTreeNode
 from neonize.aioze.client import NewAClient
 from neonize.aioze.events import MessageEv
+from neonize.ext.interactive_message import AIRichMessage
 from neonize.proto import Neonize_pb2
 from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
     ContextInfo,
@@ -57,6 +61,7 @@ IMAGE_SUFFIXES = {
     "image/bmp": ".bmp",
 }
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
+MARKDOWN = MarkdownIt("commonmark").enable("table")
 BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
 SLASH_COMMANDS = {
     "/help",
@@ -187,6 +192,41 @@ async def _send_media(
     )
 
 
+def _interactive_message(text: str) -> AIRichMessage | None:
+    # Markdown tables require pipes, so ordinary replies need no parsing.
+    if "|" not in text:
+        return None
+
+    lines = text.splitlines()
+    tree = SyntaxTreeNode(MARKDOWN.parse(text))
+    message = AIRichMessage()
+    use_rich = False
+
+    for node in tree.children:
+        # Tables are the only Markdown blocks with native rich rendering today.
+        if node.type == "table":
+            message.add_table(
+                [
+                    [cell.children[0].content for cell in row.children]
+                    for section in node.children
+                    for row in section.children
+                ]
+            )
+            use_rich = True
+        else:
+            # Top-level Markdown blocks include their source line range.
+            assert node.map is not None
+            start, end = node.map
+            # Empty blocks should not create empty rich text sections.
+            if rich_text := "\n".join(lines[start:end]).strip():
+                message.add_text(rich_text)
+
+    # Without a specialized block, the caller should use the normal text path.
+    if not use_rich:
+        return None
+    return message
+
+
 async def send_text(  # noqa: C901, PLR0912
     client: NewAClient,
     *,
@@ -197,7 +237,14 @@ async def send_text(  # noqa: C901, PLR0912
 ) -> None:
     text, medias = _outgoing_media(text, workspace)
 
-    if text and len(text) <= MESSAGE_CHUNK_LIMIT:
+    # Rich replies replace the plain text; extracted media is still sent below.
+    if interactive_message := _interactive_message(text):
+        # Interactive messages do not add reply context automatically.
+        if event is not None:
+            reply = await client.build_reply_message("", event)
+            interactive_message.set_context_info(reply.extendedTextMessage.contextInfo)
+        await client.send_interactive_message(chat, interactive_message)
+    elif text and len(text) <= MESSAGE_CHUNK_LIMIT:
         if event is None:
             await client.send_message(chat, text)
         else:
@@ -545,6 +592,8 @@ def _location_text(
 
 
 def _message_text(message: Any) -> str:
+    # These are alternative WhatsApp payloads. Text sent with media is stored in that
+    # media message's caption, not alongside it in `conversation`.
     text = message.conversation
     if not text and message.HasField("extendedTextMessage"):
         text = message.extendedTextMessage.text
@@ -556,6 +605,15 @@ def _message_text(message: Any) -> str:
         text = _location_text(message.locationMessage, live=False)
     if not text and message.HasField("liveLocationMessage"):
         text = _location_text(message.liveLocationMessage, live=True)
+    if not text and message.HasField("interactiveResponseMessage"):
+        response = message.interactiveResponseMessage
+        text = response.body.text
+        # Quick replies return their command in `id`; other flows keep the body text.
+        if response.HasField("nativeFlowResponseMessage"):
+            params: dict[str, object] = json.loads(
+                response.nativeFlowResponseMessage.paramsJSON
+            )
+            text = str(params.get("id") or text)
     return text.strip()
 
 
@@ -568,6 +626,7 @@ def _message_context_info(message: Message) -> ContextInfo | None:
         "documentMessage",
         "locationMessage",
         "liveLocationMessage",
+        "interactiveResponseMessage",
     ):
         if not message.HasField(field_name):
             continue
