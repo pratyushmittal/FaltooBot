@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.4.1 — 2026-07-10
+
+### Fixed
+- Fixed WhatsApp replies failing after 7.4.0 with a corrupt wire-format error.
+
 ## 7.4.0 — 2026-07-10
 
 ### Added
