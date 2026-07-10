@@ -2,7 +2,7 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
-## Unreleased
+## 7.4.0 — 2026-07-10
 
 ### Added
 - WhatsApp can now render Markdown tables as native rich tables while preserving surrounding text.
