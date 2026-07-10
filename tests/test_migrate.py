@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from faltoobot.config import Config, default_config, render_config
 from faltoobot.migrate import (
     disable_default_openai_websocket,
@@ -22,7 +24,7 @@ def make_config(tmp_path: Path) -> Config:
         run_script=root / "run.sh",
         openai_api_key="",
         openai_oauth="",
-        openai_model="gpt-5.5",
+        openai_model="gpt-5.6-sol",
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
@@ -39,17 +41,24 @@ def test_migrate_main_returns_empty_when_clean(tmp_path: Path) -> None:
     assert main(config) == []
 
 
-def test_update_default_openai_model_moves_old_default(tmp_path: Path) -> None:
+def test_default_config_uses_latest_openai_model() -> None:
+    assert default_config()["openai"]["model"] == "gpt-5.6-sol"
+
+
+@pytest.mark.parametrize("old_model", ["gpt-5.4", "gpt-5.5"])
+def test_update_default_openai_model_moves_old_default(
+    tmp_path: Path, old_model: str
+) -> None:
     config = make_config(tmp_path)
     data = default_config()
-    data["openai"]["model"] = "gpt-5.4"
+    data["openai"]["model"] = old_model
     config.config_file.parent.mkdir(parents=True)
     config.config_file.write_text(render_config(data), encoding="utf-8")
 
     changed = update_default_openai_model(config)
 
     assert changed
-    assert 'model = "gpt-5.5"' in config.config_file.read_text(encoding="utf-8")
+    assert 'model = "gpt-5.6-sol"' in config.config_file.read_text(encoding="utf-8")
 
 
 def test_update_default_openai_model_keeps_custom_model(tmp_path: Path) -> None:
@@ -68,7 +77,7 @@ def test_update_default_openai_model_keeps_custom_model(tmp_path: Path) -> None:
 def test_migrate_main_updates_default_openai_model(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     data = default_config()
-    data["openai"]["model"] = "gpt-5.4"
+    data["openai"]["model"] = "gpt-5.5"
     config.config_file.parent.mkdir(parents=True)
     config.config_file.write_text(render_config(data), encoding="utf-8")
 

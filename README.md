@@ -80,7 +80,7 @@ Example config:
 [openai]
 api_key = "your_key_here"
 oauth = ""
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 thinking = "high"
 fast = false
 websocket = true

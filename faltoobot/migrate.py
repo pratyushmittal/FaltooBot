@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from faltoobot.config import (
     Config,
+    MODEL_OPTIONS,
     build_config,
     load_toml,
     merge_config,
@@ -39,10 +40,10 @@ def update_default_openai_model(config: Config) -> bool:
         # comment: fresh installs will be created with the current default model.
         return False
     data = merge_config(load_toml(path))
-    if data["openai"]["model"] != "gpt-5.4":
-        # comment: only move users who were still on the previous default.
+    if data["openai"]["model"] not in ("gpt-5.4", "gpt-5.5"):
+        # comment: only move users who were still on an earlier default.
         return False
-    data["openai"]["model"] = "gpt-5.5"
+    data["openai"]["model"] = MODEL_OPTIONS[0]
     path.write_text(render_config(data), encoding="utf-8")
     return True
 

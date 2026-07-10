@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.3.1 — 2026-07-10
+
+### Changed
+- New installs now default to `gpt-5.6-sol`, and `faltoobot update` moves configurations still using an earlier default model.
+
 ## 7.3.0 — 2026-07-10
 
 ### Added
