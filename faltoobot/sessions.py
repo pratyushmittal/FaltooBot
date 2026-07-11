@@ -34,7 +34,12 @@ from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot import post_response_hooks
-from faltoobot.post_response_hooks import DEFAULT_MAX_ITERATIONS, HookFeedback
+from faltoobot.post_response_hooks import (
+    DEFAULT_MAX_ITERATIONS,
+    HookFeedback,
+    format_feedback,
+    run_hook_events,
+)
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import prewarm as websocket_prewarm
@@ -527,19 +532,14 @@ async def run_hooks_for_diff(
 ) -> AsyncIterator[StreamingReplyItem]:
     messages_json = get_messages(session)
     feedback: list[HookFeedback] = []
-    async for hook_event in post_response_hooks.run_hook_events(
+    async for hook_event in run_hook_events(
         Path(messages_json["workspace"]),
         diff_text,
         messages=[*messages_json["messages"]],
         instructions=messages_json["system_prompt"],
     ):
-        if hook_event.type == "faltoobot.post_response_hook.feedback":
-            feedback.extend(
-                cast(
-                    list[HookFeedback],
-                    cast(Any, hook_event).feedback_items,
-                )
-            )
+        if feedback_item := cast(Any, hook_event).feedback_item:
+            feedback.append(cast(HookFeedback, feedback_item))
         yield hook_event
 
     if not feedback:
@@ -547,22 +547,14 @@ async def run_hooks_for_diff(
     if iteration >= DEFAULT_MAX_ITERATIONS:
         logger.warning("Post-response hooks stopped after max iterations")
         return
-    append_developer_turn(session, post_response_hooks.format_feedback(feedback))
-    async for next_event in _get_answer_streaming(
-        session, hook_iteration=iteration + 1
-    ):
+    append_developer_turn(session, format_feedback(feedback))
+    async for next_event in get_answer_streaming(session, hook_iteration=iteration + 1):
         yield next_event
 
 
-async def get_answer_streaming(session: Session) -> AsyncIterator[StreamingReplyItem]:
-    async for item in _get_answer_streaming(session, hook_iteration=0):
-        yield item
-
-
-async def _get_answer_streaming(
+async def get_answer_streaming(
     session: Session,
-    *,
-    hook_iteration: int,
+    hook_iteration: int = 0,
 ) -> AsyncIterator[StreamingReplyItem]:
     logger.info("Starting answer stream")
     config = build_config()

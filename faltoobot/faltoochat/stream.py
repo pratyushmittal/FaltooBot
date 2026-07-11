@@ -96,20 +96,8 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
                 "answer",
                 value if isinstance(value, str) else "",
             )
-        case "faltoobot.post_response_hook.status":
-            hook_name = str(getattr(event, "hook_name", "") or "").strip()
-            status = str(getattr(event, "status", "") or "").strip()
-            if status == "running":
-                text = (
-                    f"Running post-response hook: {hook_name}"
-                    if hook_name
-                    else "Running post-response hook"
-                )
-            else:
-                text = f"{hook_name}: hook {status}" if hook_name and status else ""
-            is_new, classes = True, "tool"
-        case "faltoobot.post_response_hook.feedback":
-            text = str(getattr(event, "feedback", "") or "").strip()
+        case "faltoobot.post_response_hook":
+            text = cast(Any, event).text
             is_new, classes = True, "tool"
         case "codex.rate_limits":
             limits = getattr(event, "rate_limits", {})

@@ -99,11 +99,15 @@ def diff_for_scope(workspace: Path, scope: HookDiffScope) -> str:
     after_tree = _write_worktree_tree(repo_root)
     if scope == HookDiffScope.UNSTAGED:
         before_tree = _checked_git(repo_root, "write-tree").stdout.strip()
-    elif _has_head(repo_root):
-        before_tree = _checked_git(repo_root, "rev-parse", "HEAD^{tree}").stdout.strip()
     else:
-        # Git's well-known empty tree lets diffs work before the first commit.
-        before_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        head = run_git(repo_root, "rev-parse", "--verify", "HEAD")
+        if head is not None and head.returncode == 0:
+            before_tree = _checked_git(
+                repo_root, "rev-parse", "HEAD^{tree}"
+            ).stdout.strip()
+        else:
+            # Git's well-known empty tree lets diffs work before the first commit.
+            before_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
     return _diff_trees(repo_root, before_tree, after_tree)
 
 
@@ -118,7 +122,15 @@ def load_hooks(workspace: Path, *, hooks_dir: Path | None = None) -> list[HookCh
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             if not isinstance(payload, list):
                 raise TypeError(f"Hook file must contain a YAML list: {path}")
-            hooks.extend(_hook_from_yaml(item) for item in payload)
+            hooks.extend(
+                HookCheck(
+                    name=item["name"].strip(),
+                    trigger=item["trigger"].strip(),
+                    prompt=item["prompt"].strip(),
+                    model=item.get("model", "").strip() or None,
+                )
+                for item in payload
+            )
     return hooks
 
 
@@ -136,7 +148,7 @@ async def run_hook_events(
     if not hooks:
         return
     for hook in hooks:
-        yield _hook_event("status", hook_name=hook.name, status="running")
+        yield _hook_event("running", hook_name=hook.name)
 
     trigger_response = await _run_hook_sub_agent(
         _trigger_prompt(hooks, diff_text),
@@ -153,9 +165,9 @@ async def run_hook_events(
     triggered_hooks: list[HookCheck] = []
     for index, hook in enumerate(hooks):
         if not trigger_results[index]:
-            yield _hook_event("status", hook_name=hook.name, status="skipped")
+            yield _hook_event("skipped", hook_name=hook.name)
             continue
-        yield _hook_event("status", hook_name=hook.name, status="triggered")
+        yield _hook_event("triggered", hook_name=hook.name)
         triggered_hooks.append(hook)
 
     feedback_texts = await asyncio.gather(
@@ -163,8 +175,7 @@ async def run_hook_events(
             _run_hook_sub_agent(
                 _review_prompt(hook, diff_text),
                 hook.model,
-                response_format=None,
-                messages=_recent_messages(messages),
+                messages=_trim_history_for_hook(messages),
                 instructions=instructions,
             )
             for hook in triggered_hooks
@@ -172,15 +183,10 @@ async def run_hook_events(
     )
     for hook, feedback_text in zip(triggered_hooks, feedback_texts, strict=True):
         feedback_item = HookFeedback(hook.name, feedback_text.strip())
-        feedback_items = [feedback_item]
-        yield _hook_event(
-            "feedback",
-            feedback=format_feedback(feedback_items),
-            feedback_items=feedback_items,
-        )
+        yield _hook_event("feedback", feedback_item=feedback_item)
 
 
-def _recent_messages(messages: MessageHistory) -> MessageHistory:
+def _trim_history_for_hook(messages: MessageHistory) -> MessageHistory:
     char_budget = HOOK_REVIEW_CONTEXT_TOKEN_BUDGET * 4
     kept: MessageHistory = []
     total_chars = 0
@@ -198,10 +204,27 @@ def _recent_messages(messages: MessageHistory) -> MessageHistory:
     return trimmed
 
 
-def _hook_event(event_name: str, **values: object) -> StreamingReplyItem:
+def _hook_event(
+    status: str,
+    *,
+    hook_name: str = "",
+    feedback_item: HookFeedback | None = None,
+) -> StreamingReplyItem:
+    if feedback_item is not None:
+        text = format_feedback([feedback_item])
+    elif status == "running":
+        text = f"Running post-response hook: {hook_name}"
+    else:
+        text = f"{hook_name}: hook {status}"
     return cast(
         StreamingReplyItem,
-        SimpleNamespace(type=f"faltoobot.post_response_hook.{event_name}", **values),
+        SimpleNamespace(
+            type="faltoobot.post_response_hook",
+            text=text,
+            hook_name=hook_name,
+            status=status,
+            feedback_item=feedback_item,
+        ),
     )
 
 
@@ -209,7 +232,7 @@ async def _run_hook_sub_agent(
     prompt: str,
     model: str | None,
     *,
-    response_format: dict[str, Any] | None,
+    response_format: dict[str, Any] | None = None,
     messages: MessageHistory | None,
     instructions: str,
 ) -> str:
@@ -253,15 +276,6 @@ def _hook_dirs(workspace: Path, hooks_dir: Path | None) -> list[Path]:
     return directories
 
 
-def _hook_from_yaml(item: Any) -> HookCheck:
-    return HookCheck(
-        name=item["name"].strip(),
-        trigger=item["trigger"].strip(),
-        prompt=item["prompt"].strip(),
-        model=item.get("model", "").strip() or None,
-    )
-
-
 def _trigger_prompt(hooks: Sequence[HookCheck], diff_text: str) -> str:
     hook_lines = "\n\n".join(
         f"Hook index: {index}\nHook name: {hook.name}\nTrigger condition:\n{hook.trigger}"
@@ -293,14 +307,12 @@ def _write_worktree_tree(repo_root: Path) -> str:
     fd, index_name = tempfile.mkstemp(prefix="faltoobot-hooks-index-")
     os.close(fd)
     Path(index_name).unlink(missing_ok=True)
-    env = {"GIT_INDEX_FILE": index_name}
     try:
-        if _has_head(repo_root):
-            _checked_git(repo_root, "read-tree", "HEAD", env=env)
-        else:
-            _checked_git(repo_root, "read-tree", empty_tree, env=env)
-        _checked_git(repo_root, "add", "-A", env=env)
-        return _checked_git(repo_root, "write-tree", env=env).stdout.strip()
+        head = run_git(repo_root, "rev-parse", "--verify", "HEAD")
+        tree = "HEAD" if head is not None and head.returncode == 0 else empty_tree
+        _checked_index_git(repo_root, index_name, "read-tree", tree)
+        _checked_index_git(repo_root, index_name, "add", "-A")
+        return _checked_index_git(repo_root, index_name, "write-tree").stdout.strip()
     finally:
         Path(index_name).unlink(missing_ok=True)
 
@@ -314,10 +326,8 @@ def _diff_trees(repo_root: Path, before_tree: str, after_tree: str) -> str:
     return result.stdout.strip()
 
 
-def _checked_git(
-    repo_root: Path, *args: str, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
-    result = run_git(repo_root, *args, env=env)
+def _checked_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    result = run_git(repo_root, *args)
     if result is None:
         raise RuntimeError("Git executable not found.")
     if result.returncode != 0:
@@ -325,9 +335,20 @@ def _checked_git(
     return result
 
 
-def _has_head(repo_root: Path) -> bool:
-    result = run_git(repo_root, "rev-parse", "--verify", "HEAD")
-    return result is not None and result.returncode == 0
+def _checked_index_git(
+    repo_root: Path, index_name: str, *args: str
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_root,
+        env={**os.environ, "GIT_INDEX_FILE": index_name},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return result
 
 
 def _repo_root(workspace: Path) -> Path | None:

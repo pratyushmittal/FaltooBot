@@ -92,15 +92,15 @@ def _hook_statuses(events: list[Any]) -> list[str]:
     return [
         event.status
         for event in events
-        if event.type == "faltoobot.post_response_hook.status"
+        if event.type == "faltoobot.post_response_hook" and event.feedback_item is None
     ]
 
 
 def _hook_feedback_items(events: list[Any]) -> list[post_response_hooks.HookFeedback]:
     items = []
     for event in events:
-        if event.type == "faltoobot.post_response_hook.feedback":
-            items.extend(event.feedback_items)
+        if event.type == "faltoobot.post_response_hook" and event.feedback_item:
+            items.append(event.feedback_item)
     return items
 
 
@@ -534,8 +534,8 @@ def assistant_answer_is_streamed(
 def hook_status_events_are_running_and_skipped(hook_bdd: HookBDD) -> None:
     assert [event.type for event in hook_bdd.events] == [
         "response.completed",
-        "faltoobot.post_response_hook.status",
-        "faltoobot.post_response_hook.status",
+        "faltoobot.post_response_hook",
+        "faltoobot.post_response_hook",
     ]
     assert hook_bdd.events[1].status == "running"
     assert hook_bdd.events[2].hook_name == "Refactor"
@@ -546,15 +546,15 @@ def hook_status_events_are_running_and_skipped(hook_bdd: HookBDD) -> None:
 def assistant_is_rerun_after_hook_feedback(hook_bdd: HookBDD) -> None:
     assert [event.type for event in hook_bdd.events] == [
         "response.completed",
-        "faltoobot.post_response_hook.status",
-        "faltoobot.post_response_hook.status",
-        "faltoobot.post_response_hook.feedback",
+        "faltoobot.post_response_hook",
+        "faltoobot.post_response_hook",
+        "faltoobot.post_response_hook",
         "response.completed",
     ]
     assert hook_bdd.events[1].hook_name == "Refactor"
     assert hook_bdd.events[1].status == "running"
     assert hook_bdd.events[2].status == "triggered"
-    assert hook_bdd.events[3].feedback == (
+    assert hook_bdd.events[3].text == (
         "## Post-response hook feedback\n\n### Refactor\n\nfix it"
     )
     assert hook_bdd.stream_calls == len(["initial", "follow-up"])

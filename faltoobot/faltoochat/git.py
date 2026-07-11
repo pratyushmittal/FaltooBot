@@ -1,4 +1,3 @@
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -10,15 +9,12 @@ def run_git(
     workspace: Path,
     *args: str,
     input: str | None = None,
-    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run git and return None only when the command cannot be started."""
     try:
         return subprocess.run(
             ["git", *args],
             cwd=workspace,
             input=input,
-            env={**os.environ, **env} if env is not None else None,
             capture_output=True,
             text=True,
             check=False,

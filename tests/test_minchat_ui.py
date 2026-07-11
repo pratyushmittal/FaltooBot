@@ -594,18 +594,16 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
     ):
         seen_hook_runs.append((session, diff_text))
         yield SimpleNamespace(
-            type="faltoobot.post_response_hook.status",
-            hook_name="Manual",
-            status="running",
+            type="faltoobot.post_response_hook",
+            text="Running post-response hook: Manual",
         )
         yield SimpleNamespace(
-            type="faltoobot.post_response_hook.status",
-            hook_name="Manual",
-            status="triggered",
+            type="faltoobot.post_response_hook",
+            text="Manual: hook triggered",
         )
         yield SimpleNamespace(
-            type="faltoobot.post_response_hook.feedback",
-            feedback="## Post-response hook feedback",
+            type="faltoobot.post_response_hook",
+            text="## Post-response hook feedback",
         )
 
     monkeypatch.setattr(post_response_hooks, "diff_for_scope", fake_diff_for_scope)
