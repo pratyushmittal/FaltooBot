@@ -34,7 +34,7 @@ from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot import post_response_hooks
-from faltoobot.post_response_hooks import DEFAULT_MAX_ITERATIONS, HookFeedback, Snapshot
+from faltoobot.post_response_hooks import DEFAULT_MAX_ITERATIONS, HookFeedback
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import prewarm as websocket_prewarm
@@ -520,17 +520,15 @@ async def _get_streaming_reply(
         yield item
 
 
-async def _run_post_response_hooks(
+async def run_hooks_for_diff(
     session: Session,
-    workspace: Path,
-    snapshot: Snapshot | None,
-    iteration: int,
+    diff_text: str,
+    iteration: int = 0,
 ) -> AsyncIterator[StreamingReplyItem]:
-    diff_text = await asyncio.to_thread(post_response_hooks.diff_since, snapshot)
     messages_json = get_messages(session)
     feedback: list[HookFeedback] = []
     async for hook_event in post_response_hooks.run_hook_events(
-        workspace,
+        Path(messages_json["workspace"]),
         diff_text,
         messages=[*messages_json["messages"]],
         instructions=messages_json["system_prompt"],
@@ -554,28 +552,6 @@ async def _run_post_response_hooks(
         session, hook_iteration=iteration + 1
     ):
         yield next_event
-
-
-async def enqueue_hooks_for_diff(session: Session, diff_text: str) -> bool:
-    messages_json = get_messages(session)
-    feedback: list[HookFeedback] = []
-    async for hook_event in post_response_hooks.run_hook_events(
-        Path(messages_json["workspace"]),
-        diff_text,
-        messages=[*messages_json["messages"]],
-        instructions=messages_json["system_prompt"],
-    ):
-        if hook_event.type == "faltoobot.post_response_hook.feedback":
-            feedback.extend(
-                cast(
-                    list[HookFeedback],
-                    cast(Any, hook_event).feedback_items,
-                )
-            )
-    if not feedback:
-        return False
-    append_developer_turn(session, post_response_hooks.format_feedback(feedback))
-    return True
 
 
 async def get_answer_streaming(session: Session) -> AsyncIterator[StreamingReplyItem]:
@@ -615,9 +591,8 @@ async def _get_answer_streaming(
         yield event
 
     if hooks_enabled:
-        async for hook_event in _run_post_response_hooks(
-            session, workspace, snapshot, hook_iteration
-        ):
+        diff_text = await asyncio.to_thread(post_response_hooks.diff_since, snapshot)
+        async for hook_event in run_hooks_for_diff(session, diff_text, hook_iteration):
             yield hook_event
     logger.info("Finished answer stream")
 

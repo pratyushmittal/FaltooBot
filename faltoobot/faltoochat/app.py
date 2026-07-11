@@ -6,7 +6,7 @@ import tempfile
 import traceback
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, AsyncIterator, Iterable
 from uuid import uuid4
 
 from rich.markup import escape
@@ -36,7 +36,7 @@ from faltoobot.faltoochat.terminal import (
     set_terminal_title,
     textual_theme_from_terminal,
 )
-from faltoobot.gpt_utils import MessageItem
+from faltoobot.gpt_utils import MessageItem, StreamingReplyItem
 from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
     decompose_local_message_item,
@@ -555,13 +555,17 @@ class FaltooChatApp(App[None]):
         await transcript.mount(Markdown(text, classes="answer"))
         transcript.anchor()
 
-    async def _stream_events(self, transcript: VerticalScroll) -> None:
+    async def _stream_events(
+        self,
+        transcript: VerticalScroll,
+        events: AsyncIterator[StreamingReplyItem],
+    ) -> None:
         block: Markdown | None = None
         answer_stream: Any | None = None
         raw_text = ""
         transcript.anchor()
 
-        async for event in sessions.get_answer_streaming(self.session):
+        async for event in events:
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
@@ -621,12 +625,19 @@ class FaltooChatApp(App[None]):
             attachments=attachments,
         )
 
-    async def _start_streaming(self, transcript: VerticalScroll) -> None:
+    async def _start_streaming(
+        self,
+        transcript: VerticalScroll,
+        *,
+        events: AsyncIterator[StreamingReplyItem] | None = None,
+    ) -> None:
         completed = False
         composer = self.composer
         composer.border_subtitle = "answering · Ctrl+C to stop"
         try:
-            await self._stream_events(transcript)
+            await self._stream_events(
+                transcript, events or sessions.get_answer_streaming(self.session)
+            )
         except asyncio.CancelledError:
             # comment: user/app cancellations leave messages.json unchanged.
             pass

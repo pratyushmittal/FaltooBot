@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -576,7 +577,6 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
     _, app = build_app(tmp_path, monkeypatch)
     seen_diff_scopes: list[post_response_hooks.HookDiffScope] = []
     seen_hook_runs: list[tuple[sessions.Session, str]] = []
-    streamed: list[object] = []
 
     def fake_diff_for_scope(
         _workspace: Path, scope: post_response_hooks.HookDiffScope
@@ -584,20 +584,29 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
         seen_diff_scopes.append(scope)
         return "manual diff"
 
-    async def fake_enqueue_hooks_for_diff(
+    async def fake_run_hooks_for_diff(
         session: sessions.Session,
         diff_text: str,
-    ) -> bool:
+        iteration: int = 0,
+    ):
         seen_hook_runs.append((session, diff_text))
-        return True
-
-    async def fake_start_streaming(transcript: object) -> None:
-        streamed.append(transcript)
-        app.is_answering = False
+        yield SimpleNamespace(
+            type="faltoobot.post_response_hook.status",
+            hook_name="Manual",
+            status="running",
+        )
+        yield SimpleNamespace(
+            type="faltoobot.post_response_hook.status",
+            hook_name="Manual",
+            status="triggered",
+        )
+        yield SimpleNamespace(
+            type="faltoobot.post_response_hook.feedback",
+            feedback="## Post-response hook feedback",
+        )
 
     monkeypatch.setattr(post_response_hooks, "diff_for_scope", fake_diff_for_scope)
-    monkeypatch.setattr(sessions, "enqueue_hooks_for_diff", fake_enqueue_hooks_for_diff)
-    monkeypatch.setattr(app, "_start_streaming", fake_start_streaming)
+    monkeypatch.setattr(sessions, "run_hooks_for_diff", fake_run_hooks_for_diff)
 
     async with app.run_test() as pilot:
         await pilot.pause(0)
@@ -610,11 +619,19 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
         await pilot.press("down", "enter")
         await pilot.pause(0)
 
-        await wait_for_condition(lambda: bool(streamed))
+        await wait_for_condition(
+            lambda: any(
+                "Post-response hook feedback" in block._markdown
+                for block in app.transcript.query(Markdown)
+            )
+        )
 
+        blocks = [block._markdown for block in app.transcript.query(Markdown)]
         assert seen_diff_scopes == [post_response_hooks.HookDiffScope.UNSTAGED]
         assert seen_hook_runs == [(app.session, "manual diff")]
-        assert streamed == [app.transcript]
+        assert "Running post-response hook: Manual" in blocks
+        assert "Manual: hook triggered" in blocks
+        assert "## Post-response hook feedback" in blocks
 
 
 @pytest.mark.anyio

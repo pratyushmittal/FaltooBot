@@ -70,13 +70,15 @@ def _open_run_hooks_picker(app: "FaltooChatApp") -> None:
             diff_text = await asyncio.to_thread(
                 post_response_hooks.diff_for_scope, app.workspace, scope
             )
-            if await sessions.enqueue_hooks_for_diff(app.session, diff_text):
-                app.is_answering = True
-                app.refresh_terminal_title()
-                app.active_stream_worker = app.run_worker(
-                    app._start_streaming(app.transcript),
-                    exclusive=True,
-                )
+            app.is_answering = True
+            app.refresh_terminal_title()
+            app.active_stream_worker = app.run_worker(
+                app._start_streaming(
+                    app.transcript,
+                    events=sessions.run_hooks_for_diff(app.session, diff_text),
+                ),
+                exclusive=True,
+            )
         app.focus_composer()
 
     app.push_screen(
