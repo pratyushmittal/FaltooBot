@@ -5,6 +5,7 @@ import os
 import platform
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import ssl
@@ -42,6 +43,10 @@ OpenAIClientOptions: TypeAlias = tuple[
 
 
 class OpenAIAuthError(RuntimeError):
+    pass
+
+
+class _ReauthenticationRequiredError(OpenAIAuthError):
     pass
 
 
@@ -236,6 +241,42 @@ def _token_url() -> str:
     )
 
 
+def _refresh_error_code(body: str) -> str:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    if isinstance(error, str):
+        return error
+    if isinstance(error, dict) and (code := _string(error.get("code"))):
+        return code
+    return _string(payload.get("code"))
+
+
+def _reauthentication_error(
+    status: int, body: str
+) -> _ReauthenticationRequiredError | None:
+    messages = {
+        "refresh_token_expired": "ChatGPT refresh token expired.",
+        "refresh_token_reused": "ChatGPT refresh token was already used.",
+        "refresh_token_invalidated": "ChatGPT refresh token was invalidated.",
+    }
+    message = messages.get(_refresh_error_code(body).lower())
+    if message:
+        return _ReauthenticationRequiredError(
+            f"{message} Run `faltoobot codex-login` again."
+        )
+    if status == HTTPStatus.UNAUTHORIZED:
+        # comment: token endpoint authentication failures require new credentials.
+        return _ReauthenticationRequiredError(
+            "ChatGPT token refresh was unauthorized. Run `faltoobot codex-login` again."
+        )
+    return None
+
+
 def _request_token_refresh(refresh_token: str) -> JsonObject:
     request = Request(
         _token_url(),
@@ -258,6 +299,8 @@ def _request_token_refresh(refresh_token: str) -> JsonObject:
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        if error := _reauthentication_error(exc.code, detail):
+            raise error from exc
         raise OpenAIAuthError(
             f"ChatGPT token refresh failed with status {exc.code}: {detail}"
         ) from exc
@@ -324,17 +367,27 @@ def get_openai_client_options(config: Config) -> OpenAIClientOptions:
         )
 
     lock = asyncio.Lock()
+    cached_error: tuple[JsonObject, _ReauthenticationRequiredError] | None = None
 
     async def oauth_api_key() -> str:
+        nonlocal cached_error
         async with lock:
             data = _read_json(auth_file)
             tokens = _token_object(data)
             access_token = _string(tokens.get("access_token"))
+            if cached_error and cached_error[0] == data:
+                # comment: unchanged credentials cannot recover by retrying requests.
+                raise cached_error[1]
+            cached_error = None
             if not _needs_refresh(data):
                 return access_token
             # comment: ChatGPT OAuth auth.json can hold an expired short-lived access token,
             # so refresh it on demand before sending requests to the Codex backend.
-            return await asyncio.to_thread(_refresh_access_token, auth_file)
+            try:
+                return await asyncio.to_thread(_refresh_access_token, auth_file)
+            except _ReauthenticationRequiredError as exc:
+                cached_error = (data, exc)
+                raise
 
     return (
         oauth_api_key,

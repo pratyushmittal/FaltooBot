@@ -46,7 +46,8 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
     event_type = event.type
     match event_type:
         case (
-            "response.created"
+            "codex.response.metadata"
+            | "response.created"
             | "response.in_progress"
             | "response.completed"
             | "response.output_item.added"
@@ -54,6 +55,7 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
             | "response.content_part.done"
             | "response.function_call_arguments.delta"
         ):
+            # comment: invisible events must not split the active rendered block.
             is_new, classes, text = False, "", ""
         case (
             "function_call_output"

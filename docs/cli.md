@@ -77,6 +77,10 @@ faltoochat --workspace=./repo
 faltoochat --new-session
 ```
 
+### Custom slash commands
+
+`faltoochat` loads custom slash commands from `~/.faltoobot/prompts/*.md`. For example, `~/.faltoobot/prompts/switch.md` is available as `/switch`. Arguments are substituted as `$1`, `$2`, and `$*`, so `/switch somebranch` can expand `$1` to `somebranch`.
+
 ### One-shot mode
 
 Run it with a prompt to execute a single task and print the final output to stdout:

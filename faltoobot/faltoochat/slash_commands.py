@@ -1,3 +1,5 @@
+import re
+import shlex
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +37,29 @@ class SlashCommandStore:
     def commands(self) -> dict[str, SlashCommand]:
         self.refresh()
         return dict(self._commands)
+
+    def get_prompt_message(self, command: str, args_text: str) -> str | None:
+        """Return saved prompt with provided $1/$2/$*/$@ args replaced; keep missing args."""
+        self.refresh()
+        slash_command = self._commands.get(command)
+        if slash_command is None:
+            # comment: slash-looking user input may not match any saved prompt file.
+            return None
+
+        try:
+            args = shlex.split(args_text)
+        except ValueError:
+            # comment: still expand simple args if the submitted text has unmatched quotes.
+            args = args_text.split()
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            if key in {"*", "@"}:
+                return " ".join(args) if args else match.group(0)
+            index = int(key) - 1
+            return args[index] if 0 <= index < len(args) else match.group(0)
+
+        return re.sub(r"\$(\d+|[*@])", replace, slash_command.template)
 
     def refresh(self) -> None:
         prompts_dir = self.prompts_dir or app_root() / "prompts"

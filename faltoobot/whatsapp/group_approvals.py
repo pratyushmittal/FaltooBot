@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from logging import Logger
 from typing import Any
 
+from neonize.ext.interactive_message import ButtonMessage
 from neonize.proto import Neonize_pb2
 from neonize.utils.jid import build_jid
 
@@ -95,11 +96,9 @@ async def _group_title(
     return title or fallback
 
 
-def _request_text(record: Approval) -> str:
+def _request_body(record: Approval) -> str:
     group_jid = record.get("group_jid", "")
     lines = [
-        "Group approval requested",
-        "",
         f"Group: {record.get('group_name') or group_jid}",
         f"JID: {group_jid}",
         f"Requested by: {record.get('requested_by_name') or record.get('requested_by') or '<unknown>'}",
@@ -108,14 +107,6 @@ def _request_text(record: Approval) -> str:
         lines.append(f"Requester JID: {record['requested_by']}")
     if record.get("message"):
         lines.extend(["", f"Message: {record['message']}"])
-    lines.extend(
-        [
-            "",
-            "Reply with:",
-            f"/approve_group {group_jid}",
-            f"/deny_group {group_jid}",
-        ]
-    )
     return "\n".join(lines)
 
 
@@ -167,15 +158,23 @@ async def request_approval(  # noqa: PLR0913
     approvals[group_id] = record
     _save(config, approvals)
 
-    text = _request_text(record)
+    buttons = (
+        ButtonMessage()
+        .set_title("Group approval requested")
+        .set_body(_request_body(record))
+        .add_reply("Approve", f"/approve_group {group_id}")
+        .add_reply("Deny", f"/deny_group {group_id}")
+    )
     for approver in sorted(approvers):
         approver_jid = _chat_jid(approver)
         if approver_jid is None:
             continue
         try:
-            await client.send_message(approver_jid, text)
+            await client.send_interactive_message(approver_jid, buttons)
         except Exception:
-            logger.exception("Failed to send group approval request to %s", approver)
+            logger.exception(
+                "Failed to send interactive group approval request to %s", approver
+            )
 
 
 def _write_group_allowlist(config: Config, groups: set[str]) -> None:

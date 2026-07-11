@@ -1,5 +1,6 @@
 import io
 import json
+from errno import EACCES, EADDRINUSE
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -185,3 +186,55 @@ def test_run_openai_login_saves_auth_file(
     assert payload["tokens"]["access_token"] == "access-token"
     assert payload["tokens"]["refresh_token"] == "refresh-token"
     assert "Saved" in output.getvalue()
+
+
+def test_callback_server_falls_back_to_registered_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ports: list[int] = []
+
+    class Server(FakeServer):
+        def serve_forever(self) -> None:
+            return None
+
+    def fake_http_server(address: tuple[str, int], handler: object) -> Server:
+        _host, port = address
+        ports.append(port)
+        if port == openai_login.CALLBACK_PORT:
+            raise OSError(EADDRINUSE, "address in use")
+        return Server()
+
+    monkeypatch.setattr(openai_login, "HTTPServer", fake_http_server)
+    state = openai_login._CallbackState(expected_state="state")
+
+    _, thread, redirect_uri = openai_login._start_callback_server(state)
+    thread.join(timeout=1)
+
+    assert ports == [
+        openai_login.CALLBACK_PORT,
+        openai_login.CALLBACK_FALLBACK_PORT,
+    ]
+    assert redirect_uri == (
+        f"http://localhost:{openai_login.CALLBACK_FALLBACK_PORT}"
+        f"{openai_login.CALLBACK_PATH}"
+    )
+
+
+def test_callback_server_reports_non_address_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ports: list[int] = []
+
+    def fake_http_server(address: tuple[str, int], handler: object) -> FakeServer:
+        _host, port = address
+        ports.append(port)
+        raise OSError(EACCES, "permission denied")
+
+    monkeypatch.setattr(openai_login, "HTTPServer", fake_http_server)
+
+    with pytest.raises(openai_login._OpenAILoginError, match="permission denied"):
+        openai_login._start_callback_server(
+            openai_login._CallbackState(expected_state="state")
+        )
+
+    assert ports == [openai_login.CALLBACK_PORT]

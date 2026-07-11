@@ -203,13 +203,14 @@ class SlashCommandsOptionList(OptionList):
         attachments: list[sessions.Attachment],
     ) -> bool:
         composer = cast("Composer", self.app.query_one("#composer"))
-        command = text.strip()
-        if command in SLASH_COMMANDS:
+        command, _separator, args_text = text.strip().partition(" ")
+        if command in SLASH_COMMANDS and not args_text:
             composer.load_text("")
             return await self._handle_builtin_command(command)
-        if prompt := SLASH_COMMAND_STORE.commands().get(command):
+        message = SLASH_COMMAND_STORE.get_prompt_message(command, args_text)
+        if message is not None:
             composer.load_text("")
-            message_item = get_local_user_message_item(prompt.template, attachments)
+            message_item = get_local_user_message_item(message, attachments)
             await cast("FaltooChatApp", self.app).handle_message(message_item)
             return True
         return False

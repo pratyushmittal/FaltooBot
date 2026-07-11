@@ -449,11 +449,11 @@ async def test_minchat_custom_slash_command_submission_paths(
 
 
 @pytest.mark.anyio
-async def test_minchat_custom_slash_command_with_extra_text_submits_raw_input(
+async def test_minchat_custom_slash_command_renders_positional_args(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_prompt(tmp_path, "summarize", "Summarize {file} for {topic}.")
+    _write_prompt(tmp_path, "switch", "Switch to $1 and compare with $2. Args: $*.")
     _, app = build_app(tmp_path, monkeypatch)
     seen = _capture_submissions(app)
 
@@ -461,12 +461,15 @@ async def test_minchat_custom_slash_command_with_extra_text_submits_raw_input(
         await pilot.pause(0)
         composer = app.query_one("#composer", Composer)
         composer.focus()
-        composer.load_text("/summarize file=README.md")
+        composer.load_text('/switch feature/foo "main branch"')
 
         await composer.action_composer_enter()
         await pilot.pause(0)
 
-        assert seen == ["/summarize file=README.md"]
+        assert seen == [
+            "Switch to feature/foo and compare with main branch. Args: feature/foo main branch."
+        ]
+        assert composer.text == ""
 
 
 @pytest.mark.anyio

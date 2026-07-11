@@ -242,7 +242,7 @@ def _configure_wrong_api_key_auth(
         monkeypatch,
         api_key="sk-faltoobot-invalid-websocket-e2e",
         oauth=None,
-        model=model or "gpt-5.5",
+        model=model or "gpt-5.6-sol",
     )
 
 
@@ -255,7 +255,7 @@ def _configure_api_key_auth(
     ws_e2e.auth_kind = "api"
     model = os.environ.get("FALTOOCHAT_E2E_API_MODEL", "").strip()
     model = model or os.environ.get("FALTOOCHAT_E2E_MODEL", "").strip()
-    _write_config(ws_e2e, monkeypatch, oauth=None, model=model or "gpt-5.5")
+    _write_config(ws_e2e, monkeypatch, oauth=None, model=model or "gpt-5.6-sol")
 
 
 def _configure_codex_oauth_auth(
@@ -276,7 +276,7 @@ def _configure_codex_oauth_auth(
     ws_e2e.auth_kind = "codex"
     model = os.environ.get("FALTOOCHAT_E2E_CODEX_MODEL", "").strip()
     model = model or os.environ.get("FALTOOCHAT_E2E_MODEL", "").strip()
-    _write_config(ws_e2e, monkeypatch, oauth=oauth, model=model or "gpt-5.5")
+    _write_config(ws_e2e, monkeypatch, oauth=oauth, model=model or "gpt-5.6-sol")
 
 
 @given("workspace has a large crons skill")

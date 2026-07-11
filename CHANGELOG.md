@@ -2,6 +2,38 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.4.1 — 2026-07-10
+
+### Fixed
+- Fixed WhatsApp replies failing after 7.4.0 with a corrupt wire-format error.
+
+## 7.4.0 — 2026-07-10
+
+### Added
+- WhatsApp can now render Markdown tables as native rich tables while preserving surrounding text.
+- Group approval requests now include Approve and Deny buttons.
+
+### Changed
+- Updated Neonize to 0.4.1.post0 for newer Whatsmeow compatibility and connection reliability fixes.
+
+### Fixed
+- WhatsApp group mentions now resolve LID participants correctly.
+
+## 7.3.1 — 2026-07-10
+
+### Changed
+- New installs now default to `gpt-5.6-sol`, and `faltoobot update` moves configurations still using an earlier default model.
+
+## 7.3.0 — 2026-07-10
+
+### Added
+- Custom `faltoochat` slash commands now accept arguments and substitute `$1`, `$2`, and `$*` in saved prompt files.
+
+### Fixed
+- Codex OAuth login now falls back to localhost port 1457 when port 1455 is busy, and rejected refresh tokens now prompt for sign-in instead of being retried repeatedly.
+- Faltoochat now ignores internal Codex response metadata instead of displaying it as an unknown message.
+- Saved message timestamps are no longer sent back to OpenAI when replaying chat history.
+
 ## 7.2.2 — 2026-06-30
 
 ### Added

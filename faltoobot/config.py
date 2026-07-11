@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 APP_LABEL = "com.faltoobot.agent"
-MODEL_OPTIONS = ("gpt-5.5", "gpt-5.2", "gpt-5.1", "gpt-5.2-codex", "gpt-5.1-codex")
+MODEL_OPTIONS = ("gpt-5.6-sol",)
 TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"

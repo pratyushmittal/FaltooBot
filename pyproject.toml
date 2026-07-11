@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faltoobot"
-version = "7.2.2"
+version = "7.4.1"
 description = "WhatsApp-first LLM bot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "neonize==0.3.18.post0",
+  "markdown-it-py>=4.2.0",
+  "neonize==0.4.1.post0",
   "openai>=2.32.0",
   "playwright>=1.58.0",
   "pillow>=12.2.0",
