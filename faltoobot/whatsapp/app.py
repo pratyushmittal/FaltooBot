@@ -163,7 +163,11 @@ async def _start_polling_notifications() -> None:
                     "Notify-queue item %s failed; requeueing",
                     notification.get("id", path.name),
                 )
-                notify_queue.requeue_notification(path)
+                delay = notify_queue.retry_delay_seconds(
+                    notification.get("attempts", 0)
+                )
+                logger.warning("Retrying notify-queue item in %.0f seconds", delay)
+                notify_queue.requeue_notification(path, delay_seconds=delay)
                 continue
             notify_queue.ack_notification(path)
         try:

@@ -2606,7 +2606,7 @@ async def test_start_polling_notifications_claims_and_acks(
     monkeypatch.setattr(
         whatsapp_app.notify_queue,
         "requeue_notification",
-        lambda path: calls.append("requeue"),
+        lambda path, **kwargs: calls.append("requeue"),
     )
 
     await whatsapp_app._start_polling_notifications()
@@ -2786,7 +2786,7 @@ async def test_start_polling_global_notification_targets_allowed_chats(
     monkeypatch.setattr(
         whatsapp_app.notify_queue,
         "requeue_notification",
-        lambda path: processed.append("requeue"),
+        lambda path, **kwargs: processed.append("requeue"),
     )
 
     await whatsapp_app._start_polling_notifications()
@@ -2889,7 +2889,7 @@ async def test_start_polling_notification_requeues_failure_and_continues(
     async def fail_process(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("boom")
 
-    def fake_requeue(_path: Path) -> None:
+    def fake_requeue(_path: Path, **_kwargs: object) -> None:
         events.append("requeue")
         whatsapp_app.notifications_stop.set()
 
