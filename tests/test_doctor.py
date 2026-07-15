@@ -156,14 +156,16 @@ def test_main_returns_doctor_changes(tmp_path: Path) -> None:
     ]
 
 
-def test_inspect_cron_health_reports_missing_venv_stale_home_and_logs(tmp_path: Path) -> None:
+def test_inspect_cron_health_reports_missing_venv_stale_home_and_logs(
+    tmp_path: Path,
+) -> None:
     config = make_config(tmp_path)
     workdir = tmp_path / "job"
     workdir.mkdir()
     script = workdir / "monitor.sh"
     script.write_text(
         "#!/usr/bin/env bash\n"
-        "PYTHON_BIN=\"${PYTHON_BIN:-$PWD/.venv/bin/python}\"\n"
+        'PYTHON_BIN="${PYTHON_BIN:-$PWD/.venv/bin/python}"\n'
         "FALTOOBOT_BIN=/home/exedev/.local/bin/faltoobot\n"
         "echo run\n",
         encoding="utf-8",
@@ -180,10 +182,15 @@ def test_inspect_cron_health_reports_missing_venv_stale_home_and_logs(tmp_path: 
 
     crontab = f"17 * * * * cd {workdir} && ./monitor.sh >> logs/cron.log 2>&1\n"
 
-    rendered = [issue.render() for issue in doctor.inspect_cron_health(config, crontab_text=crontab)]
+    rendered = [
+        issue.render()
+        for issue in doctor.inspect_cron_health(config, crontab_text=crontab)
+    ]
 
     assert any("missing local venv interpreter" in item for item in rendered)
-    assert any("references another home directory: /home/exedev/" in item for item in rendered)
+    assert any(
+        "references another home directory: /home/exedev/" in item for item in rendered
+    )
     assert any("missing interpreter/path" in item for item in rendered)
     assert any("python traceback" in item for item in rendered)
 
@@ -199,11 +206,18 @@ def test_inspect_cron_health_reports_missing_workdir_and_script(tmp_path: Path) 
         ]
     )
 
-    rendered = [issue.render() for issue in doctor.inspect_cron_health(config, crontab_text=crontab)]
+    rendered = [
+        issue.render()
+        for issue in doctor.inspect_cron_health(config, crontab_text=crontab)
+    ]
 
     assert any("working directory missing" in item for item in rendered)
     assert any("script missing" in item for item in rendered)
-def test_summarize_session_health_counts_large_incomplete_and_unreadable(tmp_path: Path) -> None:
+
+
+def test_summarize_session_health_counts_large_incomplete_and_unreadable(
+    tmp_path: Path,
+) -> None:
     config = make_config(tmp_path)
     sessions_root = config.sessions_dir
 

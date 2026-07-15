@@ -23,10 +23,16 @@ SKIPPED_LOG_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
 CRON_LINE_RE = re.compile(r"\bcd\s+(?P<cwd>\"[^\"]+\"|'[^']+'|\S+)\s+&&\s+(?P<cmd>.*)")
 ABSOLUTE_HOME_RE = re.compile(r"/home/[A-Za-z0-9._-]+/")
 CRON_LOG_ERROR_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("missing interpreter/path", r"Missing Python interpreter|No such file or directory"),
+    (
+        "missing interpreter/path",
+        r"Missing Python interpreter|No such file or directory",
+    ),
     ("browser startup failure", r"CDP port 9222|browser did not become ready"),
     ("python traceback", r"Traceback \(most recent call last\)|RuntimeError|Exception"),
-    ("HTTP/service error", r"\bHTTP/1\.1\"?\s+(?:429|500|502|503)\b|Internal Server Error|Bad Gateway"),
+    (
+        "HTTP/service error",
+        r"\bHTTP/1\.1\"?\s+(?:429|500|502|503)\b|Internal Server Error|Bad Gateway",
+    ),
 )
 
 
@@ -44,7 +50,7 @@ def _strip_shell_quotes(value: str) -> str:
     if (
         len(value) >= MIN_QUOTED_LENGTH
         and value[0] == value[-1]
-        and value[0] in {"\"", "'"}
+        and value[0] in {'"', "'"}
     ):
         return value[1:-1]
     return value
@@ -64,7 +70,11 @@ def _iter_cron_commands(crontab_text: str) -> list[tuple[int, Path | None, str]]
     commands: list[tuple[int, Path | None, str]] = []
     for line_no, line in enumerate(crontab_text.splitlines(), 1):
         stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" in stripped.split(maxsplit=1)[0]:
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or "=" in stripped.split(maxsplit=1)[0]
+        ):
             continue
         match = CRON_LINE_RE.search(stripped)
         if match:
@@ -140,7 +150,9 @@ def _inspect_cron_command(
         return issues
     seen_workdirs.add(cwd)
     if not cwd.exists():
-        return [CronHealthIssue("cron", f"line {line_no} working directory missing: {cwd}")]
+        return [
+            CronHealthIssue("cron", f"line {line_no} working directory missing: {cwd}")
+        ]
 
     script = _referenced_script(cwd, command)
     if script is None:
@@ -148,7 +160,9 @@ def _inspect_cron_command(
     if not script.exists():
         return [CronHealthIssue("cron", f"line {line_no} script missing: {script}")]
     if not os.access(script, os.X_OK):
-        issues.append(CronHealthIssue("cron", f"line {line_no} script not executable: {script}"))
+        issues.append(
+            CronHealthIssue("cron", f"line {line_no} script not executable: {script}")
+        )
     for stale_home in _script_home_references(script, config):
         issues.append(
             CronHealthIssue(
@@ -240,7 +254,6 @@ def inspect_cron_health(
     # Preserve order while deduplicating repeated warnings from overlapping roots.
     deduped = list(dict.fromkeys(issues))
     return deduped
-
 
 
 LARGE_SESSION_HISTORY_BYTES = 25 * 1024 * 1024
@@ -474,9 +487,13 @@ def format_session_health_summary(summary: SessionHealthSummary) -> list[str]:
     if summary.large_histories:
         lines.append(f"doctor:large-session-histories={summary.large_histories}")
     if summary.incomplete_histories:
-        lines.append(f"doctor:incomplete-session-histories={summary.incomplete_histories}")
+        lines.append(
+            f"doctor:incomplete-session-histories={summary.incomplete_histories}"
+        )
     if summary.unreadable_histories:
-        lines.append(f"doctor:unreadable-session-histories={summary.unreadable_histories}")
+        lines.append(
+            f"doctor:unreadable-session-histories={summary.unreadable_histories}"
+        )
     return lines
 
 
