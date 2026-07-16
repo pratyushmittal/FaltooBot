@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
 
@@ -32,7 +33,7 @@ STRIPPED_MESSAGE_KEYS = {
     "usage",
     STANDALONE_COMPACTION_KEY,
 }
-UNREPLAYABLE_RESPONSE_ITEM_TYPES = {"image_generation_call"}
+IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -173,6 +174,10 @@ def _to_message_item(value: Any) -> MessageItem:
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
+    value = value.copy()
+    value.setdefault(
+        "timestamp", datetime.now().astimezone().isoformat(timespec="seconds")
+    )
     return value
 
 
@@ -218,14 +223,12 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
-        if item.get("type") in UNREPLAYABLE_RESPONSE_ITEM_TYPES:
-            # comment: store=false response items cannot be sent back as input.
-            continue
-        trimmed = {
-            key: value
-            for key, value in item.items()
-            if key not in STRIPPED_MESSAGE_KEYS
-        }
+        kept_keys = (
+            IMAGE_GENERATION_REPLAY_KEYS
+            if item.get("type") == "image_generation_call"
+            else item.keys() - STRIPPED_MESSAGE_KEYS
+        )
+        trimmed = {key: value for key, value in item.items() if key in kept_keys}
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)

@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+from typing import Any, cast
+
 from faltoobot.config import (
     Config,
     MODEL_OPTIONS,
@@ -5,6 +9,11 @@ from faltoobot.config import (
     load_toml,
     merge_config,
     render_config,
+)
+from faltoobot.sessions import (
+    MESSAGES_FILE,
+    generated_image_developer_message,
+    save_generated_image,
 )
 
 
@@ -61,6 +70,72 @@ def disable_default_openai_websocket(
     return True
 
 
+def _is_generated_image_message(item: dict[str, Any]) -> bool:
+    match item:
+        case {"role": "developer", "content": [*parts]}:
+            return any(
+                isinstance(part, dict)
+                and str(part.get("text") or "").startswith(
+                    "![Generated image](.generated-images/"
+                )
+                for part in parts
+            )
+    return False
+
+
+def _migrated_generated_image_messages(
+    messages: list[dict[str, Any]], workspace: Path
+) -> tuple[list[dict[str, Any]], bool]:
+    migrated: list[dict[str, Any]] = []
+    for index, item in enumerate(messages):
+        migrated.append(item)
+        result = item.get("result")
+        if item.get("type") != "image_generation_call" or not isinstance(result, str):
+            continue
+        # Re-running migration must not duplicate an adjacent image path message.
+        if index + 1 < len(messages) and _is_generated_image_message(
+            messages[index + 1]
+        ):
+            continue
+        path = save_generated_image(result, workspace)
+        migrated.append(generated_image_developer_message(path))
+    return migrated, len(migrated) != len(messages)
+
+
+def add_generated_image_developer_messages(
+    config: Config,
+    *,
+    previous_version: str | None,
+    current_version: str | None,
+) -> bool:
+    if not _upgrading_across(previous_version, current_version, "7.5.0"):
+        # Scan histories only during the release introducing image path messages.
+        return False
+    changed_any = False
+    for messages_path in config.sessions_dir.glob(f"*/*/{MESSAGES_FILE}"):
+        text = messages_path.read_text(encoding="utf-8")
+        if "image_generation_call" not in text:
+            # Histories without generated images need no JSON parsing.
+            continue
+
+        payload = cast(dict[str, Any], json.loads(text))
+        migrated, changed = _migrated_generated_image_messages(
+            cast(list[dict[str, Any]], payload["messages"]),
+            Path(cast(str, payload["workspace"])),
+        )
+        if not changed:
+            continue
+
+        payload["messages"] = migrated
+        messages_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        changed_any = True
+
+    return changed_any
+
+
 def main(
     config: Config | None = None,
     *,
@@ -76,4 +151,8 @@ def main(
         config, previous_version=previous_version, current_version=current_version
     ):
         changes.append("migration:disable-default-openai-websocket")
+    if add_generated_image_developer_messages(
+        config, previous_version=previous_version, current_version=current_version
+    ):
+        changes.append("migration:add-generated-image-developer-messages")
     return changes

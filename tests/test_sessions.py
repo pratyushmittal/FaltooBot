@@ -1,8 +1,6 @@
-import base64
-from collections.abc import Sequence
-
 import hashlib
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,14 +9,20 @@ import pytest
 from PIL import Image
 
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-from openai.types.responses.response_output_item import ImageGenerationCall
 
 from faltoobot import sessions
-from faltoobot.gpt_utils import MessageHistory, get_tools_definition
+from faltoobot.gpt_utils import MessageHistory, _to_message_item, get_tools_definition
 
 
 def _listed_name(session: sessions.Session, name: str) -> str:
     return sessions._session_label(name, session.messages_path)
+
+
+def _without_timestamp(messages: MessageHistory) -> MessageHistory:
+    return [
+        {key: value for key, value in item.items() if key != "timestamp"}
+        for item in messages
+    ]
 
 
 def _fake_output_item(
@@ -343,13 +347,12 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
         assert prompt_cache_key == session.session_id
         tool_defs.extend([get_tools_definition(tool) for tool in tools])
         input.append(
-            cast(
-                Any,
+            _to_message_item(
                 {
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": "hello"}],
-                },
+                }
             )
         )
         input[-1]["usage"] = {
@@ -400,7 +403,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     assert payload["system_prompt"] == "system prompt"
     assert duplicate == ""
     assert len(calls) == 1
-    assert calls[0] == [
+    assert _without_timestamp(calls[0]) == [
         {
             "type": "message",
             "role": "user",
@@ -466,7 +469,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
         "additionalProperties": False,
     }
     assert payload["message_ids"] == ["msg-1"]
-    assert payload["messages"] == [
+    assert _without_timestamp(payload["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -570,7 +573,7 @@ async def test_get_answer_refreshes_whatsapp_system_prompt(
             "role": "assistant",
             "content": [{"type": "output_text", "text": "ok"}],
         }
-        input.append(cast(Any, reply))
+        input.append(_to_message_item(reply))
         yield FakeCompletedEvent(
             [reply],
             {
@@ -627,7 +630,7 @@ async def test_get_answer_refreshes_system_prompt_snapshot(
             "role": "assistant",
             "content": [{"type": "output_text", "text": "ok"}],
         }
-        input.append(cast(Any, reply))
+        input.append(_to_message_item(reply))
         yield FakeCompletedEvent(
             [reply],
             {
@@ -732,7 +735,7 @@ async def test_get_answer_uploads_image_attachments(
     if case["expected_name_suffix"]:
         uploaded = client.files.calls[0]["file"]
         assert uploaded.name.endswith(str(case["expected_name_suffix"]))
-    assert payload["messages"] == [
+    assert _without_timestamp(payload["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -823,29 +826,6 @@ async def test_get_answer_uses_codex_output_when_output_text_property_fails(
     )
 
     assert answer == "hello from codex"
-
-
-def test_assistant_text_saves_generated_images(tmp_path: Path) -> None:
-    image = tmp_path / "source.png"
-    Image.new("RGB", (4, 4), color="red").save(image)
-    image_call = ImageGenerationCall(
-        id="ig_test",
-        result=base64.b64encode(image.read_bytes()).decode("utf-8"),
-        status="completed",
-        type="image_generation_call",
-    )
-    event = SimpleNamespace(
-        response=SimpleNamespace(output=[image_call], output_text="")
-    )
-
-    answer = sessions._assistant_text_from_completed_event(
-        cast(Any, event), workspace=tmp_path
-    )
-
-    assert answer.startswith("![Generated image](.generated-images/")
-    saved = list((tmp_path / sessions.GENERATED_IMAGES_DIR).glob("*.png"))
-    assert len(saved) == 1
-    assert saved[0].read_bytes() == image.read_bytes()
 
 
 @pytest.mark.anyio
@@ -940,7 +920,7 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
     )
 
     assert sessions.get_messages(session)["message_ids"] == ["msg-1", "msg-2"]
-    assert sessions.get_messages(session)["messages"] == [
+    assert _without_timestamp(sessions.get_messages(session)["messages"]) == [
         {
             "type": "message",
             "role": "user",
@@ -994,13 +974,12 @@ async def test_get_answer_reuses_existing_user_turn(
     ):
         calls.append(list(input))
         input.append(
-            cast(
-                Any,
+            _to_message_item(
                 {
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": "hello"}],
-                },
+                }
             )
         )
         yield FakeCompletedEvent(
@@ -1026,16 +1005,14 @@ async def test_get_answer_reuses_existing_user_turn(
     answer = await sessions.get_answer(session)
 
     assert answer == "hello"
-    assert calls == [
-        [
-            {
-                "type": "message",
-                "role": "user",
-                "content": "Hi",
-            }
-        ]
+    assert _without_timestamp(calls[0]) == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": "Hi",
+        }
     ]
-    assert sessions.get_messages(session)["messages"] == [
+    assert _without_timestamp(sessions.get_messages(session)["messages"]) == [
         {
             "type": "message",
             "role": "user",

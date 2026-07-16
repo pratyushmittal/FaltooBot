@@ -8,6 +8,7 @@ from enum import Enum
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import ANY
 
 import pytest
 from openai import omit
@@ -69,19 +70,6 @@ async def get_streaming_reply(
         prompt_cache_key=prompt_cache_key,
     ):
         yield item
-
-
-def test_trim_input_drops_image_generation_calls() -> None:
-    history: MessageHistory = [
-        {"role": "user", "content": "draw"},
-        {"type": "image_generation_call", "id": "ig_1", "status": "failed"},
-        {"role": "user", "content": "thanks"},
-    ]
-
-    assert gpt_utils.trim_input(history) == [
-        {"role": "user", "content": "draw"},
-        {"role": "user", "content": "thanks"},
-    ]
 
 
 def test_get_openai_client_uses_codex_retry_limits() -> None:
@@ -472,6 +460,7 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
             "call_id": "call_1",
             "name": "greet",
             "arguments": '{"name":"Faltoobot"}',
+            "timestamp": ANY,
         },
         {
             "id": "fco_call_1",
@@ -479,12 +468,14 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
             "call_id": "call_1",
             "output": "hello Faltoobot",
             "status": "completed",
+            "timestamp": ANY,
         },
         {
             "type": "message",
             "id": "msg_2",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "Done."}],
+            "timestamp": ANY,
         },
     ]
     assert cast(Any, items[1]).response.codex_output[0].to_dict() == {
@@ -549,6 +540,7 @@ async def test_get_streaming_reply_accepts_completed_output_none(
         "id": "msg_1",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "Done."}],
+        "timestamp": ANY,
     }
 
 
@@ -596,6 +588,7 @@ async def test_get_streaming_reply_updates_history_before_completed_yield(
                 "id": "msg_1",
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": "Hi."}],
+                "timestamp": ANY,
             }
 
     assert seen_completed is True
@@ -1229,12 +1222,13 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
         }
     ]
     assert history[-2:] == [
-        websocket.sent[2]["input"][0],
+        {**websocket.sent[2]["input"][0], "timestamp": ANY},
         {
             "type": "message",
             "id": "msg_2",
             "role": "assistant",
             "content": [{"type": "output_text", "text": "Done."}],
+            "timestamp": ANY,
             "response_id": "resp_2",
         },
     ]
@@ -1350,7 +1344,7 @@ async def test_websocket_prewarm_reuses_previous_response_across_turns(
 
 
 @pytest.mark.anyio
-async def test_websocket_prewarm_drops_image_generation_calls(
+async def test_websocket_prewarm_replays_sanitized_image_generation_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket = FakeWebSocket([_websocket_completed_response("resp_warm")])
@@ -1365,13 +1359,7 @@ async def test_websocket_prewarm_drops_image_generation_calls(
             "type": "image_generation_call",
             "id": "ig_1",
             "status": "completed",
-            "action": "generate",
-            "background": "opaque",
-            "output_format": "png",
-            "quality": "medium",
             "result": "base64",
-            "revised_prompt": "draw a test image",
-            "size": "1122x1402",
         },
     ]
     await websocket_utils.prewarm(
@@ -1384,6 +1372,12 @@ async def test_websocket_prewarm_drops_image_generation_calls(
 
     assert websocket.sent[0]["input"] == [
         {"role": "user", "content": "draw"},
+        {
+            "type": "image_generation_call",
+            "id": "ig_1",
+            "status": "completed",
+            "result": "base64",
+        },
     ]
 
 
@@ -1868,6 +1862,7 @@ async def test_get_streaming_reply_recovers_missing_previous_response_id_after_t
         "id": "msg_2",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "Hello"}],
+        "timestamp": ANY,
         "response_id": "resp_2",
     }
 
@@ -2000,3 +1995,42 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
             "open_timeout": 60.0,
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_websocket_closes_when_completed_history_is_invalidated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from faltoobot import websockets as websocket_utils
+
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response("resp_warm"),
+            _websocket_completed_response("resp_image"),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    history: MessageHistory = [{"role": "user", "content": "draw"}]
+
+    async for event in sessions._get_streaming_reply(
+        config=_websocket_config(),
+        instructions="system prompt",
+        input=history,
+        tools=[],
+        prompt_cache_key="session-image",
+    ):
+        if event.type == "response.completed":
+            history.append(
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": "![Generated image](image.png)",
+                }
+            )
+            websocket_utils.invalidate_history("session-image", len(history))
+
+    session = websocket_utils.WEBSOCKET_SESSIONS["session-image"]
+    assert session.ws is None
+    assert session.previous_response_id is None
+    assert session.input_index == 0
+    assert session.close_after_turn is False

@@ -231,6 +231,8 @@ class OpenAIWebsocketSession:
     previous_response_id: str | None = None
     input_index: int = 0
     stream_retry_count: int = 0
+    # Local history changed mid-response; close after pending tool calls finish.
+    close_after_turn: bool = False
 
 
 async def _close_session(session: OpenAIWebsocketSession) -> None:
@@ -240,6 +242,17 @@ async def _close_session(session: OpenAIWebsocketSession) -> None:
     session.ws = None
     session.previous_response_id = None
     session.input_index = 0
+    session.close_after_turn = False
+
+
+def invalidate_history(prompt_cache_key: str, history_size: int) -> None:
+    session = WEBSOCKET_SESSIONS.get(prompt_cache_key)
+    if session is None:
+        # The websocket may not have been opened for this session yet.
+        return
+    # Keep slicing aligned; function-call follow-ups may still need this connection.
+    session.input_index = history_size
+    session.close_after_turn = True
 
 
 async def _connect_session(
@@ -393,6 +406,9 @@ async def prewarm(  # noqa: PLR0913
 ) -> OpenAIWebsocketSession:
     session = WEBSOCKET_SESSIONS.setdefault(prompt_cache_key, OpenAIWebsocketSession())
     async with session.lock:
+        if session.close_after_turn:
+            # A consumer may stop at the generated-image event before cleanup resumes.
+            await _close_session(session)
         await _prewarm_if_needed(
             session,
             config,
@@ -492,6 +508,8 @@ async def streaming_reply(  # noqa: C901
 
                 if not tool_calls:
                     session.stream_retry_count = 0
+                    if session.close_after_turn:
+                        await _close_session(session)
                     return
 
                 for tool_call in tool_calls:

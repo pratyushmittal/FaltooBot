@@ -85,3 +85,18 @@ def test_get_item_text_reasoning(
     item: dict[str, object], expected: tuple[str, str]
 ) -> None:
     assert get_item_text(item) == expected
+
+
+def test_get_item_text_renders_developer_messages() -> None:
+    assert get_item_text(
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "![Generated image](.generated-images/cat.png)",
+                }
+            ],
+        }
+    ) == ("![Generated image](.generated-images/cat.png)", "answer")

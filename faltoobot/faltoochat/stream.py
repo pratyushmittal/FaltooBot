@@ -89,7 +89,7 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
             )
         case "response.reasoning_text.delta":
             is_new, classes, text = False, "", ""
-        case "response.output_text.delta":
+        case "response.output_text.delta" | "faltoobot.generated_image":
             value = getattr(event, "delta", "")
             is_new, classes, text = (
                 False,
