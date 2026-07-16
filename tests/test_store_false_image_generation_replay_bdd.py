@@ -1,4 +1,5 @@
 from typing import Any
+
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
@@ -75,30 +76,4 @@ def stored_image_call_keeps_openai_status(image_replay_ctx: dict[str, Any]) -> N
     assert stored["id"] == "ig_1"
     assert stored["status"] == "generating"
     assert stored["result"] == "base64"
-
-
-@given("a display-only generated image markdown message")
-def display_only_generated_image_markdown_message(
-    image_replay_ctx: dict[str, Any],
-) -> None:
-    image_replay_ctx["history"] = [
-        {
-            "type": "message",
-            "role": "assistant",
-            gpt_utils.DISPLAY_ONLY_CONTENT_KEY: True,
-            "content": [
-                {
-                    "type": "output_text",
-                    "text": "![Generated image](.generated-images/cat.png)",
-                    "annotations": [],
-                },
-            ],
-        }
-    ]
-
-
-@then("the display-only generated image markdown message is omitted")
-def display_only_markdown_message_is_omitted(
-    image_replay_ctx: dict[str, Any],
-) -> None:
-    assert image_replay_ctx["trimmed"] == []
+    assert "timestamp" not in image_replay_ctx["response_item"]

@@ -9,8 +9,3 @@ Feature: Store false image generation replay
     Given a streamed generated image call with a result
     When the response item is stored in history
     Then the stored image call keeps the OpenAI status
-
-  Scenario: Display-only generated image markdown is not replayed
-    Given a display-only generated image markdown message
-    When the history is trimmed for a follow-up
-    Then the display-only generated image markdown message is omitted

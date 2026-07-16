@@ -1,7 +1,6 @@
-from collections.abc import Sequence
-
 import hashlib
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -115,7 +114,7 @@ def test_get_session_creates_messages_json_and_workspace(
     assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
-    assert _without_timestamp(payload["messages"]) == []
+    assert payload["messages"] == []
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
     assert (Path(payload["workspace"]) / "AGENTS.md").exists()

@@ -69,22 +69,23 @@ def faltoochat_session(
         input.extend(
             [
                 {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "done"}],
-                },
-                {
                     "type": "image_generation_call",
                     "id": image_call.id,
                     "status": image_call.status,
                     "result": image_call.result,
+                },
+                {
+                    "type": "message",
+                    "id": "msg_test",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
                 },
             ]
         )
         yield SimpleNamespace(
             type="response.completed",
             response=SimpleNamespace(
-                output=[_output_message(), image_call], output_text=""
+                output=[image_call, _output_message()], output_text=""
             ),
         )
 
@@ -145,13 +146,23 @@ def faltoochat_session_with_multiple_images(
         prompt_cache_key: str | None = None,
     ):
         input.extend(
-            {
-                "type": "image_generation_call",
-                "id": image_call.id,
-                "status": image_call.status,
-                "result": image_call.result,
-            }
-            for image_call in image_calls
+            [
+                {
+                    "type": "message",
+                    "id": "msg_test",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+                *[
+                    {
+                        "type": "image_generation_call",
+                        "id": image_call.id,
+                        "status": image_call.status,
+                        "result": image_call.result,
+                    }
+                    for image_call in image_calls
+                ],
+            ]
         )
         yield SimpleNamespace(
             type="response.completed",
@@ -189,12 +200,12 @@ def streamed_answer_includes_markdown(image_ui_ctx: dict[str, Any]) -> None:
     assert any(
         "![Generated image](.generated-images/" in getattr(event, "delta", "")
         for event in cast(list[Any], image_ui_ctx["events"])
-        if event.type == "response.output_text.delta"
+        if event.type == "faltoobot.generated_image"
     )
 
 
-@then("the completed OpenAI response does not include the display-only markdown")
-def completed_response_excludes_display_only_markdown(
+@then("the completed OpenAI response does not include the generated image markdown")
+def completed_response_excludes_generated_image_markdown(
     image_ui_ctx: dict[str, Any],
 ) -> None:
     completed = next(
@@ -206,41 +217,31 @@ def completed_response_excludes_display_only_markdown(
     assert text == "done"
 
 
-@then("the chat history includes a display-only generated image markdown link")
-def chat_history_includes_display_only_markdown(image_ui_ctx: dict[str, Any]) -> None:
-    session = cast(sessions.Session, image_ui_ctx["session"])
-    messages = sessions.get_messages(session)["messages"]
-    assistant = next(
-        item
-        for item in messages
-        if item.get("role") == "assistant"
-        and item.get(sessions.DISPLAY_ONLY_CONTENT_KEY)
-    )
-    content = assistant.get("content")
-    assert isinstance(content, list)
-    (image_part,) = content
-    assert "![Generated image](.generated-images/" in image_part["text"]
-    assert assistant[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
-
-
-@then("the chat history includes a developer note with the generated image path")
-def chat_history_includes_developer_image_note(image_ui_ctx: dict[str, Any]) -> None:
+@then(
+    "the chat history places each visible developer image message after its image call"
+)
+def chat_history_places_developer_image_after_call(
+    image_ui_ctx: dict[str, Any],
+) -> None:
     session = cast(sessions.Session, image_ui_ctx["session"])
     messages = gpt_utils.trim_input(sessions.get_messages(session)["messages"])
     image_count = sum(
         1 for item in messages if item.get("type") == "image_generation_call"
     )
     developer_paths: list[str] = []
-    prefix = "Generated images are saved locally at: "
-    for item in messages:
-        if item.get("type") != "message" or item.get("role") != "developer":
+    for index, item in enumerate(messages):
+        if item.get("type") != "image_generation_call":
             continue
-        content = item.get("content")
+        developer = messages[index + 1]
+        assert developer.get("role") == "developer"
+        content = developer.get("content")
         assert isinstance(content, list)
         assert content[0]["type"] == "input_text"
         text = content[0]["text"]
-        assert text.startswith(prefix)
-        developer_paths.append(text.removeprefix(prefix))
+        assert text.startswith("![Generated image](")
+        developer_paths.append(
+            text.removeprefix("![Generated image](").removesuffix(")")
+        )
 
     tmp_path = cast(Path, image_ui_ctx["tmp_path"])
     saved_paths = {
@@ -252,14 +253,13 @@ def chat_history_includes_developer_image_note(image_ui_ctx: dict[str, Any]) -> 
     assert set(developer_paths) == saved_paths
 
 
-@then("the latest chat history item is a display-only generated image markdown link")
-def latest_chat_history_item_is_display_only_markdown(
+@then("the latest chat history item is a visible developer image message")
+def latest_chat_history_item_is_visible_developer_image(
     image_ui_ctx: dict[str, Any],
 ) -> None:
     session = cast(sessions.Session, image_ui_ctx["session"])
     latest = sessions.get_messages(session)["messages"][-1]
-    assert latest["role"] == "assistant"
-    assert latest[sessions.DISPLAY_ONLY_CONTENT_KEY] is True
+    assert latest["role"] == "developer"
     content = latest.get("content")
     assert isinstance(content, list)
     (image_part,) = content

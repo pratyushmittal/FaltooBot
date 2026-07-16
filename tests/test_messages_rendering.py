@@ -87,14 +87,16 @@ def test_get_item_text_reasoning(
     assert get_item_text(item) == expected
 
 
-def test_get_item_text_hides_developer_messages() -> None:
-    assert (
-        get_item_text(
-            {
-                "type": "message",
-                "role": "developer",
-                "content": [{"type": "input_text", "text": "hidden"}],
-            }
-        )
-        is None
-    )
+def test_get_item_text_renders_developer_messages() -> None:
+    assert get_item_text(
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "![Generated image](.generated-images/cat.png)",
+                }
+            ],
+        }
+    ) == ("![Generated image](.generated-images/cat.png)", "answer")

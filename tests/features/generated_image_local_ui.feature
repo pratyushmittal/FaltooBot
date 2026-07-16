@@ -5,20 +5,17 @@ Feature: Generated image local UI
     When I ask to generate an image for the local UI
     Then the generated image is saved in the workspace
     And the streamed answer includes a generated image markdown link
-    And the completed OpenAI response does not include the display-only markdown
-    And the chat history includes a display-only generated image markdown link
-    And the chat history includes a developer note with the generated image path
+    And the completed OpenAI response does not include the generated image markdown
+    And the chat history places each visible developer image message after its image call
 
-  Scenario: Image-only responses create a local display message
+  Scenario: Image-only responses create a visible developer message
     Given a Faltoochat session with a mocked image-only response
     When I ask to generate an image for the local UI
     Then the generated image is saved in the workspace
     And the streamed answer includes a generated image markdown link
-    And the latest chat history item is a display-only generated image markdown link
-    And the chat history includes a developer note with the generated image path
+    And the latest chat history item is a visible developer image message
 
-
-  Scenario: Multiple generated images get separate developer notes
+  Scenario: Multiple generated images get separate developer messages
     Given a Faltoochat session with a mocked multiple generated image response
     When I ask to generate an image for the local UI
-    Then the chat history includes a developer note with the generated image path
+    Then the chat history places each visible developer image message after its image call

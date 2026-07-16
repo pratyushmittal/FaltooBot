@@ -1,5 +1,4 @@
 Save tokens, write less code.
-
 Prefer functions over classes.
 Use typing. Ignore type-check using `# type: ignore` for minor things or unsupported features in `ty`
 

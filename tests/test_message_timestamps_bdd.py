@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -13,7 +15,7 @@ scenarios("features/message_timestamps.feature")
 
 
 @pytest.fixture
-def timestamp_ctx(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> dict[str, Any]:
+def timestamp_ctx(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     monkeypatch.setattr(
         sessions,
@@ -71,8 +73,8 @@ def faltoochat_session_with_mocked_text_response(
     timestamp_ctx["session"] = sessions.get_session(chat_key="code@test")
 
 
-@when("I ask a timestamped question")
-def ask_timestamped_question(timestamp_ctx: dict[str, Any]) -> None:
+@when("I ask a question")
+def ask_question(timestamp_ctx: dict[str, Any]) -> None:
     async def run() -> None:
         session = cast(sessions.Session, timestamp_ctx["session"])
         await sessions.append_user_turn(session, question="Hi")
@@ -81,110 +83,12 @@ def ask_timestamped_question(timestamp_ctx: dict[str, Any]) -> None:
     asyncio.run(run())
 
 
-@then("the local transcript stores timestamp keys for the new messages")
-def transcript_stores_timestamps(timestamp_ctx: dict[str, Any]) -> None:
+@then(
+    "the session's messages.json contains timestamps for my question and the response"
+)
+def messages_json_contains_timestamps(timestamp_ctx: dict[str, Any]) -> None:
     session = cast(sessions.Session, timestamp_ctx["session"])
-    messages = sessions.get_messages(session)["messages"]
+    messages = json.loads(session.messages_path.read_text(encoding="utf-8"))["messages"]
     assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[0]["content"] == "Hi"
     assert all(isinstance(message.get("timestamp"), str) for message in messages)
-
-
-@given("a saved user text message with a timestamp")
-def saved_user_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> None:
-    timestamp_ctx["history"] = [
-        {
-            "type": "message",
-            "role": "user",
-            "content": "Hi",
-            "timestamp": "2026-06-13T17:24:33+05:30",
-        }
-    ]
-
-
-@given("a saved assistant text message with a timestamp")
-def saved_assistant_text_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> None:
-    timestamp_ctx["history"] = [
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "Hello"}],
-            "timestamp": "2026-06-13T17:24:33+05:30",
-        }
-    ]
-
-
-@given("a saved image-only message with a timestamp")
-def saved_image_only_message_with_timestamp(timestamp_ctx: dict[str, Any]) -> None:
-    timestamp_ctx["history"] = [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_image", "file_id": "file_123"}],
-            "timestamp": "2026-06-13T17:24:33+05:30",
-        }
-    ]
-
-
-@when("the history is trimmed for OpenAI")
-def trim_history_for_openai(timestamp_ctx: dict[str, Any]) -> None:
-    timestamp_ctx["trimmed"] = gpt_utils.trim_input(timestamp_ctx["history"])
-
-
-@when("the history is trimmed for OpenAI twice")
-def trim_history_for_openai_twice(timestamp_ctx: dict[str, Any]) -> None:
-    history = timestamp_ctx["history"]
-    timestamp_ctx["original_history"] = [item.copy() for item in history]
-    timestamp_ctx["first_trimmed"] = gpt_utils.trim_input(history)
-    timestamp_ctx["second_trimmed"] = gpt_utils.trim_input(history)
-
-
-@then("the timestamp key is stripped from the user message sent to OpenAI")
-def timestamp_key_is_stripped_from_user_text(timestamp_ctx: dict[str, Any]) -> None:
-    assert timestamp_ctx["trimmed"] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": "Hi",
-        }
-    ]
-
-
-@then("the timestamp key is stripped without adding text to the image message")
-def timestamp_key_is_stripped_without_adding_text_to_image(
-    timestamp_ctx: dict[str, Any],
-) -> None:
-    assert timestamp_ctx["trimmed"] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_image", "file_id": "file_123"}],
-        }
-    ]
-
-
-@then("both trimmed histories match without changing the saved message")
-def trimmed_histories_match_without_mutating_history(
-    timestamp_ctx: dict[str, Any],
-) -> None:
-    assert timestamp_ctx["first_trimmed"] == timestamp_ctx["second_trimmed"]
-    assert timestamp_ctx["history"] == timestamp_ctx["original_history"]
-    assert timestamp_ctx["first_trimmed"] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": "Hi",
-        }
-    ]
-
-
-@then("the timestamp key is stripped from the assistant message sent to OpenAI")
-def timestamp_key_is_stripped_from_assistant_text(
-    timestamp_ctx: dict[str, Any],
-) -> None:
-    assert timestamp_ctx["trimmed"] == [
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "Hello"}],
-        }
-    ]

@@ -1,8 +1,8 @@
 import asyncio
 import inspect
 import json
-from datetime import datetime
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
 
@@ -31,11 +31,9 @@ STRIPPED_MESSAGE_KEYS = {
     "response_id",
     "timestamp",
     "usage",
-    "timestamp",
     STANDALONE_COMPACTION_KEY,
 }
 IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
-DISPLAY_ONLY_CONTENT_KEY = "_faltoobot_display_only"
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -176,6 +174,7 @@ def _to_message_item(value: Any) -> MessageItem:
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
+    value = value.copy()
     value.setdefault(
         "timestamp", datetime.now().astimezone().isoformat(timespec="seconds")
     )
@@ -230,8 +229,6 @@ def trim_input(
             else item.keys() - STRIPPED_MESSAGE_KEYS
         )
         trimmed = {key: value for key, value in item.items() if key in kept_keys}
-        if item.get(DISPLAY_ONLY_CONTENT_KEY):
-            continue
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)

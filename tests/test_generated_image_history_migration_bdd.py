@@ -27,7 +27,7 @@ def migration_ctx(tmp_path: Path) -> dict[str, Any]:
         run_script=root / "run.sh",
         openai_api_key="",
         openai_oauth="",
-        openai_model="gpt-5.5",
+        openai_model="gpt-5.6-sol",
         openai_thinking="high",
         openai_fast=False,
         openai_transcription_model="gpt-4o-transcribe",
@@ -88,7 +88,7 @@ def saved_history_with_generated_image_developer_note(
                 "content": [
                     {
                         "type": "input_text",
-                        "text": "Generated images are saved locally at: .generated-images/cat.png",
+                        "text": "![Generated image](.generated-images/cat.png)",
                     }
                 ],
             },
@@ -102,7 +102,9 @@ def saved_history_with_generated_image_developer_note(
 @when("update migrations run")
 def update_migrations_run(migration_ctx: dict[str, Any]) -> None:
     config = cast(Config, migration_ctx["config"])
-    migration_ctx["changes"] = migrate.main(config)
+    migration_ctx["changes"] = migrate.main(
+        config, previous_version="7.4.1", current_version="7.5.0"
+    )
     messages_path = cast(Path, migration_ctx["messages_path"])
     migration_ctx["payload"] = json.loads(messages_path.read_text(encoding="utf-8"))
 
@@ -121,8 +123,8 @@ def generated_image_is_saved_in_workspace(migration_ctx: dict[str, Any]) -> None
     developer = migration_ctx["payload"]["messages"][2]
     text = developer["content"][0]["text"]
     image_path = cast(Path, migration_ctx["workspace"]) / text.removeprefix(
-        "Generated images are saved locally at: "
-    )
+        "![Generated image]("
+    ).removesuffix(")")
     assert image_path.read_bytes() == b"png-bytes"
 
 
@@ -133,7 +135,7 @@ def history_includes_developer_note_with_local_image_path(
     developer = migration_ctx["payload"]["messages"][2]
     assert developer["role"] == "developer"
     text = developer["content"][0]["text"]
-    assert text.startswith("Generated images are saved locally at: .generated-images/")
+    assert text.startswith("![Generated image](.generated-images/")
 
 
 @then("the update summary is empty")
@@ -144,3 +146,24 @@ def update_summary_is_empty(migration_ctx: dict[str, Any]) -> None:
 @then("the saved chat history is unchanged")
 def saved_chat_history_is_unchanged(migration_ctx: dict[str, Any]) -> None:
     assert migration_ctx["payload"] == migration_ctx["original_payload"]
+
+
+@when("update migrations run after the generated image release")
+def update_migrations_run_after_release(migration_ctx: dict[str, Any]) -> None:
+    config = cast(Config, migration_ctx["config"])
+    migration_ctx["changes"] = migrate.main(
+        config, previous_version="7.5.0", current_version="7.5.1"
+    )
+    messages_path = cast(Path, migration_ctx["messages_path"])
+    migration_ctx["payload"] = json.loads(messages_path.read_text(encoding="utf-8"))
+
+
+@then("the old generated image history is unchanged")
+def old_generated_image_history_is_unchanged(
+    migration_ctx: dict[str, Any],
+) -> None:
+    assert [item["type"] for item in migration_ctx["payload"]["messages"]] == [
+        "message",
+        "image_generation_call",
+    ]
+    assert not (cast(Path, migration_ctx["workspace"]) / ".generated-images").exists()

@@ -12,3 +12,9 @@ Feature: Generated image history migration
     When update migrations run
     Then the update summary is empty
     And the saved chat history is unchanged
+
+  Scenario: Old histories are not scanned after the migration release
+    Given a saved chat history with an old generated image call
+    When update migrations run after the generated image release
+    Then the update summary is empty
+    And the old generated image history is unchanged

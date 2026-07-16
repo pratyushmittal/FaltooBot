@@ -484,14 +484,12 @@ async def test_get_streaming_reply_uses_output_item_done_when_completed_output_e
         "call_id": "call_1",
         "name": "greet",
         "arguments": '{"name":"Faltoobot"}',
-        "timestamp": ANY,
     }
     assert cast(Any, items[4]).response.codex_output[0].to_dict() == {
         "type": "message",
         "id": "msg_2",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "Done."}],
-        "timestamp": ANY,
     }
     assert client.closed is True
 
@@ -1997,3 +1995,42 @@ async def test_get_streaming_reply_uses_oauth_websocket_url_and_headers(
             "open_timeout": 60.0,
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_websocket_closes_when_completed_history_is_invalidated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from faltoobot import websockets as websocket_utils
+
+    websocket = FakeWebSocket(
+        [
+            _websocket_completed_response("resp_warm"),
+            _websocket_completed_response("resp_image"),
+        ]
+    )
+    _patch_api_websocket(monkeypatch, websocket)
+    history: MessageHistory = [{"role": "user", "content": "draw"}]
+
+    async for event in sessions._get_streaming_reply(
+        config=_websocket_config(),
+        instructions="system prompt",
+        input=history,
+        tools=[],
+        prompt_cache_key="session-image",
+    ):
+        if event.type == "response.completed":
+            history.append(
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": "![Generated image](image.png)",
+                }
+            )
+            websocket_utils.invalidate_history("session-image", len(history))
+
+    session = websocket_utils.WEBSOCKET_SESSIONS["session-image"]
+    assert session.ws is None
+    assert session.previous_response_id is None
+    assert session.input_index == 0
+    assert session.close_after_turn is False
