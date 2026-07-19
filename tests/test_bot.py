@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import json
 import os
 from collections import defaultdict
@@ -19,6 +20,7 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
     ContextInfo,
     ExtendedTextMessage,
     ImageMessage,
+    InteractiveResponseMessage,
     Message,
     MessageAssociation,
     MessageContextInfo,
@@ -39,6 +41,20 @@ from faltoobot.whatsapp import app as whatsapp_app
 from faltoobot.whatsapp import audio, inspect, runtime
 from faltoobot.whatsapp.allowlist import matches_allowed_chats
 from faltoobot.whatsapp.runtime import keep_chat_typing, source_chat_ids
+
+
+def test_neonize_send_response_preserves_nul_bytes() -> None:
+    from neonize._binder import Bytes
+
+    response = Neonize_pb2.SendMessageReturnFunction(Error="")
+    response.SendResponse.SetInParent()
+    payload = response.SerializePartialToString()
+    raw = ctypes.create_string_buffer(payload)
+    buffer = Bytes(ctypes.cast(raw, ctypes.c_char_p), len(payload))
+
+    assert (
+        Neonize_pb2.SendMessageReturnFunction.FromString(buffer.get_bytes()) == response
+    )
 
 
 def make_config(
@@ -298,7 +314,9 @@ class FakePresenceClient:
         self.calls: list[tuple[str, str]] = []
         self.replies: list[str] = []
         self.reply_ids: list[str] = []
+        self.reply_mentions_are_lids: list[bool] = []
         self.sent_messages: list[str] = []
+        self.sent_interactive_messages: list[Message] = []
         self.sent_message_chats: list[str] = []
         self.sent_images: list[dict[str, object | None]] = []
         self.sent_documents: list[dict[str, object | None]] = []
@@ -332,15 +350,42 @@ class FakePresenceClient:
         self.calls.append((state.name, media.name))
         return "ok"
 
-    async def reply_message(self, text: str, event: object) -> str:
+    async def reply_message(
+        self,
+        text: str,
+        event: object,
+        *,
+        mentions_are_lids: bool = False,
+        **_: object,
+    ) -> str:
         self.replies.append(text)
         self.reply_ids.append(str(getattr(getattr(event, "Info", None), "ID", "")))
+        self.reply_mentions_are_lids.append(mentions_are_lids)
         return "ok"
 
-    async def send_message(self, chat: Neonize_pb2.JID, text: str) -> str:
+    async def send_message(self, chat: Neonize_pb2.JID, text: str, **_: object) -> str:
         self.sent_message_chats.append(Jid2String(chat))
         self.sent_messages.append(text)
         return "ok"
+
+    async def send_interactive_message(
+        self, chat: Neonize_pb2.JID, message: Any
+    ) -> str:
+        self.sent_message_chats.append(Jid2String(chat))
+        self.sent_interactive_messages.append(await message.prepare_asend(self))
+        return "ok"
+
+    async def build_reply_message(
+        self, message: str, quoted: MessageEv, **_: object
+    ) -> Message:
+        return Message(
+            extendedTextMessage=ExtendedTextMessage(
+                contextInfo=ContextInfo(
+                    stanzaID=quoted.Info.ID,
+                    quotedMessage=quoted.Message,
+                )
+            )
+        )
 
     async def send_image(
         self,
@@ -1003,23 +1048,25 @@ async def test_unapproved_group_mention_requests_owner_approval(
 
     assert turn is None
     assert client.sent_message_chats == ["15555550123@s.whatsapp.net"]
-    assert client.sent_messages == [
-        "\n".join(
-            [
-                "Group approval requested",
-                "",
-                "Group: Engineering",
-                "JID: 120363000000000000@g.us",
-                "Requested by: 15555555555555",
-                "Requester JID: 15555555555555@lid",
-                "",
-                "Message: @faltoo please join",
-                "",
-                "Reply with:",
-                "/approve_group 120363000000000000@g.us",
-                "/deny_group 120363000000000000@g.us",
-            ]
-        )
+    assert client.sent_messages == []
+    interactive = client.sent_interactive_messages[0].interactiveMessage
+    assert interactive.header.title == "Group approval requested"
+    assert interactive.body.text == "\n".join(
+        [
+            "Group: Engineering",
+            "JID: 120363000000000000@g.us",
+            "Requested by: 15555555555555",
+            "Requester JID: 15555555555555@lid",
+            "",
+            "Message: @faltoo please join",
+        ]
+    )
+    assert [
+        json.loads(button.buttonParamsJSON)["id"]
+        for button in interactive.nativeFlowMessage.buttons
+    ] == [
+        "/approve_group 120363000000000000@g.us",
+        "/deny_group 120363000000000000@g.us",
     ]
 
 
@@ -1056,7 +1103,7 @@ async def test_unapproved_group_approval_request_is_deduped(
         session=session,
     )
 
-    assert len(client.sent_messages) == 1
+    assert len(client.sent_interactive_messages) == 1
 
 
 @pytest.mark.anyio
@@ -2671,6 +2718,136 @@ async def test_send_text_sends_local_media_markdown(
         {**item, "file": str(media)}
         for item in cast(list[dict[str, object | None]], case["sent_documents"])
     ]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        (
+            {"id": "/approve_group 120363000000000000@g.us"},
+            "/approve_group 120363000000000000@g.us",
+        ),
+        ({"selected_id": "one"}, "Approve"),
+    ],
+)
+def test_message_text_reads_interactive_reply(
+    params: dict[str, str], expected: str
+) -> None:
+    message = Message(
+        interactiveResponseMessage=InteractiveResponseMessage(
+            body=InteractiveResponseMessage.Body(text="Approve"),
+            nativeFlowResponseMessage=InteractiveResponseMessage.NativeFlowResponseMessage(
+                name="quick_reply",
+                paramsJSON=json.dumps(params),
+            ),
+        )
+    )
+
+    assert runtime._message_text(message) == expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("server", "expected"),
+    [("g.us", True), ("s.whatsapp.net", False)],
+)
+async def test_send_text_uses_lid_mentions_for_groups(
+    tmp_path: Path, server: str, expected: bool
+) -> None:
+    client = FakePresenceClient()
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", server),
+        text="@15555555555555 hello",
+        event=fake_event(),
+        workspace=tmp_path,
+    )
+
+    assert client.reply_mentions_are_lids == [expected]
+
+
+@pytest.mark.anyio
+async def test_send_text_renders_text_and_table_as_whatsapp_rich_message(
+    tmp_path: Path,
+) -> None:
+    client = FakePresenceClient()
+    event = fake_event()
+    image = tmp_path / "chart.png"
+    image.write_bytes(png_bytes())
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=(
+            "Current status:\n\n"
+            "| Name | Status |\n"
+            "| --- | --- |\n"
+            "| | Ready |\n"
+            "| Faltoobot | Running |\n\n"
+            "Everything is operating normally.\n\n"
+            "![Chart](chart.png)"
+        ),
+        event=event,
+        workspace=tmp_path,
+    )
+
+    sent = client.sent_interactive_messages[0]
+    rich_response = sent.botForwardedMessage.message.richResponseMessage
+    assert rich_response.submessages[0].messageText == "Current status:"
+    table = rich_response.submessages[1].tableMetadata
+    assert [list(row.items) for row in table.rows] == [
+        ["Name", "Status"],
+        ["", "Ready"],
+        ["Faltoobot", "Running"],
+    ]
+    assert rich_response.submessages[2].messageText == (
+        "Everything is operating normally."
+    )
+    assert rich_response.contextInfo.stanzaID == event.Info.ID
+    assert client.sent_messages == []
+    assert client.sent_images == [
+        {"file": str(image), "caption": "Chart", "quoted": None}
+    ]
+
+
+@pytest.mark.anyio
+async def test_send_text_keeps_malformed_markdown_table_as_text(
+    tmp_path: Path,
+) -> None:
+    client = FakePresenceClient()
+    text = "| Name | Status |\n| Faltoobot | Ready |"
+
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=text,
+        workspace=tmp_path,
+    )
+
+    assert client.sent_interactive_messages == []
+    assert client.sent_messages == [text]
+
+
+@pytest.mark.anyio
+async def test_send_text_propagates_rich_table_send_failures(tmp_path: Path) -> None:
+    class FailingRichClient(FakePresenceClient):
+        async def send_interactive_message(
+            self, chat: Neonize_pb2.JID, message: Any
+        ) -> str:
+            raise RuntimeError("send failed")
+
+    client = FailingRichClient()
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        await runtime.send_text(
+            cast(NewAClient, client),
+            chat=build_jid("123", "s.whatsapp.net"),
+            text="| Name | Status |\n| --- | --- |\n| Faltoobot | Ready |",
+            workspace=tmp_path,
+        )
+
+    assert client.sent_messages == []
 
 
 @pytest.mark.anyio

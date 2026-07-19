@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, TypedDict, cast
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
+from faltoobot.websockets import invalidate_history as invalidate_websocket_history
 from faltoobot.websockets import prewarm as websocket_prewarm
 from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
@@ -372,38 +374,50 @@ def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
     return ""
 
 
-def _generated_image_markdown(
-    output: list[ResponseOutputItem], workspace: Path
-) -> list[str]:
+def save_generated_image(result: str, workspace: Path) -> str:
     images_dir = workspace / GENERATED_IMAGES_DIR
-    lines: list[str] = []
-
-    for item in output:
-        if not isinstance(item, ImageGenerationCall):
-            continue
-        result = item.result
-        if not isinstance(result, str):
-            continue
-
-        images_dir.mkdir(parents=True, exist_ok=True)
-        path = images_dir / f"{uuid4().hex}.png"
-        path.write_bytes(base64.b64decode(result))
-        lines.append(f"![Generated image]({path.relative_to(workspace).as_posix()})")
-
-    return lines
+    images_dir.mkdir(parents=True, exist_ok=True)
+    path = images_dir / f"{uuid4().hex}.png"
+    path.write_bytes(base64.b64decode(result))
+    return path.relative_to(workspace).as_posix()
 
 
-def _assistant_text_from_completed_event(
-    event: ResponseCompletedEvent, *, workspace: Path
+def generated_image_developer_message(path: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "developer",
+        "content": [
+            {
+                "type": "input_text",
+                "text": f"![Generated image]({path})",
+            }
+        ],
+    }
+
+
+def _append_generated_image_messages(
+    messages: MessageHistory, output: list[ResponseOutputItem], workspace: Path
 ) -> str:
-    response = event.response
-    output = cast(
-        list[ResponseOutputItem],
-        response.output or getattr(response, "codex_output", []),
-    )
-    parts = [_output_text(response, output)]
-    parts.extend(_generated_image_markdown(output, workspace))
-    return "\n\n".join(part for part in parts if part).strip()
+    # Completed output has already been appended as the current history suffix.
+    output_start = len(messages) - len(output)
+    images = [
+        (output_start + offset, item, item.result)
+        for offset, item in enumerate(output)
+        if isinstance(item, ImageGenerationCall) and isinstance(item.result, str)
+    ]
+    for index, item, _ in images:
+        if not 0 <= index < len(messages) or messages[index].get("id") != item.id:
+            # A transport ordering bug must fail instead of corrupting saved history.
+            raise ValueError("Generated image output is not in the history suffix")
+
+    saved = [
+        (index, save_generated_image(result, workspace)) for index, _, result in images
+    ]
+    # Insert backwards so earlier indexes remain valid.
+    for index, path in reversed(saved):
+        messages.insert(index + 1, generated_image_developer_message(path))
+
+    return "".join(f"\n\n![Generated image]({path})" for _, path in saved)
 
 
 async def append_user_turn(
@@ -447,6 +461,7 @@ async def append_user_turn(
             "type": "message",
             "role": "user",
             "content": content,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     )
     messages_json["message_ids"].extend(fresh_message_ids)
@@ -528,9 +543,34 @@ async def get_answer_streaming(
         tools=tools,
         prompt_cache_key=messages_json["id"],
     ):
+        image_markdown = ""
+        if event.type == "response.completed":
+            completed = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                completed.response.output
+                or getattr(completed.response, "codex_output", []),
+            )
+            image_markdown = _append_generated_image_messages(
+                messages_json["messages"], output, workspace
+            )
+            if image_markdown and getattr(config, "openai_websocket", False):
+                # Middle insertions invalidate the websocket's cached history prefix.
+                invalidate_websocket_history(
+                    messages_json["id"], len(messages_json["messages"])
+                )
+
         if event.type in {"function_call_output", "response.completed"}:
             prune_auto_compacted_history(messages_json["messages"])
             set_messages(session, messages_json)
+        if image_markdown:
+            yield cast(
+                StreamingReplyItem,
+                SimpleNamespace(
+                    type="faltoobot.generated_image",
+                    delta=image_markdown,
+                ),
+            )
         yield event
     logger.info("Finished answer stream")
 
@@ -557,12 +597,18 @@ async def prewarm_openai_websocket(session: Session) -> None:
 
 
 async def get_answer(session: Session) -> str:
+    # Completion text arrives after generated-image events.
     answer = ""
+    generated_images = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
-            messages_json = get_messages(session)
-            answer = _assistant_text_from_completed_event(
-                cast(ResponseCompletedEvent, event),
-                workspace=Path(messages_json["workspace"]),
+            completed = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                completed.response.output
+                or getattr(completed.response, "codex_output", []),
             )
-    return answer
+            answer = _output_text(completed.response, output)
+        elif event.type == "faltoobot.generated_image":
+            generated_images += str(getattr(event, "delta", ""))
+    return f"{answer}{generated_images}".strip()

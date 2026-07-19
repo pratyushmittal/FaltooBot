@@ -126,3 +126,22 @@ def test_slash_command_store_uses_cache_until_prompt_files_change(
     )
     assert list(store.commands()) == ["/fix-tests", "/summarize"]
     assert load_calls == third_load
+
+
+def test_slash_command_store_get_prompt_message_renders_args(tmp_path: Path) -> None:
+    _root, prompts_dir = make_prompt_root(tmp_path)
+    (prompts_dir / "switch.md").write_text(
+        "Switch to $1 and compare with $2. Args: $*. Missing: $3.\n",
+        encoding="utf-8",
+    )
+
+    store = SlashCommandStore(prompts_dir=prompts_dir)
+
+    assert store.get_prompt_message("/switch", 'feature/foo "main branch"') == (
+        "Switch to feature/foo and compare with main branch. "
+        "Args: feature/foo main branch. Missing: $3.\n"
+    )
+    assert store.get_prompt_message("/switch", "") == (
+        "Switch to $1 and compare with $2. Args: $*. Missing: $3.\n"
+    )
+    assert store.get_prompt_message("/missing", "feature/foo") is None

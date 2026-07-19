@@ -23,6 +23,10 @@ Use this when you want to make the bot work.
 
 Shows logs in follow mode.
 
+### `faltoobot whatsapp-login`
+
+Reruns WhatsApp linking. Use it to scan the Link Device QR code again.
+
 ### `faltoobot codex-login`
 
 Signs in with Codex / ChatGPT OAuth and saves the auth file path in `~/.faltoobot/config.toml`.
@@ -72,6 +76,10 @@ faltoochat
 faltoochat --workspace=./repo
 faltoochat --new-session
 ```
+
+### Custom slash commands
+
+`faltoochat` loads custom slash commands from `~/.faltoobot/prompts/*.md`. For example, `~/.faltoobot/prompts/switch.md` is available as `/switch`. Arguments are substituted as `$1`, `$2`, and `$*`, so `/switch somebranch` can expand `$1` to `somebranch`.
 
 ### One-shot mode
 

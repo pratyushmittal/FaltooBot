@@ -3,6 +3,7 @@ import inspect
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
 
@@ -30,12 +31,14 @@ STANDALONE_COMPACTION_KEY = "_standalone_compaction"
 REQUEST_MAX_RETRIES = 4
 STREAM_IDLE_TIMEOUT_SECONDS = 300
 STRIPPED_MESSAGE_KEYS = {
+    "created_at",
     "parsed_arguments",
     "response_id",
+    "timestamp",
     "usage",
     STANDALONE_COMPACTION_KEY,
 }
-UNREPLAYABLE_RESPONSE_ITEM_TYPES = {"image_generation_call"}
+IMAGE_GENERATION_REPLAY_KEYS = {"id", "result", "status", "type"}
 
 ToolOutput: TypeAlias = (
     str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -177,6 +180,10 @@ def _to_message_item(value: Any) -> MessageItem:
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
+    value = value.copy()
+    value.setdefault(
+        "timestamp", datetime.now().astimezone().isoformat(timespec="seconds")
+    )
     return value
 
 
@@ -206,10 +213,6 @@ def _has_oversized_encrypted_content(item: MessageItem) -> bool:
 
 
 def _trim_history_item(item: MessageItem) -> MessageItem | None:
-    if item.get("type") in UNREPLAYABLE_RESPONSE_ITEM_TYPES:
-        # comment: store=false response items cannot be sent back as input.
-        return None
-
     if _has_oversized_encrypted_content(item):
         item_type = item.get("type")
         logger.warning(
@@ -223,10 +226,15 @@ def _trim_history_item(item: MessageItem) -> MessageItem | None:
             # session; dropping it preserves newer visible turns and lets the chat heal.
             return None
 
+    kept_keys = (
+        IMAGE_GENERATION_REPLAY_KEYS
+        if item.get("type") == "image_generation_call"
+        else item.keys() - STRIPPED_MESSAGE_KEYS
+    )
     return {
         key: value
         for key, value in item.items()
-        if key not in STRIPPED_MESSAGE_KEYS
+        if key in kept_keys
         and not (
             key == "encrypted_content"
             and isinstance(value, str)
@@ -285,6 +293,7 @@ def trim_input(
         trimmed = _trim_history_item(item)
         if trimmed is None:
             continue
+
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)
