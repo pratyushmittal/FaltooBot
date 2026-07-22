@@ -601,7 +601,15 @@ def run_doctor_command(config: Config | None = None) -> tuple[list[str], list[st
     else:
         console.print("[dim]Doctor healers: no changes.[/]")
 
-    from faltoobot.doctor import inspect_cron_health
+    from faltoobot.doctor import (
+        format_session_health_summary,
+        inspect_cron_health,
+        summarize_session_health,
+    )
+
+    console.print("[cyan]Session health:[/]")
+    for line in format_session_health_summary(summarize_session_health(config)):
+        console.print(f"- {line}")
 
     issues = [issue.render() for issue in inspect_cron_health(config)]
     if issues:

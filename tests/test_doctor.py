@@ -251,6 +251,16 @@ def test_summarize_session_health_counts_large_incomplete_and_unreadable(
     corrupt.parent.mkdir(parents=True)
     corrupt.write_text("{not-json\n", encoding="utf-8")
 
+    workspace_artifact = (
+        sessions_root / "code@test" / "complete" / "workspace" / "artifact.bin"
+    )
+    workspace_artifact.parent.mkdir(parents=True)
+    workspace_artifact.write_bytes(b"artifact")
+
+    archive = config.root / "sessions.tar.gz"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"backup")
+
     expected_histories = 4
     summary = doctor.summarize_session_health(config, large_history_bytes=250)
 
@@ -260,11 +270,17 @@ def test_summarize_session_health_counts_large_incomplete_and_unreadable(
     assert summary.unreadable_histories == 1
     assert summary.total_bytes >= complete.stat().st_size + incomplete.stat().st_size
     assert summary.largest_bytes == large.stat().st_size
+    assert summary.session_tree_bytes >= summary.total_bytes
+    assert summary.workspace_bytes == len(b"artifact")
+    assert summary.archive_bytes == len(b"backup")
     assert summary.has_issues is True
 
     assert doctor.format_session_health_summary(summary) == [
         f"doctor:session-histories={expected_histories}",
         f"doctor:session-history-bytes={summary.total_bytes}",
+        f"doctor:session-tree-bytes={summary.session_tree_bytes}",
+        f"doctor:session-workspace-bytes={len(b'artifact')}",
+        f"doctor:session-archive-bytes={len(b'backup')}",
         "doctor:large-session-histories=1",
         "doctor:incomplete-session-histories=1",
         "doctor:unreadable-session-histories=1",

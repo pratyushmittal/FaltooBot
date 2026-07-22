@@ -267,6 +267,9 @@ class SessionHealthSummary:
     large_histories: int = 0
     incomplete_histories: int = 0
     unreadable_histories: int = 0
+    session_tree_bytes: int = 0
+    workspace_bytes: int = 0
+    archive_bytes: int = 0
 
     @property
     def has_issues(self) -> bool:
@@ -427,6 +430,25 @@ def _history_is_incomplete(messages: MessageHistory) -> bool:
     return True
 
 
+def _storage_bytes(root: Path, *, workspace_only: bool = False) -> int:
+    """Return aggregate file bytes without following symlinked directories."""
+    total = 0
+    if not root.exists():
+        return total
+    for current_root, _dir_names, file_names in os.walk(root, followlinks=False):
+        current = Path(current_root)
+        if workspace_only and "workspace" not in current.relative_to(root).parts:
+            continue
+        for name in file_names:
+            path = current / name
+            try:
+                if not path.is_symlink():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
 def summarize_session_health(
     config: Config,
     *,
@@ -468,6 +490,12 @@ def summarize_session_health(
         if _history_is_incomplete(cast(MessageHistory, messages)):
             incomplete_histories += 1
 
+    archive = config.root / "sessions.tar.gz"
+    try:
+        archive_bytes = archive.stat().st_size
+    except OSError:
+        archive_bytes = 0
+
     return SessionHealthSummary(
         histories=histories,
         total_bytes=total_bytes,
@@ -475,6 +503,9 @@ def summarize_session_health(
         large_histories=large_histories,
         incomplete_histories=incomplete_histories,
         unreadable_histories=unreadable_histories,
+        session_tree_bytes=_storage_bytes(sessions_dir),
+        workspace_bytes=_storage_bytes(sessions_dir, workspace_only=True),
+        archive_bytes=archive_bytes,
     )
 
 
@@ -483,7 +514,11 @@ def format_session_health_summary(summary: SessionHealthSummary) -> list[str]:
     lines = [
         f"doctor:session-histories={summary.histories}",
         f"doctor:session-history-bytes={summary.total_bytes}",
+        f"doctor:session-tree-bytes={summary.session_tree_bytes}",
+        f"doctor:session-workspace-bytes={summary.workspace_bytes}",
     ]
+    if summary.archive_bytes:
+        lines.append(f"doctor:session-archive-bytes={summary.archive_bytes}")
     if summary.large_histories:
         lines.append(f"doctor:large-session-histories={summary.large_histories}")
     if summary.incomplete_histories:
