@@ -258,6 +258,7 @@ def inspect_cron_health(
 
 
 LARGE_SESSION_HISTORY_BYTES = 25 * 1024 * 1024
+LARGE_SESSION_HISTORY_MESSAGES = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +266,9 @@ class SessionHealthSummary:
     histories: int = 0
     total_bytes: int = 0
     largest_bytes: int = 0
+    largest_messages: int = 0
     large_histories: int = 0
+    long_histories: int = 0
     incomplete_histories: int = 0
     unreadable_histories: int = 0
     session_tree_bytes: int = 0
@@ -276,6 +279,7 @@ class SessionHealthSummary:
     def has_issues(self) -> bool:
         return (
             self.large_histories > 0
+            or self.long_histories > 0
             or self.incomplete_histories > 0
             or self.unreadable_histories > 0
         )
@@ -395,6 +399,7 @@ def summarize_session_health(
     config: Config,
     *,
     large_history_bytes: int = LARGE_SESSION_HISTORY_BYTES,
+    large_history_messages: int = LARGE_SESSION_HISTORY_MESSAGES,
 ) -> SessionHealthSummary:
     """Return privacy-safe aggregate health counters for saved sessions."""
     sessions_dir = config.sessions_dir
@@ -404,7 +409,9 @@ def summarize_session_health(
     histories = 0
     total_bytes = 0
     largest_bytes = 0
+    largest_messages = 0
     large_histories = 0
+    long_histories = 0
     incomplete_histories = 0
     unreadable_histories = 0
 
@@ -429,6 +436,10 @@ def summarize_session_health(
         if not isinstance(messages, list):
             unreadable_histories += 1
             continue
+        message_count = len(messages)
+        largest_messages = max(largest_messages, message_count)
+        if message_count >= large_history_messages:
+            long_histories += 1
         if _history_is_incomplete(cast(MessageHistory, messages)):
             incomplete_histories += 1
 
@@ -442,7 +453,9 @@ def summarize_session_health(
         histories=histories,
         total_bytes=total_bytes,
         largest_bytes=largest_bytes,
+        largest_messages=largest_messages,
         large_histories=large_histories,
+        long_histories=long_histories,
         incomplete_histories=incomplete_histories,
         unreadable_histories=unreadable_histories,
         session_tree_bytes=_storage_bytes(sessions_dir),
@@ -456,6 +469,7 @@ def format_session_health_summary(summary: SessionHealthSummary) -> list[str]:
     lines = [
         f"doctor:session-histories={summary.histories}",
         f"doctor:session-history-bytes={summary.total_bytes}",
+        f"doctor:largest-session-messages={summary.largest_messages}",
         f"doctor:session-tree-bytes={summary.session_tree_bytes}",
         f"doctor:session-workspace-bytes={summary.workspace_bytes}",
     ]
@@ -463,6 +477,8 @@ def format_session_health_summary(summary: SessionHealthSummary) -> list[str]:
         lines.append(f"doctor:session-archive-bytes={summary.archive_bytes}")
     if summary.large_histories:
         lines.append(f"doctor:large-session-histories={summary.large_histories}")
+    if summary.long_histories:
+        lines.append(f"doctor:long-session-histories={summary.long_histories}")
     if summary.incomplete_histories:
         lines.append(
             f"doctor:incomplete-session-histories={summary.incomplete_histories}"
