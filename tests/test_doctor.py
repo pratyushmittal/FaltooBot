@@ -262,10 +262,17 @@ def test_summarize_session_health_counts_large_incomplete_and_unreadable(
     archive.write_bytes(b"backup")
 
     expected_histories = 4
-    summary = doctor.summarize_session_health(config, large_history_bytes=250)
+    expected_largest_messages = 3
+    summary = doctor.summarize_session_health(
+        config,
+        large_history_bytes=250,
+        large_history_messages=expected_largest_messages,
+    )
 
     assert summary.histories == expected_histories
     assert summary.large_histories == 1
+    assert summary.long_histories == 1
+    assert summary.largest_messages == expected_largest_messages
     assert summary.incomplete_histories == 1
     assert summary.unreadable_histories == 1
     assert summary.total_bytes >= complete.stat().st_size + incomplete.stat().st_size
@@ -278,10 +285,12 @@ def test_summarize_session_health_counts_large_incomplete_and_unreadable(
     assert doctor.format_session_health_summary(summary) == [
         f"doctor:session-histories={expected_histories}",
         f"doctor:session-history-bytes={summary.total_bytes}",
+        f"doctor:largest-session-messages={expected_largest_messages}",
         f"doctor:session-tree-bytes={summary.session_tree_bytes}",
         f"doctor:session-workspace-bytes={len(b'artifact')}",
         f"doctor:session-archive-bytes={len(b'backup')}",
         "doctor:large-session-histories=1",
+        "doctor:long-session-histories=1",
         "doctor:incomplete-session-histories=1",
         "doctor:unreadable-session-histories=1",
     ]
