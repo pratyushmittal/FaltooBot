@@ -22,7 +22,7 @@ Cron jobs often outlive the shell/session that created them. Before installing a
 - Avoid `PYTHON_BIN="$BASE_DIR/.venv/bin/python"` unless the script also creates/repairs that venv. Prefer `python3` plus standard-library code, or `uv run --with <deps> python script.py` for extra packages.
 - Use absolute `cd /stable/workdir && ...` in crontab, `flock` to prevent overlap, and `/usr/bin/timeout` for network/browser jobs.
 - Write recent stderr/stdout to a log under the workspace; include clear one-line setup failures such as missing command, missing interpreter, or browser startup failure.
-- After adding or changing cron, run `faltoobot doctor` to catch missing workdirs, missing scripts, broken local venv paths, stale `/home/<user>/` references, and recurring recent cron-log errors.
+- After adding or changing cron, run `faltoobot doctor --check` to catch missing workdirs, missing scripts, broken local venv paths, stale `/home/<user>/` references, and recurring recent cron-log errors.
 
 ## AI Cron / Sub-Agent Tasks
 
