@@ -590,14 +590,30 @@ def test_ensure_crontab_path_skips_when_already_present(monkeypatch) -> None:
 
 def test_handle_doctor_command_runs_doctor_command(monkeypatch, tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    calls: list[Config] = []
+    calls: list[tuple[Config, bool]] = []
     monkeypatch.setattr(
-        cli, "run_doctor_command", lambda cfg: calls.append(cfg) or ([], [])
+        cli,
+        "run_doctor_command",
+        lambda cfg, *, heal: calls.append((cfg, heal)) or ([], []),
     )
 
-    cli.handle_command(argparse.Namespace(command="doctor"), config)
+    cli.handle_command(argparse.Namespace(command="doctor", check=False), config)
 
-    assert calls == [config]
+    assert calls == [(config, True)]
+
+
+def test_handle_doctor_check_is_read_only(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    calls: list[tuple[Config, bool]] = []
+    monkeypatch.setattr(
+        cli,
+        "run_doctor_command",
+        lambda cfg, *, heal: calls.append((cfg, heal)) or ([], []),
+    )
+
+    cli.handle_command(argparse.Namespace(command="doctor", check=True), config)
+
+    assert calls == [(config, False)]
 
 
 def test_run_doctor_command_prints_cron_warnings(monkeypatch, tmp_path: Path) -> None:
@@ -618,3 +634,23 @@ def test_run_doctor_command_prints_cron_warnings(monkeypatch, tmp_path: Path) ->
     )
 
     assert cli.run_doctor_command(config) == (["doctor:ok"], ["cron: warning"])
+
+
+def test_run_doctor_check_skips_history_healers(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "run_doctor",
+        lambda cfg: (_ for _ in ()).throw(AssertionError("should not heal")),
+    )
+
+    import faltoobot.doctor as doctor_module
+
+    monkeypatch.setattr(doctor_module, "inspect_cron_health", lambda cfg: [])
+    monkeypatch.setattr(
+        doctor_module,
+        "summarize_session_health",
+        lambda cfg: doctor_module.SessionHealthSummary(),
+    )
+
+    assert cli.run_doctor_command(config, heal=False) == ([], [])

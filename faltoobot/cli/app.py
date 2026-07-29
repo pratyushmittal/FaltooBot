@@ -624,11 +624,16 @@ def run_hand_off_command(args: argparse.Namespace) -> None:
         "Stop the WhatsApp service first if it is running: `faltoobot whatsapp` restarts it."
     )
     asyncio.run(_hand_off_chats(args))
-def run_doctor_command(config: Config | None = None) -> tuple[list[str], list[str]]:
-    """Run self-healing checks and print cron health diagnostics."""
+
+def run_doctor_command(
+    config: Config | None = None, *, heal: bool = True
+) -> tuple[list[str], list[str]]:
+    """Run health diagnostics, optionally applying the existing history healers."""
     config = config or build_config()
-    changes = run_doctor(config)
-    if changes:
+    changes = run_doctor(config) if heal else []
+    if not heal:
+        console.print("[dim]Doctor check mode: no changes will be made.[/]")
+    elif changes:
         console.print(f"[green]Doctor healed:[/] {', '.join(changes)}")
     else:
         console.print("[dim]Doctor healers: no changes.[/]")
@@ -713,11 +718,20 @@ def parse_args() -> argparse.Namespace:
     hand_off.add_argument(
         "--no-verify", action="store_true", help="skip the new backend's recap turn"
     )
-    sub.add_parser("doctor", help="run self-healing checks and cron health diagnostics")
+    doctor = sub.add_parser(
+        "doctor", help="run self-healing checks and cron health diagnostics"
+    )
+    doctor.add_argument(
+        "--check",
+        action="store_true",
+        help="report health without modifying session histories",
+    )
     return parser.parse_args()
 
 
-def handle_command(args: argparse.Namespace, config: Config | None = None) -> None:
+def handle_command(  # noqa: C901 - explicit CLI dispatch stays readable.
+    args: argparse.Namespace, config: Config | None = None
+) -> None:
     # comment: the public `whatsapp` command manages updates, service install/start, and log
     # following. The OS service itself needs a separate hidden entrypoint that only runs the bot.
     if args.command == SERVICE_COMMAND:
@@ -739,7 +753,7 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
     elif args.command == "hand-off":
         run_hand_off_command(args)
     elif args.command == "doctor":
-        run_doctor_command(config)
+        run_doctor_command(config, heal=not getattr(args, "check", False))
     else:
         # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
         raise SystemExit(f"unknown command: {args.command}")
