@@ -738,6 +738,57 @@ async def test_get_streaming_reply_keeps_standalone_compaction_window(
     ]
 
 
+def test_trim_input_heals_oversized_encrypted_history_items() -> None:
+    oversized = "x" * (gpt_utils.ENCRYPTED_CONTENT_MAX_CHARS + 1)
+    items = cast(
+        MessageHistory,
+        [
+            {"type": "message", "role": "user", "content": "retained"},
+            {
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [{"type": "summary_text", "text": "summary"}],
+                "encrypted_content": oversized,
+            },
+            {
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": oversized,
+                gpt_utils.STANDALONE_COMPACTION_KEY: True,
+            },
+            {"type": "message", "role": "assistant", "content": "answer"},
+        ],
+    )
+
+    assert gpt_utils.trim_input(items) == [
+        {"type": "message", "role": "user", "content": "retained"},
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "summary"}],
+        },
+        {"type": "message", "role": "assistant", "content": "answer"},
+    ]
+
+
+def test_trim_input_keeps_encrypted_content_at_api_limit() -> None:
+    encrypted_content = "x" * gpt_utils.ENCRYPTED_CONTENT_MAX_CHARS
+
+    assert (
+        gpt_utils.trim_input(
+            [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [],
+                    "encrypted_content": encrypted_content,
+                }
+            ]
+        )[0]["encrypted_content"]
+        == encrypted_content
+    )
+
+
 @pytest.mark.anyio
 async def test_run_tool_keeps_event_loop_responsive_for_sync_tools() -> None:
     started = threading.Event()

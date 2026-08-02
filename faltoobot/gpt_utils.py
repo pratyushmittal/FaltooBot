@@ -22,6 +22,7 @@ from faltoobot.config import Config
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 200_000
+ENCRYPTED_CONTENT_MAX_CHARS = 10_485_760
 STANDALONE_COMPACTION_KEY = "_standalone_compaction"
 REQUEST_MAX_RETRIES = 4
 STREAM_IDLE_TIMEOUT_SECONDS = 300
@@ -229,6 +230,17 @@ def trim_input(
             else item.keys() - STRIPPED_MESSAGE_KEYS
         )
         trimmed = {key: value for key, value in item.items() if key in kept_keys}
+        encrypted_content = trimmed.get("encrypted_content")
+        if (
+            isinstance(encrypted_content, str)
+            and len(encrypted_content) > ENCRYPTED_CONTENT_MAX_CHARS
+        ):
+            if trimmed.get("type") == "compaction":
+                # comment: compaction input requires encrypted_content, so fall back to the
+                # surrounding replay window instead of sending an invalid oversized item.
+                continue
+            # comment: reasoning summaries remain valid input without encrypted_content.
+            trimmed.pop("encrypted_content")
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)
