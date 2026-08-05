@@ -320,6 +320,7 @@ class FakePresenceClient:
         self.sent_message_chats: list[str] = []
         self.sent_images: list[dict[str, object | None]] = []
         self.sent_documents: list[dict[str, object | None]] = []
+        self.sent_audios: list[dict[str, object | None]] = []
         self.downloads = 0
         self.get_me_calls = 0
 
@@ -419,6 +420,17 @@ class FakePresenceClient:
                 "quoted": quoted,
             }
         )
+        return "ok"
+
+    async def send_audio(
+        self,
+        chat: Neonize_pb2.JID,
+        file: str | bytes,
+        ptt: bool = False,
+        quoted: object | None = None,
+        **_: object,
+    ) -> str:
+        self.sent_audios.append({"file": file, "ptt": ptt, "quoted": quoted})
         return "ok"
 
     async def download_any(self, message: Message, path: str | None = None) -> bytes:
@@ -1283,6 +1295,118 @@ async def test_process_message_transcribes_voice_notes(
 
 
 @pytest.mark.anyio
+async def test_opted_in_child_voice_reply_is_sent_as_ptt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
+    config.openai_api_key = "test-key"
+    config.voice_reply_chats = {"15555555555555@lid"}
+    client = FakePresenceClient()
+    prompts: list[str] = []
+
+    async def fake_transcribe_audio(*args: object, **kwargs: object) -> str:
+        return "Faltoo uncle, ek chhoti si kahani sunao"
+
+    async def fake_get_answer(session, **_: object) -> str:
+        prompts.append(str(get_messages(session)["messages"][-1]["content"]))
+        return "[[voice_reply]]\nBilkul! Ek chhota sa sher jungle mein rehta tha."
+
+    async def fake_synthesize(text: str, *, openai_api_key: str) -> bytes:
+        assert text == "Bilkul! Ek chhota sa sher jungle mein rehta tha."
+        assert openai_api_key == "test-key"
+        return b"opus-audio"
+
+    monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    monkeypatch.setattr(runtime, "synthesize_speech", fake_synthesize)
+
+    event = fake_event(audio_seconds=4)
+    await handle_message(
+        cast(NewAClient, client),
+        event,
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert runtime.VOICE_REPLY_GUIDANCE in prompts[0]
+    assert client.replies == []
+    assert client.sent_messages == [runtime.VOICE_REPLY_DISCLOSURE]
+    assert client.sent_audios == [
+        {"file": b"opus-audio", "ptt": True, "quoted": event.Message}
+    ]
+    disclosure_data = json.loads(
+        (config.root / "tts-disclosures.json").read_text(encoding="utf-8")
+    )
+    assert disclosure_data == [runtime._chat_token(event.Info.MessageSource.Chat)]
+
+
+@pytest.mark.anyio
+async def test_voice_reply_tts_failure_falls_back_to_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
+    config.openai_api_key = "test-key"
+    config.voice_reply_chats = {"15555555555555@lid"}
+    client = FakePresenceClient()
+
+    async def fake_transcribe_audio(*args: object, **kwargs: object) -> str:
+        return "Mujhe rainbow ke baare mein batao"
+
+    async def fake_get_answer(*args: object, **kwargs: object) -> str:
+        return "[[voice_reply]]\nRainbow mein saat rang hote hain."
+
+    async def failing_synthesize(*args: object, **kwargs: object) -> bytes:
+        raise RuntimeError("request body must not appear in logs")
+
+    monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+    monkeypatch.setattr(runtime, "synthesize_speech", failing_synthesize)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_event(audio_seconds=4),
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.sent_audios == []
+    assert client.sent_messages == []
+    assert client.replies == ["Rainbow mein saat rang hote hain."]
+
+
+@pytest.mark.anyio
+async def test_adult_voice_notes_are_not_automatically_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats={"15555555555555@lid"})
+    config.openai_api_key = "test-key"
+    config.voice_reply_chats = {"15555555555555@lid"}
+    client = FakePresenceClient()
+
+    async def fake_transcribe_audio(*args: object, **kwargs: object) -> str:
+        return "Please summarize the quarterly report"
+
+    async def fake_get_answer(*args: object, **kwargs: object) -> str:
+        return "The report is on track."
+
+    monkeypatch.setattr(audio, "transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    await handle_message(
+        cast(NewAClient, client),
+        fake_event(audio_seconds=4),
+        config=config,
+        chat_locks=defaultdict(asyncio.Lock),
+    )
+
+    assert client.sent_audios == []
+    assert client.replies == ["The report is on track."]
+
+
+@pytest.mark.anyio
 async def test_process_message_includes_reply_quote_text_in_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1645,6 +1769,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 "• bot_allow_group_chats=[]",
                 '• bot_allowed_chats=["15555550123@s.whatsapp.net"]',
                 '• bot_bot_name="Faltoo"',
+                "• bot_voice_reply_chats=[]",
             ]
         )
     ]
