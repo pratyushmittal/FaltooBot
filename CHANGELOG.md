@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## Unreleased
+
+### Added
+- Opt-in per-chat child voice replies now use OpenAI speech synthesis and arrive as WhatsApp PTT voice notes, with a one-time AI-voice disclosure and automatic text fallback.
+
+### Changed
+- Voice-note transcripts are no longer included in normal incoming-message logs.
+
 ## 7.4.1 — 2026-07-10
 
 ### Fixed

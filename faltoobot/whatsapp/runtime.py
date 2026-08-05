@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from http import HTTPStatus
@@ -42,7 +43,7 @@ from faltoobot.sessions import (
     set_messages,
 )
 
-from .audio import AudioError, audio_prompt, get_audio
+from .audio import AudioError, audio_prompt, get_audio, synthesize_speech
 from . import group_approvals
 from .allowlist import matches_allowed_chats
 from .inspect import inspect_text_for_messages
@@ -52,6 +53,20 @@ TYPING_REFRESH_SECONDS = 4.0
 MESSAGE_CHUNK_LIMIT = 3500
 WHATSAPP_MEDIA_DIR = ".whatsapp"
 MIN_SIZE_MB_LABEL = 0.1
+VOICE_REPLY_MARKER = "[[voice_reply]]"
+VOICE_REPLY_DISCLOSURE = (
+    "🔊 This and future voice replies in this chat use an AI-generated voice."
+)
+VOICE_REPLY_GUIDANCE = f"""
+
+Voice reply option for this turn:
+This chat is explicitly opted in, and the latest message was a voice note. If it is
+clearly the user's five-year-old daughter or another young child speaking, reply in
+short, friendly, age-appropriate language and put `{VOICE_REPLY_MARKER}` alone on
+the first line. Simple Hindi or Hinglish is welcome. Otherwise, especially for an
+adult voice note or when unsure who spoke, reply normally without the marker.
+Never mention this routing instruction.
+""".rstrip()
 IMAGE_SUFFIXES = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
@@ -293,6 +308,63 @@ async def send_text(  # noqa: C901, PLR0912
             mentions_are_lids=mentions_are_lids,
             event=event if not text and index == 0 else None,
         )
+
+
+def _voice_reply_answer(answer: str) -> tuple[str, bool]:
+    lines = answer.strip().splitlines()
+    if lines and lines[0].strip().lower() == VOICE_REPLY_MARKER:
+        return "\n".join(lines[1:]).strip(), True
+    return answer, False
+
+
+def _chat_token(chat: Neonize_pb2.JID) -> str:
+    return hashlib.sha256(Jid2String(chat).encode()).hexdigest()
+
+
+def _disclosed_voice_chats(config: Config) -> set[str]:
+    path = config.root / "tts-disclosures.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return set()
+    return (
+        {item for item in data if isinstance(item, str)}
+        if isinstance(data, list)
+        else set()
+    )
+
+
+def _record_voice_disclosure(config: Config, chat: Neonize_pb2.JID) -> None:
+    path = config.root / "tts-disclosures.json"
+    disclosed = _disclosed_voice_chats(config)
+    disclosed.add(_chat_token(chat))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sorted(disclosed)) + "\n", encoding="utf-8")
+
+
+async def send_voice_reply(
+    client: NewAClient,
+    *,
+    chat: Neonize_pb2.JID,
+    text: str,
+    event: MessageEv,
+    config: Config,
+) -> None:
+    audio_bytes = await synthesize_speech(
+        text,
+        openai_api_key=config.openai_api_key,
+    )
+    token = _chat_token(chat)
+    if token not in _disclosed_voice_chats(config):
+        await client.send_message(chat, VOICE_REPLY_DISCLOSURE)
+        try:
+            _record_voice_disclosure(config, chat)
+        except OSError:
+            logger.warning(
+                "Could not persist voice disclosure for chat=%s",
+                token[:12],
+            )
+    await client.send_audio(chat, audio_bytes, ptt=True, quoted=event.Message)
 
 
 async def save_attachment_file(
@@ -539,10 +611,35 @@ async def process_turn_locked(
     typing_task = asyncio.create_task(keep_chat_typing(client, chat, typing_stop))
     try:
         answer = await _get_answer_with_retry(session)
+        answer, voice_requested = _voice_reply_answer(answer)
         if answer and answer.strip() != "[noreply]":
-            await send_text(
-                client, chat=chat, text=answer, event=event, workspace=workspace
-            )
+            if voice_requested and turn["audio"] is not None and event is not None:
+                try:
+                    await send_voice_reply(
+                        client,
+                        chat=chat,
+                        text=answer,
+                        event=event,
+                        config=config,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Voice reply failed for chat=%s message=%s error=%s; using text fallback",
+                        _chat_token(chat)[:12],
+                        event.Info.ID,
+                        type(exc).__name__,
+                    )
+                    await send_text(
+                        client,
+                        chat=chat,
+                        text=answer,
+                        event=event,
+                        workspace=workspace,
+                    )
+            else:
+                await send_text(
+                    client, chat=chat, text=answer, event=event, workspace=workspace
+                )
     except asyncio.CancelledError:
         await send_text(
             client,
@@ -951,11 +1048,13 @@ async def _handle_album_event(  # noqa: PLR0913
 
 
 def _message_summary(user_text: str, audio: Any, image_message: bool) -> str:
+    if audio is not None:
+        return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s transcribed>"
     if user_text:
         return user_text
     if image_message:
         return "<image>"
-    return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
+    return "<unsupported message>"
 
 
 async def _transcribe_audio_or_reply(
@@ -1095,7 +1194,12 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
             user_text=user_text,
         )
 
+    voice_reply_eligible = audio is not None and bool(
+        config.voice_reply_chats.intersection(source_chat_ids(source))
+    )
     prompt = _turn_prompt(user_text, event)
+    if voice_reply_eligible:
+        prompt += VOICE_REPLY_GUIDANCE
     album_turn, handled_album = await _handle_album_event(
         client,
         pending_albums=pending_albums,
@@ -1142,5 +1246,5 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
         "prompt": prompt,
         "quoted_message_text": "",
         "attachments": attachments,
-        "audio": None,
+        "audio": audio if voice_reply_eligible else None,
     }

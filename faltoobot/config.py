@@ -1,7 +1,7 @@
 import json
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -39,6 +39,7 @@ class Config:
     gemini_model: str = GEMINI_MODEL
     google_places_api_key: str = ""
     openai_websocket: bool = False
+    voice_reply_chats: set[str] = field(default_factory=set)
 
 
 def app_root() -> Path:
@@ -64,6 +65,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "allow_group_chats": [],
             "allowed_chats": [],
             "bot_name": "Faltoo",
+            "voice_reply_chats": [],
         },
     }
 
@@ -111,6 +113,7 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "allow_group_chats": sorted(as_chat_set(bot.get("allow_group_chats"))),
             "allowed_chats": sorted(as_chat_set(bot.get("allowed_chats"))),
             "bot_name": as_str(bot.get("bot_name"), defaults["bot"]["bot_name"]),
+            "voice_reply_chats": sorted(as_chat_set(bot.get("voice_reply_chats"))),
         },
     }
 
@@ -157,6 +160,12 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
         bot["allowed_chats"] if isinstance(bot["allowed_chats"], list) else []
     )
     allowed = ", ".join(quote(chat) for chat in allowed_chats if isinstance(chat, str))
+    voice_reply_chats = (
+        bot["voice_reply_chats"] if isinstance(bot["voice_reply_chats"], list) else []
+    )
+    voice_replies = ", ".join(
+        quote(chat) for chat in voice_reply_chats if isinstance(chat, str)
+    )
     return "\n".join(
         [
             "# Faltoobot config",
@@ -186,6 +195,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "[bot]",
             f"allow_group_chats = [{allowed_group}]",
             f"allowed_chats = [{allowed}]",
+            f"voice_reply_chats = [{voice_replies}]",
             f"bot_name = {quote(str(bot['bot_name']))}",
             "",
         ]
@@ -279,6 +289,7 @@ def build_config() -> Config:
         openai_transcription_model=str(openai["transcription_model"]),
         allow_group_chats=set(str(chat) for chat in bot["allow_group_chats"]),
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
+        voice_reply_chats=set(str(chat) for chat in bot["voice_reply_chats"]),
         bot_name=str(bot["bot_name"]),
         browser_binary=str(browser["binary"]),
         gemini_api_key=str(gemini["gemini_api_key"])

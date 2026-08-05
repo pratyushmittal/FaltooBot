@@ -99,3 +99,43 @@ async def audio_prompt(  # noqa: PLR0913
         return format_voice_note_transcript(transcript)
     finally:
         await openai_client.close()
+
+
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICE = "coral"
+TTS_MAX_CHARS = 4096
+TTS_INSTRUCTIONS = (
+    "Speak warmly, naturally, and briefly for a young child. "
+    "Pronounce simple Hindi and Hinglish clearly without exaggerating an accent."
+)
+
+
+async def synthesize_speech(
+    text: str,
+    *,
+    openai_api_key: str,
+    model: str = TTS_MODEL,
+    voice: str = TTS_VOICE,
+) -> bytes:
+    """Generate WhatsApp-compatible Opus speech with the public OpenAI API."""
+    cleaned = text.strip()
+    if not openai_api_key.strip():
+        raise AudioError("OpenAI API key is required for voice replies.")
+    if not cleaned or len(cleaned) > TTS_MAX_CHARS:
+        raise AudioError("Voice reply text is empty or too long.")
+
+    openai_client = AsyncOpenAI(api_key=openai_api_key)
+    try:
+        response = await openai_client.audio.speech.create(
+            model=model,
+            voice=voice,
+            input=cleaned,
+            instructions=TTS_INSTRUCTIONS,
+            response_format="opus",
+        )
+        audio_bytes = await response.aread()
+        if not audio_bytes:
+            raise AudioError("OpenAI returned an empty voice reply.")
+        return audio_bytes
+    finally:
+        await openai_client.close()

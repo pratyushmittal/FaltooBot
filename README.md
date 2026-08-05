@@ -88,6 +88,7 @@ websocket = true
 [bot]
 allow_group_chats = ["120363000000000000@g.us"]
 allowed_chats = ["15551234567"]
+voice_reply_chats = []
 bot_name = "Faltoo"
 ```
 
@@ -96,6 +97,22 @@ If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oa
 By default, `websocket = true` uses the Responses API WebSocket mode for lower-latency tool loops with either an API key or ChatGPT/Codex OAuth. Set it to `false` to use normal HTTP streaming.
 
 Set `allowed_chats` to the WhatsApp phone numbers that should be allowed to it in direct chats. Use WhatsApp phone numbers or JIDs. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
+
+### Opt-in child voice replies
+
+Faltoobot can reply with an actual WhatsApp voice note when a young child sends a voice note. This is disabled by default. Add only the relevant direct chat to `voice_reply_chats`:
+
+```toml
+[bot]
+allowed_chats = ["15551234567"]
+voice_reply_chats = ["15551234567"]
+```
+
+The chat must still be in `allowed_chats`. In an opted-in chat, the assistant may select a voice response only when the incoming message is a voice note and it is clearly from a young child (for example, the user's five-year-old daughter). Adult voice notes and uncertain cases remain text replies.
+
+Voice generation uses the official OpenAI Speech API with `gpt-4o-mini-tts`, an Opus response, and `ptt=true`, so WhatsApp renders it as a voice note rather than an audio document. Set `OPENAI_API_KEY` in the bot service environment (or `openai.api_key` in config); ChatGPT/Codex OAuth alone cannot generate speech. Simple Hindi and Hinglish are supported.
+
+The first generated voice reply in each chat is preceded by a short text disclosure that future voice replies use an AI-generated voice. Faltoobot stores only a SHA-256 chat token in `~/.faltoobot/tts-disclosures.json` to avoid repeating that notice. TTS failures are logged without reply text or raw chat IDs and automatically fall back to the normal text reply.
 
 Set `allow_group_chats` to the group JIDs that the bot should keep history for and reply in. If a non-approved group mentions the bot, Faltoobot DMs `allowed_chats` with `/approve_group <group_jid>` and `/deny_group <group_jid>` instructions. In groups with more than two people, the bot replies only when mentioned or when someone replies to the bot.
 
