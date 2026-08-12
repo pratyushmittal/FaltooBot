@@ -136,6 +136,20 @@ def _write_text_atomic(path: Path, value: str) -> None:
     temp.replace(path)
 
 
+def _write_json_atomic(path: Path, value: Any) -> None:
+    """Atomically stream JSON to disk without building a second full-size string."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temp.open("w", encoding="utf-8") as file:
+            json.dump(value, file, indent=2, ensure_ascii=False)
+            file.write("\n")
+        temp.replace(path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
 def _get_last_used_session_id(chat_key: str) -> str | None:
     chat_root = _chat_root(chat_key)
     try:
@@ -191,10 +205,7 @@ def get_session(
     workspace_path.mkdir(parents=True, exist_ok=True)
     # comment: new workspaces should always have AGENTS.md so long-term notes have a stable home.
     (workspace_path / "AGENTS.md").touch(exist_ok=True)
-    _write_text_atomic(
-        messages_path,
-        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
-    )
+    _write_json_atomic(messages_path, messages_json)
     set_last_used(session)
     return session
 
@@ -315,9 +326,8 @@ async def compact_message_history(session: Session) -> bool:
 
     messages_json["system_prompt"] = instructions
     # comment: create an archive snapshot file before replacing messages.json.
-    _write_text_atomic(
-        session.session_dir / f"messages.archive.{uuid4().hex}.json",
-        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
+    _write_json_atomic(
+        session.session_dir / f"messages.archive.{uuid4().hex}.json", messages_json
     )
     messages_json["messages"] = output
     set_messages(session, messages_json)
@@ -325,10 +335,7 @@ async def compact_message_history(session: Session) -> bool:
 
 
 def set_messages(session: Session, messages_json: MessagesJson) -> None:
-    _write_text_atomic(
-        session.messages_path,
-        json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
-    )
+    _write_json_atomic(session.messages_path, messages_json)
 
 
 async def _upload_attachments(
