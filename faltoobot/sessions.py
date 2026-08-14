@@ -275,6 +275,46 @@ def get_last_usage(session: Session) -> dict[str, Any] | None:
     return None
 
 
+async def _compact_codex_history(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    input_items: MessageHistory,
+    instructions: str,
+    prompt_cache_key: str,
+) -> MessageHistory:
+    """Compact Codex OAuth history through the streamed Responses API.
+
+    The request ends with `compaction_trigger`; its compacted window arrives as one
+    `response.output_item.done` compaction item before `response.completed`.
+    """
+    stream = await client.responses.create(
+        model=model,
+        input=cast(Any, [*input_items, {"type": "compaction_trigger"}]),
+        instructions=instructions or omit,
+        prompt_cache_key=prompt_cache_key,
+        store=False,
+        stream=True,
+    )
+    output: MessageHistory = []
+    completed = False
+    async with stream:
+        async for event in stream:
+            if event.type == "response.completed":
+                completed = True
+            elif event.type == "response.output_item.done":
+                item = getattr(event, "item", None)
+                item = item.to_dict() if hasattr(item, "to_dict") else item
+                if isinstance(item, dict) and item.get("type") == "compaction":
+                    output.append(item)
+
+    if not completed or len(output) != 1:
+        raise ValueError(
+            "Codex compaction did not return one completed compaction item"
+        )
+    return output
+
+
 async def compact_message_history(session: Session) -> bool:
     config = build_config()
     messages_json = get_messages(session)
@@ -284,24 +324,35 @@ async def compact_message_history(session: Session) -> bool:
 
     workspace = Path(messages_json["workspace"])
     instructions = get_system_instructions(config, session.chat_key, workspace)
+    codex_oauth = uses_chatgpt_oauth(config)
     input_items = trim_input(
         messages_json["messages"],
-        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+        replace_unavailable_uploads=codex_oauth,
     )
     client = get_openai_client(config)
     try:
-        compacted = await client.responses.compact(
-            model=config.openai_model,
-            input=cast(Any, input_items),
-            instructions=instructions or omit,
-            prompt_cache_key=messages_json["id"],
-        )
+        if codex_oauth:
+            raw_output = await _compact_codex_history(
+                client,
+                model=config.openai_model,
+                input_items=input_items,
+                instructions=instructions,
+                prompt_cache_key=messages_json["id"],
+            )
+        else:
+            compacted = await client.responses.compact(
+                model=config.openai_model,
+                input=cast(Any, input_items),
+                instructions=instructions or omit,
+                prompt_cache_key=messages_json["id"],
+            )
+            raw_output = compacted.output
     finally:
         await client.close()
 
     output: MessageHistory = []
-    for raw_item in compacted.output:
-        item = raw_item.to_dict() if hasattr(raw_item, "to_dict") else raw_item
+    for raw_item in raw_output:
+        item = raw_item if isinstance(raw_item, dict) else raw_item.to_dict()
         if not isinstance(item, dict):
             # comment: compaction output should be a response input item.
             raise TypeError(f"Expected compacted item dict, got {type(item).__name__}")
