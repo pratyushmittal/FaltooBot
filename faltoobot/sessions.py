@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, TypedDict, cast
 from uuid import uuid4
 
@@ -42,6 +43,7 @@ from faltoobot.post_response_hooks import (
 )
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
+from faltoobot.websockets import invalidate_history as invalidate_websocket_history
 from faltoobot.websockets import prewarm as websocket_prewarm
 from faltoobot.websockets import streaming_reply as websocket_streaming_reply
 
@@ -281,6 +283,46 @@ def get_last_usage(session: Session) -> dict[str, Any] | None:
     return None
 
 
+async def _compact_codex_history(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    input_items: MessageHistory,
+    instructions: str,
+    prompt_cache_key: str,
+) -> MessageHistory:
+    """Compact Codex OAuth history through the streamed Responses API.
+
+    The request ends with `compaction_trigger`; its compacted window arrives as one
+    `response.output_item.done` compaction item before `response.completed`.
+    """
+    stream = await client.responses.create(
+        model=model,
+        input=cast(Any, [*input_items, {"type": "compaction_trigger"}]),
+        instructions=instructions or omit,
+        prompt_cache_key=prompt_cache_key,
+        store=False,
+        stream=True,
+    )
+    output: MessageHistory = []
+    completed = False
+    async with stream:
+        async for event in stream:
+            if event.type == "response.completed":
+                completed = True
+            elif event.type == "response.output_item.done":
+                item = getattr(event, "item", None)
+                item = item.to_dict() if hasattr(item, "to_dict") else item
+                if isinstance(item, dict) and item.get("type") == "compaction":
+                    output.append(item)
+
+    if not completed or len(output) != 1:
+        raise ValueError(
+            "Codex compaction did not return one completed compaction item"
+        )
+    return output
+
+
 async def compact_message_history(session: Session) -> bool:
     config = build_config()
     messages_json = get_messages(session)
@@ -290,24 +332,35 @@ async def compact_message_history(session: Session) -> bool:
 
     workspace = Path(messages_json["workspace"])
     instructions = get_system_instructions(config, session.chat_key, workspace)
+    codex_oauth = uses_chatgpt_oauth(config)
     input_items = trim_input(
         messages_json["messages"],
-        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+        replace_unavailable_uploads=codex_oauth,
     )
     client = get_openai_client(config)
     try:
-        compacted = await client.responses.compact(
-            model=config.openai_model,
-            input=cast(Any, input_items),
-            instructions=instructions or omit,
-            prompt_cache_key=messages_json["id"],
-        )
+        if codex_oauth:
+            raw_output = await _compact_codex_history(
+                client,
+                model=config.openai_model,
+                input_items=input_items,
+                instructions=instructions,
+                prompt_cache_key=messages_json["id"],
+            )
+        else:
+            compacted = await client.responses.compact(
+                model=config.openai_model,
+                input=cast(Any, input_items),
+                instructions=instructions or omit,
+                prompt_cache_key=messages_json["id"],
+            )
+            raw_output = compacted.output
     finally:
         await client.close()
 
     output: MessageHistory = []
-    for raw_item in compacted.output:
-        item = raw_item.to_dict() if hasattr(raw_item, "to_dict") else raw_item
+    for raw_item in raw_output:
+        item = raw_item if isinstance(raw_item, dict) else raw_item.to_dict()
         if not isinstance(item, dict):
             # comment: compaction output should be a response input item.
             raise TypeError(f"Expected compacted item dict, got {type(item).__name__}")
@@ -335,6 +388,25 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
         session.messages_path,
         json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
     )
+
+
+def append_developer_message(session: Session, text: str) -> None:
+    text = text.strip()
+    if not text:
+        # Developer instructions must contain an actual directive.
+        raise ValueError("Developer message cannot be empty")
+
+    messages_json = get_messages(session)
+    messages_json["messages"].append(
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": text}],
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+    )
+    set_messages(session, messages_json)
+    logger.info("Appended developer message")
 
 
 async def _upload_attachments(
@@ -379,38 +451,50 @@ def _output_text(response: Response, output: list[ResponseOutputItem]) -> str:
     return ""
 
 
-def _generated_image_markdown(
-    output: list[ResponseOutputItem], workspace: Path
-) -> list[str]:
+def save_generated_image(result: str, workspace: Path) -> str:
     images_dir = workspace / GENERATED_IMAGES_DIR
-    lines: list[str] = []
-
-    for item in output:
-        if not isinstance(item, ImageGenerationCall):
-            continue
-        result = item.result
-        if not isinstance(result, str):
-            continue
-
-        images_dir.mkdir(parents=True, exist_ok=True)
-        path = images_dir / f"{uuid4().hex}.png"
-        path.write_bytes(base64.b64decode(result))
-        lines.append(f"![Generated image]({path.relative_to(workspace).as_posix()})")
-
-    return lines
+    images_dir.mkdir(parents=True, exist_ok=True)
+    path = images_dir / f"{uuid4().hex}.png"
+    path.write_bytes(base64.b64decode(result))
+    return path.relative_to(workspace).as_posix()
 
 
-def _assistant_text_from_completed_event(
-    event: ResponseCompletedEvent, *, workspace: Path
+def generated_image_developer_message(path: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "developer",
+        "content": [
+            {
+                "type": "input_text",
+                "text": f"![Generated image]({path})",
+            }
+        ],
+    }
+
+
+def _append_generated_image_messages(
+    messages: MessageHistory, output: list[ResponseOutputItem], workspace: Path
 ) -> str:
-    response = event.response
-    output = cast(
-        list[ResponseOutputItem],
-        response.output or getattr(response, "codex_output", []),
-    )
-    parts = [_output_text(response, output)]
-    parts.extend(_generated_image_markdown(output, workspace))
-    return "\n\n".join(part for part in parts if part).strip()
+    # Completed output has already been appended as the current history suffix.
+    output_start = len(messages) - len(output)
+    images = [
+        (output_start + offset, item, item.result)
+        for offset, item in enumerate(output)
+        if isinstance(item, ImageGenerationCall) and isinstance(item.result, str)
+    ]
+    for index, item, _ in images:
+        if not 0 <= index < len(messages) or messages[index].get("id") != item.id:
+            # A transport ordering bug must fail instead of corrupting saved history.
+            raise ValueError("Generated image output is not in the history suffix")
+
+    saved = [
+        (index, save_generated_image(result, workspace)) for index, _, result in images
+    ]
+    # Insert backwards so earlier indexes remain valid.
+    for index, path in reversed(saved):
+        messages.insert(index + 1, generated_image_developer_message(path))
+
+    return "".join(f"\n\n![Generated image]({path})" for _, path in saved)
 
 
 def append_developer_turn(session: Session, text: str) -> None:
@@ -466,6 +550,7 @@ async def append_user_turn(
             "type": "message",
             "role": "user",
             "content": content,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     )
     messages_json["message_ids"].extend(fresh_message_ids)
@@ -578,8 +663,33 @@ async def get_answer_streaming(
         tools=tools,
         prompt_cache_key=messages_json["id"],
     ):
+        image_markdown = ""
+        if event.type == "response.completed":
+            completed = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                completed.response.output
+                or getattr(completed.response, "codex_output", []),
+            )
+            image_markdown = _append_generated_image_messages(
+                messages_json["messages"], output, workspace
+            )
+            if image_markdown and getattr(config, "openai_websocket", False):
+                # Middle insertions invalidate the websocket's cached history prefix.
+                invalidate_websocket_history(
+                    messages_json["id"], len(messages_json["messages"])
+                )
+
         if event.type in {"function_call_output", "response.completed"}:
             set_messages(session, messages_json)
+        if image_markdown:
+            yield cast(
+                StreamingReplyItem,
+                SimpleNamespace(
+                    type="faltoobot.generated_image",
+                    delta=image_markdown,
+                ),
+            )
         yield event
 
     if hooks_enabled:
@@ -611,12 +721,18 @@ async def prewarm_openai_websocket(session: Session) -> None:
 
 
 async def get_answer(session: Session) -> str:
+    # Completion text arrives after generated-image events.
     answer = ""
+    generated_images = ""
     async for event in get_answer_streaming(session):
         if event.type == "response.completed":
-            messages_json = get_messages(session)
-            answer = _assistant_text_from_completed_event(
-                cast(ResponseCompletedEvent, event),
-                workspace=Path(messages_json["workspace"]),
+            completed = cast(ResponseCompletedEvent, event)
+            output = cast(
+                list[ResponseOutputItem],
+                completed.response.output
+                or getattr(completed.response, "codex_output", []),
             )
-    return answer
+            answer = _output_text(completed.response, output)
+        elif event.type == "faltoobot.generated_image":
+            generated_images += str(getattr(event, "delta", ""))
+    return f"{answer}{generated_images}".strip()

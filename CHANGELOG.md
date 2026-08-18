@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.5.0 — 2026-08-14
+
+### Added
+- Generated images are now saved in the session workspace and recorded beside their image-generation calls, so Faltoochat can display them and the assistant can reuse them in later work.
+
+### Fixed
+- `/compact` now works with Codex OAuth after the backend moved compaction to the streamed Responses API.
+
 ## 7.4.1 — 2026-07-10
 
 ### Fixed
