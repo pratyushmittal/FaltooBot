@@ -47,6 +47,7 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
     match event_type:
         case (
             "codex.response.metadata"
+            | "responsesapi.websocket_timing"
             | "response.created"
             | "response.in_progress"
             | "response.completed"

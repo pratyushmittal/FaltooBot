@@ -890,6 +890,32 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
     )
 
 
+def test_append_developer_message_persists_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="desktop")
+
+    sessions.append_developer_message(session, "Be concise")
+
+    message = sessions.get_messages(session)["messages"][-1]
+    assert message["role"] == "developer"
+    assert message["content"] == [{"type": "input_text", "text": "Be concise"}]
+    assert message["timestamp"]
+
+
+def test_append_developer_message_rejects_empty_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="desktop")
+
+    with pytest.raises(ValueError, match="empty"):
+        sessions.append_developer_message(session, "  ")
+
+
 @pytest.mark.anyio
 async def test_append_user_turn_appends_user_content_and_message_ids(
     monkeypatch: pytest.MonkeyPatch,

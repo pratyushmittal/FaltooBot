@@ -382,6 +382,25 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
     )
 
 
+def append_developer_message(session: Session, text: str) -> None:
+    text = text.strip()
+    if not text:
+        # Developer instructions must contain an actual directive.
+        raise ValueError("Developer message cannot be empty")
+
+    messages_json = get_messages(session)
+    messages_json["messages"].append(
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": text}],
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+    )
+    set_messages(session, messages_json)
+    logger.info("Appended developer message")
+
+
 async def _upload_attachments(
     attachments: Sequence[Attachment],
     workspace: Path,

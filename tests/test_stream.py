@@ -49,6 +49,10 @@ from faltoobot.faltoochat.stream import get_event_text
             (False, "", ""),
         ),
         (
+            SimpleNamespace(type="responsesapi.websocket_timing"),
+            (False, "", ""),
+        ),
+        (
             SimpleNamespace(
                 type="codex.rate_limits",
                 plan_type="prolite",
