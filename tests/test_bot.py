@@ -320,6 +320,7 @@ class FakePresenceClient:
         self.sent_interactive_messages: list[Message] = []
         self.sent_message_chats: list[str] = []
         self.sent_images: list[dict[str, object | None]] = []
+        self.sent_videos: list[dict[str, object | None]] = []
         self.sent_documents: list[dict[str, object | None]] = []
         self.downloads = 0
         self.get_me_calls = 0
@@ -397,6 +398,19 @@ class FakePresenceClient:
         **_: object,
     ) -> str:
         self.sent_images.append(
+            {"file": str(file), "caption": caption, "quoted": quoted}
+        )
+        return "ok"
+
+    async def send_video(
+        self,
+        chat: Neonize_pb2.JID,
+        file: str | bytes,
+        caption: str | None = None,
+        quoted: object | None = None,
+        **_: object,
+    ) -> str:
+        self.sent_videos.append(
             {"file": str(file), "caption": caption, "quoted": quoted}
         )
         return "ok"
@@ -1638,6 +1652,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 '• gemini_gemini_api_key=""',
                 '• gemini_model="gemini-3.1-flash-image-preview"',
                 '• google_places_api_key=""',
+                '• openrouter_api_key=""',
                 '• hooks_model="gpt-5.3-codex-spark"',
                 "• hooks_enabled=false",
                 '• ui_theme=""',
@@ -2751,6 +2766,18 @@ async def test_start_polling_notifications_claims_and_acks(
             "text": "Here.\n![Chart](chart.png)",
             "sent_messages": ["Here."],
             "sent_images": [{"file": "chart.png", "caption": "Chart", "quoted": None}],
+            "sent_videos": [],
+            "sent_documents": [],
+        },
+        {
+            "filename": "clip.mp4",
+            "payload": b"video",
+            "text": "![Generated video](clip.mp4)",
+            "sent_messages": [],
+            "sent_images": [],
+            "sent_videos": [
+                {"file": "clip.mp4", "caption": "Generated video", "quoted": None}
+            ],
             "sent_documents": [],
         },
         {
@@ -2759,6 +2786,7 @@ async def test_start_polling_notifications_claims_and_acks(
             "text": "![Quarterly report](report.pdf)",
             "sent_messages": [],
             "sent_images": [],
+            "sent_videos": [],
             "sent_documents": [
                 {
                     "file": "report.pdf",
@@ -2790,6 +2818,10 @@ async def test_send_text_sends_local_media_markdown(
     assert client.sent_images == [
         {**item, "file": str(media)}
         for item in cast(list[dict[str, object | None]], case["sent_images"])
+    ]
+    assert client.sent_videos == [
+        {**item, "file": str(media)}
+        for item in cast(list[dict[str, object | None]], case["sent_videos"])
     ]
     assert client.sent_documents == [
         {**item, "file": str(media)}

@@ -61,6 +61,7 @@ IMAGE_SUFFIXES = {
     "image/bmp": ".bmp",
 }
 MEDIA_MARKDOWN = re.compile(r"^\s*!\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
+VIDEO_LINK = re.compile(r"^\s*\[(?P<caption>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 MARKDOWN = MarkdownIt("commonmark").enable("table")
 BOT_IDENTITY_CACHE: dict[int, set[str]] = {}
 SLASH_COMMANDS = {
@@ -133,7 +134,7 @@ async def keep_chat_typing(client: NewAClient, chat: Any, stop: asyncio.Event) -
 class OutgoingMedia(TypedDict):
     path: Path
     caption: str
-    is_image: bool
+    mime_type: str
 
 
 def _outgoing_media(text: str, workspace: Path) -> tuple[str, list[OutgoingMedia]]:
@@ -142,6 +143,10 @@ def _outgoing_media(text: str, workspace: Path) -> tuple[str, list[OutgoingMedia
 
     for line in text.splitlines():
         match = MEDIA_MARKDOWN.match(line)
+        is_video_link = False
+        if match is None:
+            match = VIDEO_LINK.match(line)
+            is_video_link = match is not None
         if match is None:
             lines.append(line)
             continue
@@ -153,11 +158,15 @@ def _outgoing_media(text: str, workspace: Path) -> tuple[str, list[OutgoingMedia
             lines.append(line)
             continue
         mime_type = mimetypes.guess_type(resolved.name)[0] or ""
+        # Ordinary Markdown links remain text unless they point to a local video.
+        if is_video_link and not mime_type.startswith("video/"):
+            lines.append(line)
+            continue
         medias.append(
             {
                 "path": resolved,
                 "caption": match.group("caption").strip(),
-                "is_image": mime_type.startswith("image/"),
+                "mime_type": mime_type,
             }
         )
 
@@ -175,8 +184,17 @@ async def _send_media(
     event: MessageEv | None = None,
 ) -> None:
     quoted = event if event is not None else None
-    if media["is_image"]:
+    if media["mime_type"].startswith("image/"):
         await client.send_image(
+            chat,
+            str(media["path"]),
+            caption=media["caption"] or None,
+            quoted=quoted,
+            mentions_are_lids=mentions_are_lids,
+        )
+        return
+    if media["mime_type"].startswith("video/"):
+        await client.send_video(
             chat,
             str(media["path"]),
             caption=media["caption"] or None,
@@ -189,7 +207,7 @@ async def _send_media(
         str(media["path"]),
         caption=media["caption"] or None,
         filename=media["path"].name,
-        mimetype=mimetypes.guess_type(media["path"].name)[0] or None,
+        mimetype=media["mime_type"] or None,
         quoted=quoted,
         mentions_are_lids=mentions_are_lids,
     )

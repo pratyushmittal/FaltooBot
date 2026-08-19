@@ -61,6 +61,9 @@ def _tool_env_overrides() -> dict[str, str]:
     if config.openai_api_key:
         # comment: tool examples use SDKs that read API keys from the environment.
         env["OPENAI_API_KEY"] = config.openai_api_key
+    if config.openrouter_api_key:
+        # Video-generation skills use OpenRouter from shell commands.
+        env["OPENROUTER_API_KEY"] = config.openrouter_api_key
     if config.gemini_api_key:
         # comment: Gemini snippets expect the key in the process environment.
         env["GEMINI_API_KEY"] = config.gemini_api_key

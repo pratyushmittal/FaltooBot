@@ -17,7 +17,7 @@ from typing import Any, NoReturn
 from rich.console import Console
 from rich.text import Text
 
-from faltoobot import notify_queue
+from faltoobot import notify_queue, video
 from faltoobot.changelog import record_update
 from faltoobot.cli import browser as browser_runtime
 from faltoobot.config import (
@@ -606,7 +606,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login}",
+        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login,generate-video}",
     )
 
     sub.add_parser(
@@ -634,6 +634,7 @@ def parse_args() -> argparse.Namespace:
         help="identifier explaining why this notification was sent",
     )
     sub.add_parser("codex-login", help="sign in to Codex / ChatGPT OAuth")
+    video.add_cli_parser(sub)
     return parser.parse_args()
 
 
@@ -656,6 +657,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_notify_command(args)
     elif args.command == "codex-login":
         run_openai_login(console)
+    elif args.command == "generate-video":
+        video.run_cli(args, (config or build_config()).openrouter_api_key)
     else:
         # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
         raise SystemExit(f"unknown command: {args.command}")
