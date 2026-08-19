@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from typing import Any, TypeAlias, TypeGuard, cast
 
 from faltoobot.gpt_utils import StreamingReplyItem
+from faltoobot.post_response_hooks import HookEvent
 from .messages_rendering import get_item_text
 
 RateLimit: TypeAlias = Mapping[str, object]
@@ -42,7 +43,9 @@ def _tool_text(item: Any) -> str:
     return text if classes == "tool" else ""
 
 
-def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa: C901, PLR0912
+def get_event_text(  # noqa: C901, PLR0912
+    event: StreamingReplyItem | HookEvent,
+) -> tuple[bool, str, str]:
     event_type = event.type
     match event_type:
         case (
@@ -98,7 +101,7 @@ def get_event_text(event: StreamingReplyItem) -> tuple[bool, str, str]:  # noqa:
                 value if isinstance(value, str) else "",
             )
         case "faltoobot.post_response_hook":
-            text = cast(Any, event).text
+            text = str(getattr(event, "text", ""))
             is_new, classes = True, "tool"
         case "codex.rate_limits":
             limits = getattr(event, "rate_limits", {})

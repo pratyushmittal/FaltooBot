@@ -1,11 +1,13 @@
+import asyncio
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from .diff import Diff
 
 
-def run_git(
+def _run_git(
     workspace: Path,
     *args: str,
     input: str | None = None,
@@ -20,12 +22,55 @@ def run_git(
             check=False,
         )
     except FileNotFoundError:
+        # Missing Git or workspace behaves like an unavailable repository.
         return None
+
+
+async def run_git_async(
+    workspace: Path,
+    *args: str,
+    input: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    command = ["git", *args]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=workspace,
+            env=env,
+            stdin=asyncio.subprocess.PIPE if input is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        # Missing Git or workspace behaves like an unavailable repository.
+        return None
+
+    try:
+        stdout, stderr = await process.communicate(
+            input.encode() if input is not None else None
+        )
+    except asyncio.CancelledError:
+        # Stop Git before callers delete temporary files it may still be using.
+        with suppress(ProcessLookupError):
+            process.terminate()
+        await process.wait()
+        raise
+
+    returncode = process.returncode
+    assert returncode is not None
+    result: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(
+        command,
+        returncode,
+        stdout.decode(),
+        stderr.decode(),
+    )
+    return result
 
 
 def stage_file(workspace: Path, file_path: Path) -> str | None:
     """Stage the full file in git."""
-    result = run_git(workspace, "add", "--", str(file_path))
+    result = _run_git(workspace, "add", "--", str(file_path))
     if result is not None and result.returncode == 0:
         return None
     if result is None:
@@ -60,7 +105,7 @@ def apply_selected_diff_lines(
     patch = _selected_patch(file_path, selected_entries)
     if patch is None:
         return "No modified lines to stage or unstage here."
-    result = run_git(
+    result = _run_git(
         workspace,
         "apply",
         "--cached",
@@ -98,24 +143,24 @@ def get_selected_change_state(
 
 
 def is_git_workspace(workspace: Path) -> bool:
-    result = run_git(workspace, "rev-parse", "--show-toplevel")
+    result = _run_git(workspace, "rev-parse", "--show-toplevel")
     return result is not None and result.returncode == 0
 
 
 def get_workspace_label(workspace: Path) -> str:
-    root = run_git(workspace, "rev-parse", "--show-toplevel")
+    root = _run_git(workspace, "rev-parse", "--show-toplevel")
     if root is None or root.returncode != 0:
         return ""
 
     root_name = Path(root.stdout.strip()).name
-    branch = run_git(workspace, "branch", "--show-current")
+    branch = _run_git(workspace, "branch", "--show-current")
     if branch is None or branch.returncode != 0 or not branch.stdout.strip():
         return root_name
     return f"{root_name} •  {branch.stdout.strip()}"
 
 
 def _git_paths(workspace: Path, *args: str) -> list[Path]:
-    result = run_git(workspace, *args)
+    result = _run_git(workspace, *args)
     if result is None or result.returncode not in {0, 1}:
         return []
     return [Path(path) for path in result.stdout.split("\0") if path]
@@ -164,10 +209,10 @@ def get_unstaged_files(workspace: Path) -> list[Path]:
 
 
 def _ensure_index_entry(workspace: Path, file_path: Path) -> None:
-    result = run_git(workspace, "ls-files", "--error-unmatch", str(file_path))
+    result = _run_git(workspace, "ls-files", "--error-unmatch", str(file_path))
     if result is None or result.returncode == 0:
         return
-    run_git(workspace, "add", "--intent-to-add", str(file_path))
+    _run_git(workspace, "add", "--intent-to-add", str(file_path))
 
 
 def _stage_entries(diff: Diff, start: int, end: int) -> list[dict[str, Any]]:

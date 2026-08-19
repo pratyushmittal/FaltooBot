@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import json
@@ -21,6 +20,7 @@ from openai.types.responses import (
 )
 from openai.types.responses.response_output_item import ImageGenerationCall
 
+from faltoobot import post_response_hooks
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
     MessageHistory,
@@ -34,13 +34,6 @@ from faltoobot.gpt_utils import (
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
-from faltoobot import post_response_hooks
-from faltoobot.post_response_hooks import (
-    DEFAULT_MAX_ITERATIONS,
-    HookFeedback,
-    format_feedback,
-    run_hook_events,
-)
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import invalidate_history as invalidate_websocket_history
@@ -497,18 +490,6 @@ def _append_generated_image_messages(
     return "".join(f"\n\n![Generated image]({path})" for _, path in saved)
 
 
-def append_developer_turn(session: Session, text: str) -> None:
-    messages_json = get_messages(session)
-    messages_json["messages"].append(
-        {
-            "type": "message",
-            "role": "developer",
-            "content": [{"type": "input_text", "text": text.strip()}],
-        }
-    )
-    set_messages(session, messages_json)
-
-
 async def append_user_turn(
     session: Session,
     *,
@@ -610,46 +591,15 @@ async def _get_streaming_reply(
         yield item
 
 
-async def run_hooks_for_diff(
-    session: Session,
-    diff_text: str,
-    iteration: int = 0,
-) -> AsyncIterator[StreamingReplyItem]:
-    messages_json = get_messages(session)
-    feedback: list[HookFeedback] = []
-    async for hook_event in run_hook_events(
-        Path(messages_json["workspace"]),
-        diff_text,
-        messages=[*messages_json["messages"]],
-        instructions=messages_json["system_prompt"],
-    ):
-        if feedback_item := cast(Any, hook_event).feedback_item:
-            feedback.append(cast(HookFeedback, feedback_item))
-        yield hook_event
-
-    if not feedback:
-        return
-    if iteration >= DEFAULT_MAX_ITERATIONS:
-        logger.warning("Post-response hooks stopped after max iterations")
-        return
-    append_developer_turn(session, format_feedback(feedback))
-    async for next_event in get_answer_streaming(session, hook_iteration=iteration + 1):
-        yield next_event
-
-
 async def get_answer_streaming(
     session: Session,
-    hook_iteration: int = 0,
 ) -> AsyncIterator[StreamingReplyItem]:
+    """Stream one assistant response without running post-response hooks."""
     logger.info("Starting answer stream")
     config = build_config()
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])
     tools = _session_tools(messages_json)
-    hooks_enabled = getattr(config, "hook_enabled", False)
-    snapshot = (
-        post_response_hooks.capture_snapshot(workspace) if hooks_enabled else None
-    )
 
     instructions = get_system_instructions(config, session.chat_key, workspace)
     if messages_json["system_prompt"] != instructions:
@@ -692,11 +642,57 @@ async def get_answer_streaming(
             )
         yield event
 
-    if hooks_enabled:
-        diff_text = await asyncio.to_thread(post_response_hooks.diff_since, snapshot)
-        async for hook_event in run_hooks_for_diff(session, diff_text, hook_iteration):
-            yield hook_event
     logger.info("Finished answer stream")
+
+
+async def get_answer_streaming_with_hooks(
+    session: Session,
+    against: post_response_hooks.Snapshot
+    | post_response_hooks.HookDiffScope
+    | None = None,
+) -> AsyncIterator[StreamingReplyItem | post_response_hooks.HookEvent]:
+    """Stream an answer and repeat while post-response hooks return feedback."""
+    iteration = 0
+
+    while True:
+        messages_json = get_messages(session)
+        workspace = Path(messages_json["workspace"])
+
+        if against is None:
+            against = await post_response_hooks.capture_snapshot(workspace)
+            async for event in get_answer_streaming(session):
+                yield event
+            messages_json = get_messages(session)
+
+        feedback: list[tuple[str, str]] = []
+        async for event in post_response_hooks.run_hooks(
+            workspace,
+            against,
+            messages=[*messages_json["messages"]],
+            instructions=get_system_instructions(
+                build_config(), session.chat_key, workspace
+            ),
+        ):
+            if event.feedback is not None:
+                feedback.append((event.hook_name, event.feedback))
+            yield event
+
+        if not feedback:
+            return
+        # Repeated feedback must not keep the assistant running indefinitely.
+        if iteration >= post_response_hooks.DEFAULT_MAX_ITERATIONS:
+            text = "Post-response hooks stopped after max iterations"
+            logger.warning(text)
+            yield post_response_hooks.HookEvent(
+                text=text,
+                hook_name="",
+                status="stopped",
+            )
+            return
+
+        append_developer_message(session, post_response_hooks.format_feedback(feedback))
+        against = None
+        iteration += 1
 
 
 async def prewarm_openai_websocket(session: Session) -> None:
@@ -724,7 +720,12 @@ async def get_answer(session: Session) -> str:
     # Completion text arrives after generated-image events.
     answer = ""
     generated_images = ""
-    async for event in get_answer_streaming(session):
+    stream = (
+        get_answer_streaming_with_hooks(session)
+        if getattr(build_config(), "hook_enabled", False)
+        else get_answer_streaming(session)
+    )
+    async for event in stream:
         if event.type == "response.completed":
             completed = cast(ResponseCompletedEvent, event)
             output = cast(

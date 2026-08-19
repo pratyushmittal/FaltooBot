@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
@@ -67,15 +66,12 @@ def _open_name_modal(app: "FaltooChatApp") -> None:
 def _open_run_hooks_picker(app: "FaltooChatApp") -> None:
     async def on_result(scope: post_response_hooks.HookDiffScope | None) -> None:
         if scope is not None:
-            diff_text = await asyncio.to_thread(
-                post_response_hooks.diff_for_scope, app.workspace, scope
-            )
             app.is_answering = True
             app.refresh_terminal_title()
             app.active_stream_worker = app.run_worker(
                 app._start_streaming(
                     app.transcript,
-                    events=sessions.run_hooks_for_diff(app.session, diff_text),
+                    against=scope,
                 ),
                 exclusive=True,
             )

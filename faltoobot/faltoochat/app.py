@@ -6,7 +6,7 @@ import tempfile
 import traceback
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterable
+from typing import Any, Iterable
 from uuid import uuid4
 
 from rich.markup import escape
@@ -27,16 +27,16 @@ from textual.widgets import (
     TextArea,
 )
 
-from faltoobot import notify_queue, sessions
+from faltoobot import notify_queue, post_response_hooks, sessions
 from faltoobot.changelog import available_update_notice, consume_changelog_update
-from faltoobot.config import load_textual_theme, save_textual_theme
+from faltoobot.config import build_config, load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
 from faltoobot.faltoochat.logging_config import configure_logging
 from faltoobot.faltoochat.terminal import (
     set_terminal_title,
     textual_theme_from_terminal,
 )
-from faltoobot.gpt_utils import MessageItem, StreamingReplyItem
+from faltoobot.gpt_utils import MessageItem
 from faltoobot.keybindings import apply_faltoochat_keybindings, load_keybindings
 from faltoobot.session_utils import (
     decompose_local_message_item,
@@ -558,14 +558,19 @@ class FaltooChatApp(App[None]):
     async def _stream_events(
         self,
         transcript: VerticalScroll,
-        events: AsyncIterator[StreamingReplyItem],
+        against: post_response_hooks.HookDiffScope | None = None,
     ) -> None:
         block: Markdown | None = None
         answer_stream: Any | None = None
         raw_text = ""
         transcript.anchor()
 
-        async for event in events:
+        stream = (
+            sessions.get_answer_streaming_with_hooks(self.session, against=against)
+            if against is not None or getattr(build_config(), "hook_enabled", False)
+            else sessions.get_answer_streaming(self.session)
+        )
+        async for event in stream:
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
@@ -629,15 +634,13 @@ class FaltooChatApp(App[None]):
         self,
         transcript: VerticalScroll,
         *,
-        events: AsyncIterator[StreamingReplyItem] | None = None,
+        against: post_response_hooks.HookDiffScope | None = None,
     ) -> None:
         completed = False
         composer = self.composer
         composer.border_subtitle = "answering · Ctrl+C to stop"
         try:
-            await self._stream_events(
-                transcript, events or sessions.get_answer_streaming(self.session)
-            )
+            await self._stream_events(transcript, against)
         except asyncio.CancelledError:
             # comment: user/app cancellations leave messages.json unchanged.
             pass

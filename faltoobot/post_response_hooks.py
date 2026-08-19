@@ -4,20 +4,18 @@ import os
 import subprocess
 import tempfile
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, TypeAlias, cast
 
 import yaml
-from openai import omit
+from pydantic import BaseModel
 
 from faltoobot.config import app_root, build_config
-from faltoobot.faltoochat.git import run_git
+from faltoobot.faltoochat.git import run_git_async
 from faltoobot.gpt_utils import (
     MessageHistory,
-    StreamingReplyItem,
     get_openai_client,
     trim_input,
 )
@@ -26,30 +24,8 @@ from faltoobot.openai_auth import uses_chatgpt_oauth
 HOOKS_DIR = "hooks"
 DEFAULT_MAX_ITERATIONS = 3
 HOOK_REVIEW_CONTEXT_TOKEN_BUDGET = 100_000
-TRIGGER_RESPONSE_FORMAT: dict[str, Any] = {
-    "type": "json_schema",
-    "name": "post_response_hook_triggers",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "results": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "index": {"type": "integer"},
-                        "run": {"type": "boolean"},
-                    },
-                    "required": ["index", "run"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["results"],
-        "additionalProperties": False,
-    },
-}
+HOOK_TRIGGER_INSTRUCTIONS = """You are a code reviewer selecting user-defined review hooks.
+Decide which hooks should run based only on the supplied code diff and each hook's trigger condition."""
 
 
 class HookDiffScope(StrEnum):
@@ -63,10 +39,20 @@ class Snapshot:
     tree: str
 
 
+HookStatus: TypeAlias = Literal[
+    "running", "skipped", "triggered", "feedback", "stopped"
+]
+
+
 @dataclass(frozen=True, slots=True)
-class HookFeedback:
+class HookEvent:
+    text: str  # E.g. "Refactor: hook triggered".
     hook_name: str
-    feedback: str
+    status: HookStatus
+    feedback: str | None = None
+    type: Literal["faltoobot.post_response_hook"] = field(
+        init=False, default="faltoobot.post_response_hook"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,43 +63,83 @@ class HookCheck:
     model: str | None = None
 
 
-def capture_snapshot(workspace: Path) -> Snapshot | None:
-    repo_root = _repo_root(workspace)
-    if repo_root is None:
+class HookTriggerResponse(BaseModel):
+    hooks_to_run: list[str]
+
+
+async def _repo_root(workspace: Path) -> Path | None:
+    result = await run_git_async(workspace, "rev-parse", "--show-toplevel")
+    if result is None or result.returncode != 0:
         return None
-    return Snapshot(repo_root=repo_root, tree=_write_worktree_tree(repo_root))
+    text = result.stdout.strip()
+    return Path(text) if text else None
 
 
-def diff_since(snapshot: Snapshot | None) -> str:
-    if snapshot is None:
-        return ""
-    return _diff_trees(
-        snapshot.repo_root, snapshot.tree, _write_worktree_tree(snapshot.repo_root)
+async def _checked_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    result = await run_git_async(repo_root, *args)
+    if result is None:
+        raise RuntimeError("Git executable not found.")
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return result
+
+
+async def _checked_index_git(
+    repo_root: Path, index_name: str, *args: str
+) -> subprocess.CompletedProcess[str]:
+    result = await run_git_async(
+        repo_root,
+        *args,
+        env={**os.environ, "GIT_INDEX_FILE": index_name},
     )
+    if result is None:
+        raise RuntimeError("Git executable not found.")
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return result
 
 
-def diff_for_scope(workspace: Path, scope: HookDiffScope) -> str:
-    repo_root = _repo_root(workspace)
-    if repo_root is None:
-        return ""
-    after_tree = _write_worktree_tree(repo_root)
-    if scope == HookDiffScope.UNSTAGED:
-        before_tree = _checked_git(repo_root, "write-tree").stdout.strip()
-    else:
-        head = run_git(repo_root, "rev-parse", "--verify", "HEAD")
-        if head is not None and head.returncode == 0:
-            before_tree = _checked_git(
-                repo_root, "rev-parse", "HEAD^{tree}"
-            ).stdout.strip()
-        else:
-            # Git's well-known empty tree lets diffs work before the first commit.
-            before_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-    return _diff_trees(repo_root, before_tree, after_tree)
+async def _diff_trees(repo_root: Path, before_tree: str, after_tree: str) -> str:
+    result = await run_git_async(repo_root, "diff", before_tree, after_tree)
+    if result is None:
+        raise RuntimeError("Git executable not found.")
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return result.stdout.strip()
 
 
-def load_hooks(workspace: Path, *, hooks_dir: Path | None = None) -> list[HookCheck]:
+async def _write_worktree_tree(repo_root: Path) -> str:
+    # Git's well-known empty tree lets snapshots work before the first commit.
+    empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    fd, index_name = tempfile.mkstemp(prefix="faltoobot-hooks-index-")
+    os.close(fd)
+    Path(index_name).unlink(missing_ok=True)
+    try:
+        head = await run_git_async(repo_root, "rev-parse", "--verify", "HEAD")
+        tree = "HEAD" if head is not None and head.returncode == 0 else empty_tree
+        await _checked_index_git(repo_root, index_name, "read-tree", tree)
+        await _checked_index_git(repo_root, index_name, "add", "-A")
+        return (
+            await _checked_index_git(repo_root, index_name, "write-tree")
+        ).stdout.strip()
+    finally:
+        Path(index_name).unlink(missing_ok=True)
+
+
+async def _hook_dirs(workspace: Path, hooks_dir: Path | None) -> list[Path]:
+    if hooks_dir is not None:
+        return [hooks_dir]
+    directories = [app_root() / HOOKS_DIR]
+    if repo_root := await _repo_root(workspace):
+        directories.append(repo_root / ".faltoobot" / HOOKS_DIR)
+    return directories
+
+
+async def _load_hooks(
+    workspace: Path, *, hooks_dir: Path | None = None
+) -> list[HookCheck]:
     hooks: list[HookCheck] = []
-    for directory in _hook_dirs(workspace, hooks_dir):
+    for directory in await _hook_dirs(workspace, hooks_dir):
         if not directory.exists():
             continue
         for path in sorted(directory.iterdir(), key=lambda item: item.name):
@@ -131,62 +157,49 @@ def load_hooks(workspace: Path, *, hooks_dir: Path | None = None) -> list[HookCh
                 )
                 for item in payload
             )
+
+    hook_names = [hook.name for hook in hooks]
+    # Trigger responses identify hooks by name, so configured names must be unique.
+    if len(hook_names) != len(set(hook_names)):
+        raise ValueError("Hook names must be unique")
     return hooks
 
 
-async def run_hook_events(
-    workspace: Path,
-    diff_text: str,
-    *,
-    messages: MessageHistory,
-    instructions: str,
-) -> AsyncIterator[StreamingReplyItem]:
-    if not diff_text.strip():
-        return
+def _review_prompt(hook: HookCheck, diff_text: str) -> str:
+    return f"""You are running a user-defined code-review hook against the supplied code changes.
 
-    hooks = load_hooks(workspace)
-    if not hooks:
-        return
-    for hook in hooks:
-        yield _hook_event("running", hook_name=hook.name)
+Review hook instructions:
+<hook_instructions>
+{hook.prompt}
+</hook_instructions>
 
-    trigger_response = await _run_hook_sub_agent(
-        _trigger_prompt(hooks, diff_text),
-        None,
-        response_format=TRIGGER_RESPONSE_FORMAT,
-        messages=None,
-        instructions="",
+Code changes to review:
+<diff>
+{diff_text}
+</diff>
+
+Review only issues covered by the hook instructions. Return concise, actionable feedback describing what should be changed.""".strip()
+
+
+def _trigger_prompt(hooks: Sequence[HookCheck], diff_text: str) -> str:
+    hook_lines = "\n\n".join(
+        f"Hook name: {hook.name}\nTrigger condition:\n{hook.trigger}" for hook in hooks
     )
-    trigger_results = {
-        int(item["index"]): bool(item["run"])
-        for item in json.loads(trigger_response)["results"]
-    }
+    return f"""This is a diff of some code changes:
+<diff>
+{diff_text}
+</diff>
 
-    triggered_hooks: list[HookCheck] = []
-    for index, hook in enumerate(hooks):
-        if not trigger_results[index]:
-            yield _hook_event("skipped", hook_name=hook.name)
-            continue
-        yield _hook_event("triggered", hook_name=hook.name)
-        triggered_hooks.append(hook)
+These are the user's code-review hooks:
+<hooks>
+{hook_lines}
+</hooks>
 
-    feedback_texts = await asyncio.gather(
-        *(
-            _run_hook_sub_agent(
-                _review_prompt(hook, diff_text),
-                hook.model,
-                messages=_trim_history_for_hook(messages),
-                instructions=instructions,
-            )
-            for hook in triggered_hooks
-        )
-    )
-    for hook, feedback_text in zip(triggered_hooks, feedback_texts, strict=True):
-        feedback_item = HookFeedback(hook.name, feedback_text.strip())
-        yield _hook_event("feedback", feedback_item=feedback_item)
+Return the names of the hooks that should run.""".strip()
 
 
 def _trim_history_for_hook(messages: MessageHistory) -> MessageHistory:
+    """Keep recent history within budget without orphaned tool outputs."""
     char_budget = HOOK_REVIEW_CONTEXT_TOKEN_BUDGET * 4
     kept: MessageHistory = []
     total_chars = 0
@@ -204,156 +217,205 @@ def _trim_history_for_hook(messages: MessageHistory) -> MessageHistory:
     return trimmed
 
 
+def _parsed_hook_trigger(response: Any) -> HookTriggerResponse:
+    # Refusals and empty responses have no parsed structured output.
+    if response.output_parsed is None:
+        raise RuntimeError("Hook trigger returned no structured output")
+    return response.output_parsed
+
+
+async def _run_hook_trigger(
+    hooks: Sequence[HookCheck],
+    diff_text: str,
+) -> HookTriggerResponse:
+    config = build_config()
+    client = get_openai_client(config)
+    prompt = _trigger_prompt(hooks, diff_text)
+    configured_names = {hook.name for hook in hooks}
+    try:
+        response = await client.responses.parse(
+            model=config.hook_model,
+            input=prompt,
+            instructions=HOOK_TRIGGER_INSTRUCTIONS,
+            store=False,
+            text_format=HookTriggerResponse,
+        )
+        parsed = _parsed_hook_trigger(response)
+        unknown_names = set(parsed.hooks_to_run) - configured_names
+        if not unknown_names:
+            return parsed
+
+        correction = f"""These hook names do not exist: {", ".join(sorted(unknown_names))}.
+Choose only from these configured hooks: {", ".join(sorted(configured_names))}.
+Return a corrected response."""
+        response = await client.responses.parse(
+            model=config.hook_model,
+            input=cast(
+                Any,
+                [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": parsed.model_dump_json()},
+                    {"role": "user", "content": correction},
+                ],
+            ),
+            instructions=HOOK_TRIGGER_INSTRUCTIONS,
+            store=False,
+            text_format=HookTriggerResponse,
+        )
+        parsed = _parsed_hook_trigger(response)
+    finally:
+        await client.close()
+
+    unknown_names = set(parsed.hooks_to_run) - configured_names
+    if unknown_names:
+        raise RuntimeError(
+            f"Hook trigger returned unknown hooks: {', '.join(sorted(unknown_names))}"
+        )
+    return parsed
+
+
+async def _run_hook_review(
+    hook: HookCheck,
+    diff_text: str,
+    *,
+    messages: MessageHistory,
+    instructions: str,
+) -> str:
+    config = build_config()
+    client = get_openai_client(config)
+    try:
+        response = await client.responses.create(
+            model=hook.model or config.hook_model,
+            input=cast(
+                Any,
+                trim_input(
+                    [
+                        *_trim_history_for_hook(messages),
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": _review_prompt(hook, diff_text),
+                        },
+                    ],
+                    replace_unavailable_uploads=uses_chatgpt_oauth(config),
+                ),
+            ),
+            instructions=instructions or None,
+            store=False,
+        )
+    finally:
+        await client.close()
+    return response.output_text
+
+
+def format_feedback(feedback: Sequence[tuple[str, str]]) -> str:
+    sections = [f"### {hook_name}\n\n{text}" for hook_name, text in feedback]
+    return """## Automated code-review hook feedback
+
+The following feedback came from automated review hooks. Use your judgment: address relevant findings and ignore anything incorrect or inapplicable.
+
+""" + "\n\n".join(sections)
+
+
 def _hook_event(
-    status: str,
+    status: HookStatus,
     *,
     hook_name: str = "",
-    feedback_item: HookFeedback | None = None,
-) -> StreamingReplyItem:
-    if feedback_item is not None:
-        text = format_feedback([feedback_item])
+    feedback: str | None = None,
+) -> HookEvent:
+    if feedback is not None:
+        text = format_feedback([(hook_name, feedback)])
     elif status == "running":
         text = f"Running post-response hook: {hook_name}"
     else:
         text = f"{hook_name}: hook {status}"
-    return cast(
-        StreamingReplyItem,
-        SimpleNamespace(
-            type="faltoobot.post_response_hook",
-            text=text,
-            hook_name=hook_name,
-            status=status,
-            feedback_item=feedback_item,
-        ),
+    return HookEvent(
+        text=text,
+        hook_name=hook_name,
+        status=status,
+        feedback=feedback,
     )
 
 
-async def _run_hook_sub_agent(
-    prompt: str,
-    model: str | None,
-    *,
-    response_format: dict[str, Any] | None = None,
-    messages: MessageHistory | None,
-    instructions: str,
-) -> str:
-    config = build_config()
-    hook_model = model or config.hook_model
-    input_items = trim_input(
-        [*(messages or []), {"type": "message", "role": "user", "content": prompt}],
-        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+async def _diff_for_scope(workspace: Path, scope: HookDiffScope) -> str:
+    repo_root = await _repo_root(workspace)
+    if repo_root is None:
+        return ""
+    after_tree = await _write_worktree_tree(repo_root)
+    if scope == HookDiffScope.UNSTAGED:
+        before_tree = (await _checked_git(repo_root, "write-tree")).stdout.strip()
+    else:
+        head = await run_git_async(repo_root, "rev-parse", "--verify", "HEAD")
+        if head is not None and head.returncode == 0:
+            before_tree = (
+                await _checked_git(repo_root, "rev-parse", "HEAD^{tree}")
+            ).stdout.strip()
+        else:
+            # Git's well-known empty tree lets diffs work before the first commit.
+            before_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    return await _diff_trees(repo_root, before_tree, after_tree)
+
+
+async def _diff_since(snapshot: Snapshot | None) -> str:
+    if snapshot is None:
+        return ""
+    return await _diff_trees(
+        snapshot.repo_root,
+        snapshot.tree,
+        await _write_worktree_tree(snapshot.repo_root),
     )
-    client = get_openai_client(config)
-    output_text = ""
-    try:
-        stream = await client.responses.create(
-            model=hook_model,
-            input=cast(Any, input_items),
-            instructions=instructions or None,
-            store=False,
-            stream=True,
-            text=cast(Any, {"format": response_format}) if response_format else omit,
-        )
-        async with stream:
-            async for event in stream:
-                if event.type == "response.output_text.done":
-                    output_text = str(getattr(event, "text", ""))
-    finally:
-        await client.close()
-    return output_text
 
 
-def format_feedback(feedback: Sequence[HookFeedback]) -> str:
-    sections = [f"### {item.hook_name}\n\n{item.feedback}" for item in feedback]
-    return "## Post-response hook feedback\n\n" + "\n\n".join(sections)
-
-
-def _hook_dirs(workspace: Path, hooks_dir: Path | None) -> list[Path]:
-    if hooks_dir is not None:
-        return [hooks_dir]
-    directories = [app_root() / HOOKS_DIR]
-    if repo_root := _repo_root(workspace):
-        directories.append(repo_root / ".faltoobot" / HOOKS_DIR)
-    return directories
-
-
-def _trigger_prompt(hooks: Sequence[HookCheck], diff_text: str) -> str:
-    hook_lines = "\n\n".join(
-        f"Hook index: {index}\nHook name: {hook.name}\nTrigger condition:\n{hook.trigger}"
-        for index, hook in enumerate(hooks)
-    )
-    return f"""You are deciding which post-response hooks should run.
-Return one result for each hook index.
-
-{hook_lines}
-
-Incremental diff from the assistant's last response:
-<diff>
-{diff_text}
-</diff>""".strip()
-
-
-def _review_prompt(hook: HookCheck, diff_text: str) -> str:
-    return f"""{hook.prompt}
-
-Incremental diff from the assistant's last response:
-<diff>
-{diff_text}
-</diff>""".strip()
-
-
-def _write_worktree_tree(repo_root: Path) -> str:
-    # Git's well-known empty tree lets snapshots work before the first commit.
-    empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-    fd, index_name = tempfile.mkstemp(prefix="faltoobot-hooks-index-")
-    os.close(fd)
-    Path(index_name).unlink(missing_ok=True)
-    try:
-        head = run_git(repo_root, "rev-parse", "--verify", "HEAD")
-        tree = "HEAD" if head is not None and head.returncode == 0 else empty_tree
-        _checked_index_git(repo_root, index_name, "read-tree", tree)
-        _checked_index_git(repo_root, index_name, "add", "-A")
-        return _checked_index_git(repo_root, index_name, "write-tree").stdout.strip()
-    finally:
-        Path(index_name).unlink(missing_ok=True)
-
-
-def _diff_trees(repo_root: Path, before_tree: str, after_tree: str) -> str:
-    result = run_git(repo_root, "diff", before_tree, after_tree)
-    if result is None:
-        raise RuntimeError("Git executable not found.")
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout).strip())
-    return result.stdout.strip()
-
-
-def _checked_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    result = run_git(repo_root, *args)
-    if result is None:
-        raise RuntimeError("Git executable not found.")
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout).strip())
-    return result
-
-
-def _checked_index_git(
-    repo_root: Path, index_name: str, *args: str
-) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo_root,
-        env={**os.environ, "GIT_INDEX_FILE": index_name},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout).strip())
-    return result
-
-
-def _repo_root(workspace: Path) -> Path | None:
-    result = run_git(workspace, "rev-parse", "--show-toplevel")
-    if result is None or result.returncode != 0:
+async def capture_snapshot(workspace: Path) -> Snapshot | None:
+    repo_root = await _repo_root(workspace)
+    if repo_root is None:
         return None
-    text = result.stdout.strip()
-    return Path(text) if text else None
+    return Snapshot(repo_root=repo_root, tree=await _write_worktree_tree(repo_root))
+
+
+async def run_hooks(
+    workspace: Path,
+    against: Snapshot | HookDiffScope | None,
+    *,
+    messages: MessageHistory,
+    instructions: str,
+) -> AsyncIterator[HookEvent]:
+    """Run matching hooks against a snapshot or selected Git changes."""
+    if isinstance(against, HookDiffScope):
+        diff_text = await _diff_for_scope(workspace, against)
+    else:
+        diff_text = await _diff_since(against)
+    if not diff_text.strip():
+        return
+
+    hooks = await _load_hooks(workspace)
+    if not hooks:
+        return
+    for hook in hooks:
+        yield _hook_event("running", hook_name=hook.name)
+
+    trigger_response = await _run_hook_trigger(hooks, diff_text)
+    triggered_names = set(trigger_response.hooks_to_run)
+    triggered_hooks: list[HookCheck] = []
+    for hook in hooks:
+        if hook.name not in triggered_names:
+            yield _hook_event("skipped", hook_name=hook.name)
+            continue
+        yield _hook_event("triggered", hook_name=hook.name)
+        triggered_hooks.append(hook)
+
+    feedback_texts = await asyncio.gather(
+        *(
+            _run_hook_review(
+                hook,
+                diff_text,
+                messages=messages,
+                instructions=instructions,
+            )
+            for hook in triggered_hooks
+        )
+    )
+    for hook, feedback in zip(triggered_hooks, feedback_texts, strict=True):
+        # An empty review means the hook found nothing for the assistant to change.
+        if feedback := feedback.strip():
+            yield _hook_event("feedback", hook_name=hook.name, feedback=feedback)
