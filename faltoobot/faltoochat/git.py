@@ -1,4 +1,6 @@
+import asyncio
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +22,50 @@ def _run_git(
             check=False,
         )
     except FileNotFoundError:
-        # comment: missing workspace/git should behave like an empty git result.
+        # Missing Git or workspace behaves like an unavailable repository.
         return None
+
+
+async def run_git_async(
+    workspace: Path,
+    *args: str,
+    input: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    command = ["git", *args]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=workspace,
+            env=env,
+            stdin=asyncio.subprocess.PIPE if input is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        # Missing Git or workspace behaves like an unavailable repository.
+        return None
+
+    try:
+        stdout, stderr = await process.communicate(
+            input.encode() if input is not None else None
+        )
+    except asyncio.CancelledError:
+        # Stop Git before callers delete temporary files it may still be using.
+        with suppress(ProcessLookupError):
+            process.terminate()
+        await process.wait()
+        raise
+
+    returncode = process.returncode
+    assert returncode is not None
+    result: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(
+        command,
+        returncode,
+        stdout.decode(),
+        stderr.decode(),
+    )
+    return result
 
 
 def stage_file(workspace: Path, file_path: Path) -> str | None:

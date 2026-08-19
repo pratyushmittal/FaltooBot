@@ -27,9 +27,9 @@ from textual.widgets import (
     TextArea,
 )
 
-from faltoobot import notify_queue, sessions
+from faltoobot import notify_queue, post_response_hooks, sessions
 from faltoobot.changelog import available_update_notice, consume_changelog_update
-from faltoobot.config import load_textual_theme, save_textual_theme
+from faltoobot.config import build_config, load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
 from faltoobot.faltoochat.logging_config import configure_logging
 from faltoobot.faltoochat.terminal import (
@@ -555,13 +555,22 @@ class FaltooChatApp(App[None]):
         await transcript.mount(Markdown(text, classes="answer"))
         transcript.anchor()
 
-    async def _stream_events(self, transcript: VerticalScroll) -> None:
+    async def _stream_events(
+        self,
+        transcript: VerticalScroll,
+        against: post_response_hooks.HookDiffScope | None = None,
+    ) -> None:
         block: Markdown | None = None
         answer_stream: Any | None = None
         raw_text = ""
         transcript.anchor()
 
-        async for event in sessions.get_answer_streaming(self.session):
+        stream = (
+            sessions.get_answer_streaming_with_hooks(self.session, against=against)
+            if against is not None or getattr(build_config(), "hook_enabled", False)
+            else sessions.get_answer_streaming(self.session)
+        )
+        async for event in stream:
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
@@ -621,12 +630,17 @@ class FaltooChatApp(App[None]):
             attachments=attachments,
         )
 
-    async def _start_streaming(self, transcript: VerticalScroll) -> None:
+    async def _start_streaming(
+        self,
+        transcript: VerticalScroll,
+        *,
+        against: post_response_hooks.HookDiffScope | None = None,
+    ) -> None:
         completed = False
         composer = self.composer
         composer.border_subtitle = "answering · Ctrl+C to stop"
         try:
-            await self._stream_events(transcript)
+            await self._stream_events(transcript, against)
         except asyncio.CancelledError:
             # comment: user/app cancellations leave messages.json unchanged.
             pass

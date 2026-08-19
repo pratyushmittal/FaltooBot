@@ -22,6 +22,8 @@ dependencies = [
   "textual-speedups>=0.2.1",
   "certifi>=2026.4.22",
   "websockets>=16.0",
+  "pydantic>=2.13.0",
+  "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

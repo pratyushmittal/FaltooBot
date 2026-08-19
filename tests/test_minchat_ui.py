@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 from textual import events
 
-from faltoobot import sessions
+from faltoobot import post_response_hooks, sessions
 from faltoobot.faltoochat import submit_queue
 from faltoobot.faltoochat.app import (
     AttachmentCheckbox,
@@ -25,6 +25,7 @@ from faltoobot.faltoochat.widgets import (
     TextInputModal,
 )
 from faltoobot.faltoochat.widgets.search_file import SearchFile
+from faltoobot.faltoochat.widgets.telescope import Telescope
 from textual.widgets import Input, Markdown, OptionList, Static, TabbedContent
 
 
@@ -224,6 +225,7 @@ async def test_minchat_shows_slash_command_suggestions(
             "/name — name the current session",
             "/reset — start a fresh session",
             "/resume — resume another session",
+            "/run-hooks — run hooks for git changes",
             "/status — show bot status",
             "/tree — open the current session messages file",
         ]
@@ -568,6 +570,71 @@ async def test_minchat_enter_applies_highlighted_slash_command(
 
         assert composer.text == "/reset"
         assert composer.cursor_location == (0, len("/reset"))
+
+
+@pytest.mark.anyio
+async def test_minchat_run_hooks_command_streams_selected_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, app = build_app(tmp_path, monkeypatch)
+    seen_hook_runs: list[
+        tuple[sessions.Session, post_response_hooks.HookDiffScope]
+    ] = []
+
+    async def fake_get_answer_streaming_with_hooks(
+        session: sessions.Session,
+        against: post_response_hooks.HookDiffScope | None = None,
+    ):
+        assert against is not None
+        seen_hook_runs.append((session, against))
+        yield post_response_hooks.HookEvent(
+            text="Running post-response hook: Manual",
+            hook_name="Manual",
+            status="running",
+        )
+        yield post_response_hooks.HookEvent(
+            text="Manual: hook triggered",
+            hook_name="Manual",
+            status="triggered",
+        )
+        yield post_response_hooks.HookEvent(
+            text="## Automated code-review hook feedback",
+            hook_name="Manual",
+            status="feedback",
+            feedback="feedback",
+        )
+
+    monkeypatch.setattr(
+        sessions,
+        "get_answer_streaming_with_hooks",
+        fake_get_answer_streaming_with_hooks,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        composer = app.query_one("#composer", Composer)
+        composer.focus()
+        composer.load_text("/run-hooks")
+        await composer.action_composer_enter()
+        await wait_for_condition(lambda: isinstance(app.screen, Telescope))
+        await wait_for_condition(lambda: bool(cast(Telescope[Any], app.screen).results))
+        await pilot.press("down", "enter")
+        await pilot.pause(0)
+
+        await wait_for_condition(
+            lambda: any(
+                "Automated code-review hook feedback" in block._markdown
+                for block in app.transcript.query(Markdown)
+            )
+        )
+
+        blocks = [block._markdown for block in app.transcript.query(Markdown)]
+        assert seen_hook_runs == [
+            (app.session, post_response_hooks.HookDiffScope.UNSTAGED)
+        ]
+        assert "Running post-response hook: Manual" in blocks
+        assert "Manual: hook triggered" in blocks
+        assert "## Automated code-review hook feedback" in blocks
 
 
 @pytest.mark.anyio

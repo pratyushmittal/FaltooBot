@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import pytest
 
+from faltoobot import post_response_hooks
 from faltoobot.faltoochat.stream import get_event_text
 
 
@@ -37,6 +38,29 @@ from faltoobot.faltoochat.stream import get_event_text
                 part=SimpleNamespace(text="**Planning** reply"),
             ),
             (True, "thinking", "**Planning** reply"),
+        ),
+        (
+            post_response_hooks.HookEvent(
+                text="Running post-response hook: Refactor Code",
+                hook_name="Refactor Code",
+                status="running",
+            ),
+            (True, "tool", "Running post-response hook: Refactor Code"),
+        ),
+        (
+            post_response_hooks.HookEvent(
+                text=post_response_hooks.format_feedback(
+                    [("Refactor", "full feedback")]
+                ),
+                hook_name="Refactor",
+                status="feedback",
+                feedback="full feedback",
+            ),
+            (
+                True,
+                "tool",
+                post_response_hooks.format_feedback([("Refactor", "full feedback")]),
+            ),
         ),
         (
             SimpleNamespace(

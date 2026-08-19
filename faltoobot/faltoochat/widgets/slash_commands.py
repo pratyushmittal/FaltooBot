@@ -5,12 +5,13 @@ from uuid import uuid4
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
-from faltoobot import sessions
+from faltoobot import post_response_hooks, sessions
 from faltoobot.config import build_config, config_status_text
 from faltoobot.faltoochat.terminal import open_in_default_editor
 from faltoobot.session_utils import get_local_user_message_item
 
 from .session_picker import SessionPicker
+from .telescope import Telescope
 from .text_input_modal import TextInputModal
 
 from ..slash_commands import SlashCommandStore
@@ -24,6 +25,7 @@ SLASH_COMMANDS = {
     "/name": "name the current session",
     "/reset": "start a fresh session",
     "/resume": "resume another session",
+    "/run-hooks": "run hooks for git changes",
     "/status": "show bot status",
     "/tree": "open the current session messages file",
 }
@@ -56,6 +58,30 @@ def _open_name_modal(app: "FaltooChatApp") -> None:
             title="Name session",
             placeholder="Enter a session name",
             allow_empty=True,
+        ),
+        on_result,
+    )
+
+
+def _open_run_hooks_picker(app: "FaltooChatApp") -> None:
+    async def on_result(scope: post_response_hooks.HookDiffScope | None) -> None:
+        if scope is not None:
+            app.is_answering = True
+            app.refresh_terminal_title()
+            app.active_stream_worker = app.run_worker(
+                app._start_streaming(
+                    app.transcript,
+                    against=scope,
+                ),
+                exclusive=True,
+            )
+        app.focus_composer()
+
+    app.push_screen(
+        Telescope(
+            items=list(post_response_hooks.HookDiffScope),
+            title="Run post-response hooks",
+            placeholder="Choose git changes to send to hooks",
         ),
         on_result,
     )
@@ -152,6 +178,8 @@ class SlashCommandsOptionList(OptionList):
                 await app.queue().refresh_queue()
             case "/resume":
                 _open_resume_picker(app)
+            case "/run-hooks":
+                _open_run_hooks_picker(app)
             case "/status":
                 await app.show_local_answer(
                     config_status_text(
