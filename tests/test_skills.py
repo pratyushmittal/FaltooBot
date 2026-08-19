@@ -319,3 +319,13 @@ def test_bundled_skills_do_not_reference_removed_python_shell_tool() -> None:
 
     assert "run_in_python_shell" not in text
     assert "uv run --with" in text
+
+
+def test_background_notifications_skill_guides_user_requested_recurring_content() -> None:
+    text = Path("faltoobot/skills/background-notifications.md").read_text(encoding="utf-8")
+
+    assert "user-requested recurring content" in text
+    assert "daily slang" in text
+    assert "cron:daily-genz-slang" in text
+    assert "not suppressed as noise" in text
+    assert "true noise" in text
