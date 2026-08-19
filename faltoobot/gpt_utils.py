@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from enum import Enum
@@ -22,6 +23,10 @@ from faltoobot.config import Config
 from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
 
 COMPACT_THRESHOLD = 200_000
+# OpenAI currently rejects individual encrypted_content strings above 10 MiB.
+# Keep a small margin so oversized auto-compaction/reasoning blobs do not
+# permanently brick a session history.
+MAX_ENCRYPTED_CONTENT_CHARS = 10_000_000
 STANDALONE_COMPACTION_KEY = "_standalone_compaction"
 REQUEST_MAX_RETRIES = 4
 STREAM_IDLE_TIMEOUT_SECONDS = 300
@@ -41,6 +46,7 @@ ToolOutput: TypeAlias = (
 Tool: TypeAlias = Callable[..., ToolOutput] | Callable[..., Awaitable[ToolOutput]]
 MessageItem: TypeAlias = dict[str, Any]
 MessageHistory: TypeAlias = list[MessageItem]
+logger = logging.getLogger(__name__)
 StreamingReplyItem: TypeAlias = (
     ResponsesServerEvent | ResponseFunctionToolCallOutputItem
 )
@@ -198,37 +204,96 @@ def _replace_unavailable_upload(value: Any) -> Any:
     return {key: _replace_unavailable_upload(item) for key, item in value.items()}
 
 
-def trim_input(
-    items: MessageHistory,
-    *,
-    replace_unavailable_uploads: bool = False,
-) -> MessageHistory:
+def _has_oversized_encrypted_content(item: MessageItem) -> bool:
+    encrypted_content = item.get("encrypted_content")
+    return (
+        isinstance(encrypted_content, str)
+        and len(encrypted_content) > MAX_ENCRYPTED_CONTENT_CHARS
+    )
+
+
+def _trim_history_item(item: MessageItem) -> MessageItem | None:
+    if _has_oversized_encrypted_content(item):
+        item_type = item.get("type")
+        logger.warning(
+            "Dropping oversized encrypted response history item; type=%s length=%s",
+            item_type,
+            len(cast(str, item.get("encrypted_content"))),
+        )
+        if item_type in {"compaction", "reasoning"}:
+            # comment: these opaque state items are only useful with encrypted_content.
+            # When the blob exceeds the API per-string limit, replaying it bricks the
+            # session; dropping it preserves newer visible turns and lets the chat heal.
+            return None
+
+    kept_keys = (
+        IMAGE_GENERATION_REPLAY_KEYS
+        if item.get("type") == "image_generation_call"
+        else item.keys() - STRIPPED_MESSAGE_KEYS
+    )
+    return {
+        key: value
+        for key, value in item.items()
+        if key in kept_keys
+        and not (
+            key == "encrypted_content"
+            and isinstance(value, str)
+            and len(value) > MAX_ENCRYPTED_CONTENT_CHARS
+        )
+    }
+
+
+def _auto_compaction_window_start(items: MessageHistory) -> int | None:
     # Auto-compaction items can replace history before that turn.
     for index in range(len(items) - 1, -1, -1):
         if items[index].get("type") != "compaction":
             continue
         if items[index].get(STANDALONE_COMPACTION_KEY):
             # comment: standalone compact output must be replayed as-is.
-            break
+            return None
 
         # Include the user turn that produced this auto-compaction item.
         for start in range(index - 1, -1, -1):
             if items[start].get("role") == "user":
-                items = items[start:]
-                break
-        else:
-            # comment: old/corrupt histories may not have a user item before compaction.
-            items = items[index:]
-        break
+                return start
+
+        # comment: old/corrupt histories may not have a user item before compaction.
+        return index
+    return None
+
+
+def prune_auto_compacted_history(items: MessageHistory) -> bool:
+    """Drop persisted history already superseded by the latest auto-compaction.
+
+    The Responses API can emit auto-compaction items during normal streaming. Those
+    items are enough context to replay the window from the triggering user turn, so
+    keeping every older turn plus prior compaction blobs makes messages.json grow
+    without improving future requests. Mutate in place so active streaming callers
+    keep appending to the same list object.
+    """
+
+    start = _auto_compaction_window_start(items)
+    if start is None or start <= 0:
+        return False
+    del items[:start]
+    return True
+
+
+def trim_input(
+    items: MessageHistory,
+    *,
+    replace_unavailable_uploads: bool = False,
+) -> MessageHistory:
+    start = _auto_compaction_window_start(items)
+    if start is not None:
+        items = items[start:]
 
     trimmed_items: MessageHistory = []
     for item in items:
-        kept_keys = (
-            IMAGE_GENERATION_REPLAY_KEYS
-            if item.get("type") == "image_generation_call"
-            else item.keys() - STRIPPED_MESSAGE_KEYS
-        )
-        trimmed = {key: value for key, value in item.items() if key in kept_keys}
+        trimmed = _trim_history_item(item)
+        if trimmed is None:
+            continue
+
         if replace_unavailable_uploads:
             trimmed = _replace_unavailable_upload(trimmed)
         trimmed_items.append(trimmed)
