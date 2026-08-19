@@ -1,3 +1,4 @@
+import json
 import hashlib
 import logging
 from collections.abc import Sequence
@@ -1050,3 +1051,27 @@ async def test_get_answer_reuses_existing_user_turn(
             "content": [{"type": "output_text", "text": "hello"}],
         },
     ]
+
+
+def test_write_json_atomic_streams_and_replaces(tmp_path: Path) -> None:
+    path = tmp_path / "nested" / "messages.json"
+
+    sessions._write_json_atomic(path, {"messages": [{"content": "hello"}]})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "messages": [{"content": "hello"}]
+    }
+    assert path.read_text(encoding="utf-8").endswith("\n")
+    assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_write_json_atomic_removes_temp_after_serialization_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "messages.json"
+
+    with pytest.raises(TypeError):
+        sessions._write_json_atomic(path, {"bad": object()})
+
+    assert not path.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
