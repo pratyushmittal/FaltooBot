@@ -596,12 +596,7 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
             text="Manual: hook triggered",
             hook_name="Manual",
             status="triggered",
-        )
-        yield post_response_hooks.HookEvent(
-            text="## Automated code-review hook feedback",
-            hook_name="Manual",
-            status="feedback",
-            feedback="feedback",
+            prompt="Review the changes.",
         )
 
     monkeypatch.setattr(
@@ -623,7 +618,7 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
 
         await wait_for_condition(
             lambda: any(
-                "Automated code-review hook feedback" in block._markdown
+                "Manual: hook triggered" in block._markdown
                 for block in app.transcript.query(Markdown)
             )
         )
@@ -634,7 +629,6 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
         ]
         assert "Running post-response hook: Manual" in blocks
         assert "Manual: hook triggered" in blocks
-        assert "## Automated code-review hook feedback" in blocks
 
 
 @pytest.mark.anyio

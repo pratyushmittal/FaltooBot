@@ -13,7 +13,6 @@ TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
 GEMINI_MODEL = "gemini-3.1-flash-image-preview"
-DEFAULT_HOOK_MODEL = "gpt-5.3-codex-spark"
 
 
 @dataclass(slots=True)
@@ -36,8 +35,7 @@ class Config:
     allowed_chats: set[str]
     bot_name: str
     browser_binary: str
-    hook_model: str = DEFAULT_HOOK_MODEL
-    hook_enabled: bool = False
+    hooks: bool = False
     gemini_api_key: str = ""
     gemini_model: str = GEMINI_MODEL
     google_places_api_key: str = ""
@@ -48,7 +46,7 @@ def app_root() -> Path:
     return Path.home() / ".faltoobot"
 
 
-def default_config() -> dict[str, dict[str, Any]]:
+def default_config() -> dict[str, Any]:
     return {
         "openai": {
             "api_key": "",
@@ -61,7 +59,7 @@ def default_config() -> dict[str, dict[str, Any]]:
         },
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
         "google": {"places_api_key": ""},
-        "hooks": {"model": DEFAULT_HOOK_MODEL, "enabled": False},
+        "hooks": False,
         "ui": {"theme": ""},
         "browser": {"binary": None},
         "bot": {
@@ -72,13 +70,13 @@ def default_config() -> dict[str, dict[str, Any]]:
     }
 
 
-def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def merge_config(data: dict[str, Any]) -> dict[str, Any]:
     defaults = default_config()
     openai = as_dict(data.get("openai"))
     gemini = as_dict(data.get("gemini"))
     ui = as_dict(data.get("ui"))
     google = as_dict(data.get("google"))
-    hooks = as_dict(data.get("hooks"))
+    hooks = data.get("hooks", defaults["hooks"])
     browser = as_dict(data.get("browser"))
     bot = as_dict(data.get("bot"))
     return {
@@ -108,10 +106,10 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 google.get("places_api_key"), defaults["google"]["places_api_key"]
             ),
         },
-        "hooks": {
-            "model": as_str(hooks.get("model"), defaults["hooks"]["model"]),
-            "enabled": as_bool(hooks.get("enabled"), defaults["hooks"]["enabled"]),
-        },
+        "hooks": as_bool(
+            hooks.get("enabled") if isinstance(hooks, dict) else hooks,
+            bool(defaults["hooks"]),
+        ),
         "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
         "browser": {
             "binary": as_str(browser.get("binary"), ""),
@@ -148,14 +146,13 @@ def quote(value: str) -> str:
     return json.dumps(value)
 
 
-def render_config(data: dict[str, dict[str, Any]]) -> str:
+def render_config(data: dict[str, Any]) -> str:
     data = merge_config(data)
     bot = data["bot"]
     openai = data["openai"]
     gemini = data["gemini"]
     ui = data["ui"]
     google = data["google"]
-    hooks = data["hooks"]
     browser = data["browser"]
     allow_group_chats = (
         bot["allow_group_chats"] if isinstance(bot["allow_group_chats"], list) else []
@@ -170,6 +167,8 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     return "\n".join(
         [
             "# Faltoobot config",
+            "",
+            f"hooks = {str(bool(data['hooks'])).lower()}",
             "",
             "[openai]",
             f"api_key = {quote(str(openai['api_key']))}",
@@ -186,10 +185,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "",
             "[google]",
             f"places_api_key = {quote(str(google['places_api_key']))}",
-            "",
-            "[hooks]",
-            f"model = {quote(str(hooks['model']))}",
-            f"enabled = {str(bool(hooks['enabled'])).lower()}",
             "",
             "[ui]",
             f"theme = {quote(str(ui['theme']))}",
@@ -276,7 +271,6 @@ def build_config() -> Config:
     browser = data["browser"]
     gemini = data["gemini"]
     google = data["google"]
-    hooks = data["hooks"]
     return Config(
         home=Path.home(),
         root=root,
@@ -296,8 +290,7 @@ def build_config() -> Config:
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
         bot_name=str(bot["bot_name"]),
         browser_binary=str(browser["binary"]),
-        hook_model=str(hooks["model"]),
-        hook_enabled=bool(hooks["enabled"]),
+        hooks=bool(data["hooks"]),
         gemini_api_key=str(gemini["gemini_api_key"])
         or os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=str(gemini["model"]),

@@ -651,7 +651,7 @@ async def get_answer_streaming_with_hooks(
     | post_response_hooks.HookDiffScope
     | None = None,
 ) -> AsyncIterator[StreamingReplyItem | post_response_hooks.HookEvent]:
-    """Stream an answer and repeat while post-response hooks return feedback."""
+    """Stream an answer and repeat while post-response hooks match."""
     iteration = 0
 
     while True:
@@ -662,24 +662,16 @@ async def get_answer_streaming_with_hooks(
             against = await post_response_hooks.capture_snapshot(workspace)
             async for event in get_answer_streaming(session):
                 yield event
-            messages_json = get_messages(session)
 
-        feedback: list[tuple[str, str]] = []
-        async for event in post_response_hooks.run_hooks(
-            workspace,
-            against,
-            messages=[*messages_json["messages"]],
-            instructions=get_system_instructions(
-                build_config(), session.chat_key, workspace
-            ),
-        ):
-            if event.feedback is not None:
-                feedback.append((event.hook_name, event.feedback))
+        prompts: list[str] = []
+        async for event in post_response_hooks.run_hooks(workspace, against):
+            if event.prompt is not None:
+                prompts.append(event.prompt)
             yield event
 
-        if not feedback:
+        if not prompts:
             return
-        # Repeated feedback must not keep the assistant running indefinitely.
+        # Repeated hook prompts must not keep the assistant running indefinitely.
         if iteration >= post_response_hooks.DEFAULT_MAX_ITERATIONS:
             text = "Post-response hooks stopped after max iterations"
             logger.warning(text)
@@ -690,7 +682,8 @@ async def get_answer_streaming_with_hooks(
             )
             return
 
-        append_developer_message(session, post_response_hooks.format_feedback(feedback))
+        for prompt in prompts:
+            append_developer_message(session, prompt)
         against = None
         iteration += 1
 
@@ -722,7 +715,7 @@ async def get_answer(session: Session) -> str:
     generated_images = ""
     stream = (
         get_answer_streaming_with_hooks(session)
-        if getattr(build_config(), "hook_enabled", False)
+        if build_config().hooks
         else get_answer_streaming(session)
     )
     async for event in stream:

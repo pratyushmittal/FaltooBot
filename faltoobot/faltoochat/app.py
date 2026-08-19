@@ -567,7 +567,7 @@ class FaltooChatApp(App[None]):
 
         stream = (
             sessions.get_answer_streaming_with_hooks(self.session, against=against)
-            if against is not None or getattr(build_config(), "hook_enabled", False)
+            if against is not None or build_config().hooks
             else sessions.get_answer_streaming(self.session)
         )
         async for event in stream:

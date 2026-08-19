@@ -3,7 +3,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -37,15 +37,12 @@ class HookBDD:
     hooks: list[post_response_hooks.HookCheck] = field(default_factory=list)
     trigger_output: str = '{"hooks_to_run": []}'
     calls: list[tuple[str, str | None, str]] = field(default_factory=list)
-    seen_messages: list[list[dict[str, Any]] | None] = field(default_factory=list)
-    seen_instructions: list[str] = field(default_factory=list)
     captured_response_call: dict[str, object] = field(default_factory=dict)
     parsed_response_calls: list[dict[str, Any]] = field(default_factory=list)
     unknown_trigger_once: bool = False
     session: sessions.Session | None = None
     events: list[Any] = field(default_factory=list)
     stream_calls: int = 0
-    with_transcript_context: bool = False
 
 
 @pytest.fixture
@@ -71,7 +68,7 @@ def _session(ctx: HookBDD) -> sessions.Session:
     return ctx.session
 
 
-def _write_hook(ctx: HookBDD, *, name: str, model: str) -> None:
+def _write_hook(ctx: HookBDD, *, name: str) -> None:
     workspace = ctx.tmp_path / "workspace"
     init_repo(workspace)
     (workspace / "page.html").write_text("<main>before</main>\n", encoding="utf-8")
@@ -81,26 +78,23 @@ def _write_hook(ctx: HookBDD, *, name: str, model: str) -> None:
 
     ctx.hooks_dir = workspace / ".faltoobot" / "hooks"
     ctx.hooks_dir.mkdir(parents=True, exist_ok=True)
-    model_line = f"  model: {model}\n" if model else ""
     (ctx.hooks_dir / "review.yaml").write_text(
-        f"- name: {name}\n{model_line}  trigger: HTML changed\n  prompt: Review HTML.\n",
+        f"- name: {name}\n  trigger: HTML changed\n  prompt: Review HTML.\n",
         encoding="utf-8",
     )
 
 
 def _hook_statuses(events: list[Any]) -> list[str]:
     return [
-        event.status
-        for event in events
-        if event.type == "faltoobot.post_response_hook" and event.feedback is None
+        event.status for event in events if event.type == "faltoobot.post_response_hook"
     ]
 
 
-def _hook_feedback_items(events: list[Any]) -> list[tuple[str, str]]:
+def _hook_prompts(events: list[Any]) -> list[str]:
     return [
-        (event.hook_name, event.feedback)
+        event.prompt
         for event in events
-        if event.type == "faltoobot.post_response_hook" and event.feedback is not None
+        if event.type == "faltoobot.post_response_hook" and event.prompt is not None
     ]
 
 
@@ -122,14 +116,7 @@ def git_workspace_with_no_commits(hook_bdd: HookBDD) -> None:
     hook_bdd.workspace = workspace
 
 
-@given("the user changed the page before the snapshot")
-def user_changed_page_before_snapshot(hook_bdd: HookBDD) -> None:
-    workspace = _workspace(hook_bdd)
-    (workspace / "page.html").write_text("<main>user change</main>\n", encoding="utf-8")
-    (workspace / "preexisting.txt").write_text("already here\n", encoding="utf-8")
-
-
-@when("I capture a post-response snapshot")
+@given("I capture a post-response snapshot")
 def capture_post_response_snapshot(hook_bdd: HookBDD) -> None:
     hook_bdd.snapshot = asyncio.run(
         post_response_hooks.capture_snapshot(_workspace(hook_bdd))
@@ -154,11 +141,10 @@ def assistant_creates_new_file(hook_bdd: HookBDD) -> None:
 
 @then("the incremental diff contains only the assistant changes")
 def incremental_diff_contains_only_assistant_changes(hook_bdd: HookBDD) -> None:
-    assert "user change" in hook_bdd.diff
+    assert "page.html" in hook_bdd.diff
     assert "agent change" in hook_bdd.diff
+    assert "new.txt" in hook_bdd.diff
     assert "new file" in hook_bdd.diff
-    assert "preexisting.txt" not in hook_bdd.diff
-    assert "<main>before</main>" not in hook_bdd.diff
 
 
 @then("the incremental diff contains the new file")
@@ -199,19 +185,16 @@ def loaded_hooks_are(hook_bdd: HookBDD, names: str) -> None:
     assert [hook.name for hook in hook_bdd.hooks] == names.split(",")
 
 
-@given(parsers.parse('a hook file named "{name}" with model "{model}"'))
-def hook_file_named_with_model(hook_bdd: HookBDD, name: str, model: str) -> None:
-    _write_hook(hook_bdd, name=name, model=model)
+@given(parsers.parse('a hook file named "{name}"'))
+def hook_file_named(hook_bdd: HookBDD, name: str) -> None:
+    _write_hook(hook_bdd, name=name)
 
 
 @given("two hook files")
 def two_hook_files(hook_bdd: HookBDD) -> None:
-    _write_hook(hook_bdd, name="Check HTML", model="hook-model")
+    _write_hook(hook_bdd, name="Check HTML")
     (_hooks_dir(hook_bdd) / "second.yaml").write_text(
-        "- name: Check CSS\n"
-        "  model: hook-model\n"
-        "  trigger: CSS changed\n"
-        "  prompt: Review CSS.\n",
+        "- name: Check CSS\n  trigger: CSS changed\n  prompt: Review CSS.\n",
         encoding="utf-8",
     )
 
@@ -231,18 +214,15 @@ def structured_hook_trigger_selects_no_hooks(hook_bdd: HookBDD) -> None:
     hook_bdd.trigger_output = '{"hooks_to_run": []}'
 
 
-@given("transcript context exists")
-def transcript_context_exists(hook_bdd: HookBDD) -> None:
-    hook_bdd.with_transcript_context = True
+@given("HTML changes exist after a post-response snapshot")
+def html_changes_exist_after_snapshot(hook_bdd: HookBDD) -> None:
+    workspace = _workspace(hook_bdd)
+    hook_bdd.snapshot = asyncio.run(post_response_hooks.capture_snapshot(workspace))
+    (workspace / "page.html").write_text("<main>html diff</main>\n", encoding="utf-8")
 
 
-@when("I run the hook")
+@when("I run the hooks")
 def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        post_response_hooks,
-        "build_config",
-        lambda: SimpleNamespace(hook_model="config-model"),
-    )
     monkeypatch.setattr(
         post_response_hooks, "app_root", lambda: hook_bdd.tmp_path / "home"
     )
@@ -258,38 +238,13 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
             hook_bdd.trigger_output
         )
 
-    async def fake_hook_review(
-        hook: post_response_hooks.HookCheck,
-        diff_text: str,
-        *,
-        messages: list[dict[str, Any]],
-        instructions: str,
-    ) -> str:
-        hook_bdd.calls.append(
-            (post_response_hooks._review_prompt(hook, diff_text), hook.model, "review")
-        )
-        hook_bdd.seen_messages.append(messages)
-        hook_bdd.seen_instructions.append(instructions)
-        return "feedback"
-
     monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", fake_hook_trigger)
-    monkeypatch.setattr(post_response_hooks, "_run_hook_review", fake_hook_review)
-    workspace = _workspace(hook_bdd)
-    snapshot = asyncio.run(post_response_hooks.capture_snapshot(workspace))
-    (workspace / "page.html").write_text("<main>html diff</main>\n", encoding="utf-8")
-    kwargs: dict[str, Any] = {
-        "messages": [],
-        "instructions": "",
-    }
-    if hook_bdd.with_transcript_context:
-        kwargs["messages"] = [{"role": "assistant", "content": "existing context"}]
-        kwargs["instructions"] = "system prompt"
 
     async def collect_events() -> list[Any]:
         return [
             event
             async for event in post_response_hooks.run_hooks(
-                workspace, snapshot, **kwargs
+                _workspace(hook_bdd), hook_bdd.snapshot
             )
         ]
 
@@ -306,15 +261,14 @@ def hook_is_skipped(hook_bdd: HookBDD) -> None:
     assert _hook_statuses(hook_bdd.events) == ["running", "skipped"]
 
 
-@then(parsers.parse('the hook feedback is "{feedback}"'))
-def hook_feedback_is(hook_bdd: HookBDD, feedback: str) -> None:
-    assert _hook_feedback_items(hook_bdd.events) == [("Check HTML", feedback)]
+@then(parsers.parse('the hook prompt is "{prompt}"'))
+def hook_prompt_is(hook_bdd: HookBDD, prompt: str) -> None:
+    assert _hook_prompts(hook_bdd.events) == [prompt]
 
 
-@then("only the trigger uses a structured response format")
-def only_trigger_uses_structured_format(hook_bdd: HookBDD) -> None:
-    assert [call[1] for call in hook_bdd.calls] == [None, "hook-model"]
-    assert [call[2] for call in hook_bdd.calls] == ["trigger", "review"]
+@then("only the trigger model is called")
+def only_trigger_model_is_called(hook_bdd: HookBDD) -> None:
+    assert [call[2] for call in hook_bdd.calls] == ["trigger"]
 
 
 @then("batched hook statuses show one skipped and one triggered")
@@ -334,34 +288,36 @@ def trigger_is_called_once(hook_bdd: HookBDD) -> None:
     assert trigger_calls[0][1] is None
 
 
-@then("review is not called")
-def review_is_not_called(hook_bdd: HookBDD) -> None:
-    assert len(hook_bdd.calls) == 1
-    assert hook_bdd.calls[0][2] == "trigger"
-
-
-@then("review receives the transcript context")
-def review_receives_transcript_context(hook_bdd: HookBDD) -> None:
-    assert _hook_statuses(hook_bdd.events) == ["running", "triggered"]
-    assert "Trigger condition" in hook_bdd.calls[0][0]
-    assert (
-        "<hook_instructions>\nReview HTML.\n</hook_instructions>"
-        in hook_bdd.calls[1][0]
-    )
-    assert "Code changes to review" in hook_bdd.calls[1][0]
-    assert "html diff" in hook_bdd.calls[1][0]
-    assert hook_bdd.seen_messages == [
-        [{"role": "assistant", "content": "existing context"}]
-    ]
-    assert hook_bdd.seen_instructions == ["system prompt"]
+@then("no hook prompt is queued")
+def no_hook_prompt_is_queued(hook_bdd: HookBDD) -> None:
+    assert _hook_prompts(hook_bdd.events) == []
+    assert [call[2] for call in hook_bdd.calls] == ["trigger"]
 
 
 @given("a fake parsed Responses client")
 def fake_parsed_responses_client(
     hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    class FakeStream:
+        def __init__(self, hook_name: str) -> None:
+            self.hook_name = hook_name
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+        async def __aiter__(self):
+            yield SimpleNamespace(
+                type="response.output_text.done",
+                text=post_response_hooks.HookTriggerResponse(
+                    hooks_to_run=[self.hook_name]
+                ).model_dump_json(),
+            )
+
     class FakeResponses:
-        async def parse(self, **kwargs):
+        def stream(self, **kwargs):
             hook_bdd.captured_response_call.update(kwargs)
             hook_bdd.parsed_response_calls.append(kwargs)
             hook_name = (
@@ -370,11 +326,7 @@ def fake_parsed_responses_client(
                 and len(hook_bdd.parsed_response_calls) == 1
                 else "Check HTML"
             )
-            return SimpleNamespace(
-                output_parsed=post_response_hooks.HookTriggerResponse(
-                    hooks_to_run=[hook_name]
-                )
-            )
+            return FakeStream(hook_name)
 
     class FakeClient:
         responses = FakeResponses()
@@ -385,7 +337,7 @@ def fake_parsed_responses_client(
     monkeypatch.setattr(
         post_response_hooks,
         "build_config",
-        lambda: SimpleNamespace(hook_model="config-model", openai_oauth=""),
+        lambda: SimpleNamespace(),
     )
     monkeypatch.setattr(
         post_response_hooks, "get_openai_client", lambda _config: FakeClient()
@@ -414,11 +366,17 @@ def requests_parsed_structured_responses_input(hook_bdd: HookBDD) -> None:
     assert hook_bdd.events == [
         post_response_hooks.HookTriggerResponse(hooks_to_run=["Check HTML"])
     ]
-    assert hook_bdd.captured_response_call["model"] == "config-model"
-    prompt = str(hook_bdd.captured_response_call["input"])
-    assert "Check HTML" in prompt
-    assert "HTML changed" in prompt
-    assert "diff" in prompt
+    assert (
+        hook_bdd.captured_response_call["model"]
+        == post_response_hooks.HOOK_TRIGGER_MODEL
+    )
+    input_items = hook_bdd.captured_response_call["input"]
+    assert isinstance(input_items, list)
+    prompt = cast(dict[str, str], input_items[0])
+    assert prompt["role"] == "user"
+    assert "Check HTML" in prompt["content"]
+    assert "HTML changed" in prompt["content"]
+    assert "diff" in prompt["content"]
     assert (
         hook_bdd.captured_response_call["instructions"]
         == post_response_hooks.HOOK_TRIGGER_INSTRUCTIONS
@@ -452,7 +410,7 @@ def hook_enabled_session_with_one_hook(
         lambda: SimpleNamespace(
             root=hook_bdd.tmp_path,
             bot_name="Faltoo",
-            hook_enabled=True,
+            hooks=True,
         ),
     )
     monkeypatch.setattr(
@@ -499,11 +457,13 @@ def hook_run_result_is_skipped(
     monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", fake_hook_trigger)
 
 
-@given(parsers.parse('the hook run result has feedback "{feedback}"'))
-def hook_run_result_has_feedback(
-    hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch, feedback: str
+@given(parsers.parse('the hook trigger selects a prompt "{prompt}"'))
+def hook_trigger_selects_prompt(
+    hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch, prompt: str
 ) -> None:
-    hook_batches = iter([[post_response_hooks.HookCheck("Refactor", "any", "fix")], []])
+    hook_batches = iter(
+        [[post_response_hooks.HookCheck("Refactor", "any", prompt)], []]
+    )
 
     async def fake_load_hooks(_workspace: Path) -> list[post_response_hooks.HookCheck]:
         return next(hook_batches)
@@ -516,26 +476,7 @@ def hook_run_result_has_feedback(
     ) -> post_response_hooks.HookTriggerResponse:
         return post_response_hooks.HookTriggerResponse(hooks_to_run=["Refactor"])
 
-    async def fake_hook_review(
-        _hook: post_response_hooks.HookCheck,
-        _diff_text: str,
-        *,
-        messages: list[dict[str, Any]],
-        instructions: str,
-    ) -> str:
-        assert messages is not None
-        assert instructions == "system prompt"
-        return feedback
-
     monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", fake_hook_trigger)
-    monkeypatch.setattr(post_response_hooks, "_run_hook_review", fake_hook_review)
-
-
-@given("the hook review returns no feedback")
-def hook_review_returns_no_feedback(
-    hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    hook_run_result_has_feedback(hook_bdd, monkeypatch, "")
 
 
 @when("the assistant answer is streamed")
@@ -574,11 +515,10 @@ def hook_status_events_are_running_and_skipped(hook_bdd: HookBDD) -> None:
     assert hook_bdd.events[2].status == "skipped"
 
 
-@then("the assistant is rerun after hook feedback")
-def assistant_is_rerun_after_hook_feedback(hook_bdd: HookBDD) -> None:
+@then("the assistant is rerun with the hook prompt")
+def assistant_is_rerun_with_hook_prompt(hook_bdd: HookBDD) -> None:
     assert [event.type for event in hook_bdd.events] == [
         "response.completed",
-        "faltoobot.post_response_hook",
         "faltoobot.post_response_hook",
         "faltoobot.post_response_hook",
         "response.completed",
@@ -586,31 +526,10 @@ def assistant_is_rerun_after_hook_feedback(hook_bdd: HookBDD) -> None:
     assert hook_bdd.events[1].hook_name == "Refactor"
     assert hook_bdd.events[1].status == "running"
     assert hook_bdd.events[2].status == "triggered"
-    assert hook_bdd.events[3].text == (
-        "## Automated code-review hook feedback\n\n"
-        "The following feedback came from automated review hooks. Use your judgment: "
-        "address relevant findings and ignore anything incorrect or inapplicable.\n\n"
-        "### Refactor\n\nfix it"
-    )
     assert hook_bdd.stream_calls == len(["initial", "follow-up"])
-    assert (
-        sessions.get_messages(_session(hook_bdd))["messages"][-1]["role"] == "developer"
-    )
-
-
-@then("the assistant is not rerun")
-def assistant_is_not_rerun(hook_bdd: HookBDD) -> None:
-    assert [event.type for event in hook_bdd.events] == [
-        "response.completed",
-        "faltoobot.post_response_hook",
-        "faltoobot.post_response_hook",
-    ]
-    assert hook_bdd.events[-1].status == "triggered"
-    assert hook_bdd.stream_calls == 1
-    assert all(
-        message.get("role") != "developer"
-        for message in sessions.get_messages(_session(hook_bdd))["messages"]
-    )
+    developer_message = sessions.get_messages(_session(hook_bdd))["messages"][-1]
+    assert developer_message["role"] == "developer"
+    assert developer_message["content"][0]["text"] == "fix it"
 
 
 @given("a git workspace with staged and unstaged changes")
