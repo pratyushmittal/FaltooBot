@@ -688,6 +688,22 @@ async def get_answer_streaming_with_hooks(
         iteration += 1
 
 
+async def stream_answer(
+    session: Session,
+    against: post_response_hooks.Snapshot
+    | post_response_hooks.HookDiffScope
+    | None = None,
+) -> AsyncIterator[StreamingReplyItem | post_response_hooks.HookEvent]:
+    """Stream an answer using the configured post-response hook behavior."""
+    stream = (
+        get_answer_streaming_with_hooks(session, against=against)
+        if against is not None or build_config().hooks
+        else get_answer_streaming(session)
+    )
+    async for event in stream:
+        yield event
+
+
 async def prewarm_openai_websocket(session: Session) -> None:
     config = build_config()
     if not getattr(config, "openai_websocket", False):
@@ -713,12 +729,7 @@ async def get_answer(session: Session) -> str:
     # Completion text arrives after generated-image events.
     answer = ""
     generated_images = ""
-    stream = (
-        get_answer_streaming_with_hooks(session)
-        if build_config().hooks
-        else get_answer_streaming(session)
-    )
-    async for event in stream:
+    async for event in stream_answer(session):
         if event.type == "response.completed":
             completed = cast(ResponseCompletedEvent, event)
             output = cast(

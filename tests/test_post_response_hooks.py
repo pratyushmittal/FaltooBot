@@ -493,12 +493,7 @@ def assistant_answer_is_streamed(
     monkeypatch.setattr(sessions, "_get_streaming_reply", fake_streaming_reply)
 
     async def collect_events() -> list[Any]:
-        return [
-            event
-            async for event in sessions.get_answer_streaming_with_hooks(
-                _session(hook_bdd)
-            )
-        ]
+        return [event async for event in sessions.stream_answer(_session(hook_bdd))]
 
     hook_bdd.events = asyncio.run(collect_events())
 

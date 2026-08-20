@@ -142,6 +142,7 @@ def _config(tmp_path: Path) -> SimpleNamespace:
         openai_oauth="",
         openai_thinking="low",
         openai_fast=False,
+        hooks=False,
     )
 
 
@@ -844,6 +845,7 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
             openai_oauth="",
             openai_thinking="low",
             openai_fast=False,
+            hooks=False,
         ),
     )
     monkeypatch.setattr(
