@@ -581,7 +581,7 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
         tuple[sessions.Session, post_response_hooks.HookDiffScope]
     ] = []
 
-    async def fake_get_answer_streaming_with_hooks(
+    async def fake_get_answer_streaming(
         session: sessions.Session,
         against: post_response_hooks.HookDiffScope | None = None,
     ):
@@ -596,18 +596,13 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
             text="Manual: hook triggered",
             hook_name="Manual",
             status="triggered",
-        )
-        yield post_response_hooks.HookEvent(
-            text="## Automated code-review hook feedback",
-            hook_name="Manual",
-            status="feedback",
-            feedback="feedback",
+            prompt="Review the changes.",
         )
 
     monkeypatch.setattr(
         sessions,
-        "get_answer_streaming_with_hooks",
-        fake_get_answer_streaming_with_hooks,
+        "get_answer_streaming",
+        fake_get_answer_streaming,
     )
 
     async with app.run_test() as pilot:
@@ -623,7 +618,7 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
 
         await wait_for_condition(
             lambda: any(
-                "Automated code-review hook feedback" in block._markdown
+                "Manual: hook triggered" in block._markdown
                 for block in app.transcript.query(Markdown)
             )
         )
@@ -634,7 +629,6 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
         ]
         assert "Running post-response hook: Manual" in blocks
         assert "Manual: hook triggered" in blocks
-        assert "## Automated code-review hook feedback" in blocks
 
 
 @pytest.mark.anyio
@@ -1038,7 +1032,7 @@ async def test_minchat_submits_composer_attachments(
         )
         return True
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         if False:
             yield None
 
@@ -1104,7 +1098,7 @@ async def test_minchat_queues_messages_while_streaming(
     release = asyncio.Event()
     seen: list[str] = []
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         question = str(sessions.get_messages(session)["messages"][-1]["content"])
         seen.append(question)
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
@@ -1156,7 +1150,7 @@ async def test_minchat_ctrl_c_cancels_response_and_keeps_queue(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
         started.set()
         await release.wait()
@@ -1273,7 +1267,7 @@ async def test_minchat_keeps_answer_text_out_of_tool_block(
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield type(
             "Event",
             (),
@@ -1316,7 +1310,7 @@ async def test_minchat_keeps_answer_text_out_of_thinking_block(
 ) -> None:
     _, app = build_app(tmp_path, monkeypatch)
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield type(
             "Event",
             (),
@@ -1373,7 +1367,7 @@ async def test_minchat_bells_when_answer_finishes(
     release = asyncio.Event()
     bells: list[bool] = []
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
         await release.wait()
         yield type("Event", (), {"type": "response.output_text.done"})()
@@ -1407,7 +1401,7 @@ async def test_minchat_shows_retry_when_answer_fails(
     _, app = build_app(tmp_path, monkeypatch)
     attempts = 0
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -1478,7 +1472,7 @@ async def test_minchat_answer_completion_does_not_focus_composer_outside_chat(
     _, app = build_app(tmp_path, monkeypatch)
     release = asyncio.Event()
 
-    async def fake_get_answer_streaming(session: sessions.Session):
+    async def fake_get_answer_streaming(session: sessions.Session, **_: Any):
         yield type("Event", (), {"type": "response.output_text.delta", "delta": "hi"})()
         await release.wait()
         yield type("Event", (), {"type": "response.output_text.done"})()

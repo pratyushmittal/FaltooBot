@@ -13,7 +13,6 @@ TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
 GEMINI_MODEL = "gemini-3.1-flash-image-preview"
-DEFAULT_HOOK_MODEL = "gpt-5.3-codex-spark"
 
 
 @dataclass(slots=True)
@@ -36,7 +35,6 @@ class Config:
     allowed_chats: set[str]
     bot_name: str
     browser_binary: str
-    hook_model: str = DEFAULT_HOOK_MODEL
     hook_enabled: bool = False
     gemini_api_key: str = ""
     gemini_model: str = GEMINI_MODEL
@@ -61,7 +59,7 @@ def default_config() -> dict[str, dict[str, Any]]:
         },
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
         "google": {"places_api_key": ""},
-        "hooks": {"model": DEFAULT_HOOK_MODEL, "enabled": False},
+        "hooks": {"enabled": False},
         "ui": {"theme": ""},
         "browser": {"binary": None},
         "bot": {
@@ -109,7 +107,6 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             ),
         },
         "hooks": {
-            "model": as_str(hooks.get("model"), defaults["hooks"]["model"]),
             "enabled": as_bool(hooks.get("enabled"), defaults["hooks"]["enabled"]),
         },
         "ui": {"theme": as_str(ui.get("theme"), defaults["ui"]["theme"])},
@@ -188,7 +185,6 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"places_api_key = {quote(str(google['places_api_key']))}",
             "",
             "[hooks]",
-            f"model = {quote(str(hooks['model']))}",
             f"enabled = {str(bool(hooks['enabled'])).lower()}",
             "",
             "[ui]",
@@ -296,7 +292,6 @@ def build_config() -> Config:
         allowed_chats=set(str(chat) for chat in bot["allowed_chats"]),
         bot_name=str(bot["bot_name"]),
         browser_binary=str(browser["binary"]),
-        hook_model=str(hooks["model"]),
         hook_enabled=bool(hooks["enabled"]),
         gemini_api_key=str(gemini["gemini_api_key"])
         or os.environ.get("GEMINI_API_KEY", ""),

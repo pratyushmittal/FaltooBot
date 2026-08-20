@@ -49,18 +49,12 @@ from faltoobot.faltoochat.stream import get_event_text
         ),
         (
             post_response_hooks.HookEvent(
-                text=post_response_hooks.format_feedback(
-                    [("Refactor", "full feedback")]
-                ),
+                text="Refactor: hook triggered",
                 hook_name="Refactor",
-                status="feedback",
-                feedback="full feedback",
+                status="triggered",
+                prompt="Review the changes.",
             ),
-            (
-                True,
-                "tool",
-                post_response_hooks.format_feedback([("Refactor", "full feedback")]),
-            ),
+            (True, "tool", "Refactor: hook triggered"),
         ),
         (
             SimpleNamespace(

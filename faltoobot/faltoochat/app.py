@@ -29,7 +29,7 @@ from textual.widgets import (
 
 from faltoobot import notify_queue, post_response_hooks, sessions
 from faltoobot.changelog import available_update_notice, consume_changelog_update
-from faltoobot.config import build_config, load_textual_theme, save_textual_theme
+from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
 from faltoobot.faltoochat.logging_config import configure_logging
 from faltoobot.faltoochat.terminal import (
@@ -565,12 +565,7 @@ class FaltooChatApp(App[None]):
         raw_text = ""
         transcript.anchor()
 
-        stream = (
-            sessions.get_answer_streaming_with_hooks(self.session, against=against)
-            if against is not None or getattr(build_config(), "hook_enabled", False)
-            else sessions.get_answer_streaming(self.session)
-        )
-        async for event in stream:
+        async for event in sessions.get_answer_streaming(self.session, against=against):
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:

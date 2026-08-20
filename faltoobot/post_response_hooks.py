@@ -1,5 +1,3 @@
-import asyncio
-import json
 import os
 import subprocess
 import tempfile
@@ -7,23 +5,18 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias
 
 import yaml
 from pydantic import BaseModel
 
 from faltoobot.config import app_root, build_config
 from faltoobot.faltoochat.git import run_git_async
-from faltoobot.gpt_utils import (
-    MessageHistory,
-    get_openai_client,
-    trim_input,
-)
-from faltoobot.openai_auth import uses_chatgpt_oauth
+from faltoobot.gpt_utils import get_openai_client
 
 HOOKS_DIR = "hooks"
 DEFAULT_MAX_ITERATIONS = 3
-HOOK_REVIEW_CONTEXT_TOKEN_BUDGET = 100_000
+HOOK_TRIGGER_MODEL = "gpt-5.6-luna"
 HOOK_TRIGGER_INSTRUCTIONS = """You are a code reviewer selecting user-defined review hooks.
 Decide which hooks should run based only on the supplied code diff and each hook's trigger condition."""
 
@@ -39,9 +32,7 @@ class Snapshot:
     tree: str
 
 
-HookStatus: TypeAlias = Literal[
-    "running", "skipped", "triggered", "feedback", "stopped"
-]
+HookStatus: TypeAlias = Literal["running", "skipped", "triggered", "stopped"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +40,7 @@ class HookEvent:
     text: str  # E.g. "Refactor: hook triggered".
     hook_name: str
     status: HookStatus
-    feedback: str | None = None
+    prompt: str | None = None  # Configured prompt when the hook is triggered.
     type: Literal["faltoobot.post_response_hook"] = field(
         init=False, default="faltoobot.post_response_hook"
     )
@@ -60,7 +51,6 @@ class HookCheck:
     name: str
     trigger: str
     prompt: str
-    model: str | None = None
 
 
 class HookTriggerResponse(BaseModel):
@@ -153,7 +143,6 @@ async def _load_hooks(
                     name=item["name"].strip(),
                     trigger=item["trigger"].strip(),
                     prompt=item["prompt"].strip(),
-                    model=item.get("model", "").strip() or None,
                 )
                 for item in payload
             )
@@ -163,22 +152,6 @@ async def _load_hooks(
     if len(hook_names) != len(set(hook_names)):
         raise ValueError("Hook names must be unique")
     return hooks
-
-
-def _review_prompt(hook: HookCheck, diff_text: str) -> str:
-    return f"""You are running a user-defined code-review hook against the supplied code changes.
-
-Review hook instructions:
-<hook_instructions>
-{hook.prompt}
-</hook_instructions>
-
-Code changes to review:
-<diff>
-{diff_text}
-</diff>
-
-Review only issues covered by the hook instructions. Return concise, actionable feedback describing what should be changed.""".strip()
 
 
 def _trigger_prompt(hooks: Sequence[HookCheck], diff_text: str) -> str:
@@ -198,30 +171,25 @@ These are the user's code-review hooks:
 Return the names of the hooks that should run.""".strip()
 
 
-def _trim_history_for_hook(messages: MessageHistory) -> MessageHistory:
-    """Keep recent history within budget without orphaned tool outputs."""
-    char_budget = HOOK_REVIEW_CONTEXT_TOKEN_BUDGET * 4
-    kept: MessageHistory = []
-    total_chars = 0
-    for message in reversed(messages):
-        message_size = len(json.dumps(message, ensure_ascii=False))
-        if total_chars + message_size > char_budget:
-            break
-        kept.append(message)
-        total_chars += message_size
-    trimmed = list(reversed(kept))
-    # Tool call outputs without preceding tool calls cause OpenAI input errors,
-    # so remove orphaned outputs from the trimmed transcript.
-    while trimmed and trimmed[0].get("type") == "function_call_output":
-        trimmed.pop(0)
-    return trimmed
-
-
-def _parsed_hook_trigger(response: Any) -> HookTriggerResponse:
-    # Refusals and empty responses have no parsed structured output.
-    if response.output_parsed is None:
+async def _request_hook_trigger(
+    client: Any, input_items: list[dict[str, str]]
+) -> HookTriggerResponse:
+    response_text = ""
+    async with client.responses.stream(
+        model=HOOK_TRIGGER_MODEL,
+        input=input_items,
+        instructions=HOOK_TRIGGER_INSTRUCTIONS,
+        store=False,
+        text_format=HookTriggerResponse,
+    ) as stream:
+        async for event in stream:
+            # Codex OAuth streams do not populate the SDK's output_parsed field.
+            if event.type == "response.output_text.done":
+                response_text = event.text
+    # Refusals and interrupted streams can finish without output text.
+    if not response_text:
         raise RuntimeError("Hook trigger returned no structured output")
-    return response.output_parsed
+    return HookTriggerResponse.model_validate_json(response_text)
 
 
 async def _run_hook_trigger(
@@ -233,14 +201,10 @@ async def _run_hook_trigger(
     prompt = _trigger_prompt(hooks, diff_text)
     configured_names = {hook.name for hook in hooks}
     try:
-        response = await client.responses.parse(
-            model=config.hook_model,
-            input=prompt,
-            instructions=HOOK_TRIGGER_INSTRUCTIONS,
-            store=False,
-            text_format=HookTriggerResponse,
+        parsed = await _request_hook_trigger(
+            client,
+            [{"role": "user", "content": prompt}],
         )
-        parsed = _parsed_hook_trigger(response)
         unknown_names = set(parsed.hooks_to_run) - configured_names
         if not unknown_names:
             return parsed
@@ -248,21 +212,14 @@ async def _run_hook_trigger(
         correction = f"""These hook names do not exist: {", ".join(sorted(unknown_names))}.
 Choose only from these configured hooks: {", ".join(sorted(configured_names))}.
 Return a corrected response."""
-        response = await client.responses.parse(
-            model=config.hook_model,
-            input=cast(
-                Any,
-                [
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": parsed.model_dump_json()},
-                    {"role": "user", "content": correction},
-                ],
-            ),
-            instructions=HOOK_TRIGGER_INSTRUCTIONS,
-            store=False,
-            text_format=HookTriggerResponse,
+        parsed = await _request_hook_trigger(
+            client,
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": parsed.model_dump_json()},
+                {"role": "user", "content": correction},
+            ],
         )
-        parsed = _parsed_hook_trigger(response)
     finally:
         await client.close()
 
@@ -274,58 +231,13 @@ Return a corrected response."""
     return parsed
 
 
-async def _run_hook_review(
-    hook: HookCheck,
-    diff_text: str,
-    *,
-    messages: MessageHistory,
-    instructions: str,
-) -> str:
-    config = build_config()
-    client = get_openai_client(config)
-    try:
-        response = await client.responses.create(
-            model=hook.model or config.hook_model,
-            input=cast(
-                Any,
-                trim_input(
-                    [
-                        *_trim_history_for_hook(messages),
-                        {
-                            "type": "message",
-                            "role": "user",
-                            "content": _review_prompt(hook, diff_text),
-                        },
-                    ],
-                    replace_unavailable_uploads=uses_chatgpt_oauth(config),
-                ),
-            ),
-            instructions=instructions or None,
-            store=False,
-        )
-    finally:
-        await client.close()
-    return response.output_text
-
-
-def format_feedback(feedback: Sequence[tuple[str, str]]) -> str:
-    sections = [f"### {hook_name}\n\n{text}" for hook_name, text in feedback]
-    return """## Automated code-review hook feedback
-
-The following feedback came from automated review hooks. Use your judgment: address relevant findings and ignore anything incorrect or inapplicable.
-
-""" + "\n\n".join(sections)
-
-
 def _hook_event(
     status: HookStatus,
     *,
     hook_name: str = "",
-    feedback: str | None = None,
+    prompt: str | None = None,
 ) -> HookEvent:
-    if feedback is not None:
-        text = format_feedback([(hook_name, feedback)])
-    elif status == "running":
+    if status == "running":
         text = f"Running post-response hook: {hook_name}"
     else:
         text = f"{hook_name}: hook {status}"
@@ -333,7 +245,7 @@ def _hook_event(
         text=text,
         hook_name=hook_name,
         status=status,
-        feedback=feedback,
+        prompt=prompt,
     )
 
 
@@ -376,9 +288,6 @@ async def capture_snapshot(workspace: Path) -> Snapshot | None:
 async def run_hooks(
     workspace: Path,
     against: Snapshot | HookDiffScope | None,
-    *,
-    messages: MessageHistory,
-    instructions: str,
 ) -> AsyncIterator[HookEvent]:
     """Run matching hooks against a snapshot or selected Git changes."""
     if isinstance(against, HookDiffScope):
@@ -396,26 +305,8 @@ async def run_hooks(
 
     trigger_response = await _run_hook_trigger(hooks, diff_text)
     triggered_names = set(trigger_response.hooks_to_run)
-    triggered_hooks: list[HookCheck] = []
     for hook in hooks:
         if hook.name not in triggered_names:
             yield _hook_event("skipped", hook_name=hook.name)
             continue
-        yield _hook_event("triggered", hook_name=hook.name)
-        triggered_hooks.append(hook)
-
-    feedback_texts = await asyncio.gather(
-        *(
-            _run_hook_review(
-                hook,
-                diff_text,
-                messages=messages,
-                instructions=instructions,
-            )
-            for hook in triggered_hooks
-        )
-    )
-    for hook, feedback in zip(triggered_hooks, feedback_texts, strict=True):
-        # An empty review means the hook found nothing for the assistant to change.
-        if feedback := feedback.strip():
-            yield _hook_event("feedback", hook_name=hook.name, feedback=feedback)
+        yield _hook_event("triggered", hook_name=hook.name, prompt=hook.prompt)
