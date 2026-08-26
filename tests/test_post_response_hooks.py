@@ -146,6 +146,37 @@ def assistant_creates_new_file(hook_bdd: HookBDD) -> None:
     hook_bdd.diff = asyncio.run(post_response_hooks._diff_since(hook_bdd.snapshot))
 
 
+@when("the assistant switches branches")
+def assistant_switches_branches(
+    hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _workspace(hook_bdd)
+    snapshot = asyncio.run(post_response_hooks.capture_snapshot(workspace))
+    git(workspace, "switch", "-c", "review")
+    (workspace / "page.html").write_text(
+        "<main>review branch</main>\n", encoding="utf-8"
+    )
+
+    async def load_hook(_workspace: Path) -> list[post_response_hooks.HookCheck]:
+        return [post_response_hooks.HookCheck("Review", "any diff", "Review it")]
+
+    monkeypatch.setattr(post_response_hooks, "_load_hooks", load_hook)
+
+    async def select_hook(
+        _hooks: list[post_response_hooks.HookCheck], _diff: str
+    ) -> post_response_hooks.HookTriggerResponse:
+        return post_response_hooks.HookTriggerResponse(hooks_to_run=["Review"])
+
+    monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", select_hook)
+
+    async def collect_events() -> list[post_response_hooks.HookEvent]:
+        return [
+            event async for event in post_response_hooks.run_hooks(workspace, snapshot)
+        ]
+
+    hook_bdd.events = asyncio.run(collect_events())
+
+
 @then("the incremental diff contains only the assistant changes")
 def incremental_diff_contains_only_assistant_changes(hook_bdd: HookBDD) -> None:
     assert "user change" in hook_bdd.diff
@@ -159,6 +190,11 @@ def incremental_diff_contains_only_assistant_changes(hook_bdd: HookBDD) -> None:
 def incremental_diff_contains_new_file(hook_bdd: HookBDD) -> None:
     assert "new.txt" in hook_bdd.diff
     assert "new file" in hook_bdd.diff
+
+
+@then("the post-response hooks are skipped")
+def post_response_hooks_are_skipped(hook_bdd: HookBDD) -> None:
+    assert hook_bdd.events == []
 
 
 @given("global and project hook files")

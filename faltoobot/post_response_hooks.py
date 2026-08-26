@@ -30,6 +30,7 @@ class HookDiffScope(StrEnum):
 class Snapshot:
     repo_root: Path
     tree: str
+    branch: str
 
 
 HookStatus: TypeAlias = Literal["running", "skipped", "triggered", "stopped"]
@@ -271,6 +272,11 @@ async def _diff_for_scope(workspace: Path, scope: HookDiffScope) -> str:
 async def _diff_since(snapshot: Snapshot | None) -> str:
     if snapshot is None:
         return ""
+    branch = (
+        await _checked_git(snapshot.repo_root, "branch", "--show-current")
+    ).stdout.strip()
+    if branch != snapshot.branch:
+        return ""
     return await _diff_trees(
         snapshot.repo_root,
         snapshot.tree,
@@ -282,7 +288,12 @@ async def capture_snapshot(workspace: Path) -> Snapshot | None:
     repo_root = await _repo_root(workspace)
     if repo_root is None:
         return None
-    return Snapshot(repo_root=repo_root, tree=await _write_worktree_tree(repo_root))
+    branch = (await _checked_git(repo_root, "branch", "--show-current")).stdout.strip()
+    return Snapshot(
+        repo_root=repo_root,
+        tree=await _write_worktree_tree(repo_root),
+        branch=branch,
+    )
 
 
 async def run_hooks(

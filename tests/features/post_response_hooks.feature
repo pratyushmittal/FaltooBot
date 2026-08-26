@@ -13,6 +13,11 @@ Feature: Post-response hooks
     When the assistant creates a new file
     Then the incremental diff contains the new file
 
+  Scenario: Post-response hooks are skipped when switching branches
+    Given a git workspace with an initial page
+    When the assistant switches branches
+    Then the post-response hooks are skipped
+
   Scenario: Manual all hook diff includes staged and unstaged changes
     Given a git workspace with staged and unstaged changes
     When I build the hook diff for "all"
