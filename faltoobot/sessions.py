@@ -658,26 +658,30 @@ async def get_answer_streaming(  # noqa: C901
             yield event
         return
 
+    workspace = Path(get_messages(session)["workspace"])
     iteration = 0
 
     while True:
-        messages_json = get_messages(session)
-        workspace = Path(messages_json["workspace"])
-
         if against is None:
             against = await post_response_hooks.capture_snapshot(workspace)
             async for event in _get_answer_streaming(session):
                 yield event
 
-        prompts: list[str] = []
-        async for event in post_response_hooks.run_hooks(workspace, against):
-            if event.prompt is not None:
-                prompts.append(event.prompt)
+        messages_json = get_messages(session)
+        feedback_messages: list[str] = []
+        async for event in post_response_hooks.run_hooks(
+            workspace,
+            against,
+            messages=messages_json["messages"],
+            instructions=messages_json["system_prompt"],
+        ):
+            if event.status == "feedback":
+                feedback_messages.append(event.text)
             yield event
 
-        if not prompts:
+        if not feedback_messages:
             return
-        # Repeated hook prompts must not keep the assistant running indefinitely.
+        # Repeated hook feedback must not keep the assistant running indefinitely.
         if iteration >= post_response_hooks.DEFAULT_MAX_ITERATIONS:
             text = "Post-response hooks stopped after max iterations"
             logger.warning(text)
@@ -688,8 +692,8 @@ async def get_answer_streaming(  # noqa: C901
             )
             return
 
-        for prompt in prompts:
-            append_developer_message(session, prompt)
+        for text in feedback_messages:
+            append_developer_message(session, text)
         against = None
         iteration += 1
 

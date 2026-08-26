@@ -596,7 +596,6 @@ async def test_minchat_run_hooks_command_streams_selected_scope(
             text="Manual: hook triggered",
             hook_name="Manual",
             status="triggered",
-            prompt="Review the changes.",
         )
 
     monkeypatch.setattr(

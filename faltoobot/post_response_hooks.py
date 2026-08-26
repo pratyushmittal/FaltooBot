@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -5,18 +6,19 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 import yaml
 from pydantic import BaseModel
 
 from faltoobot.config import app_root, build_config
 from faltoobot.faltoochat.git import run_git_async
-from faltoobot.gpt_utils import get_openai_client
+from faltoobot.gpt_utils import MessageHistory, get_openai_client, trim_input
+from faltoobot.openai_auth import uses_chatgpt_oauth
 
 HOOKS_DIR = "hooks"
 DEFAULT_MAX_ITERATIONS = 3
-HOOK_TRIGGER_MODEL = "gpt-5.6-luna"
+HOOK_MODEL = "gpt-5.6-luna"
 HOOK_TRIGGER_INSTRUCTIONS = """You are a code reviewer selecting user-defined review hooks.
 Decide which hooks should run based only on the supplied code diff and each hook's trigger condition."""
 
@@ -33,7 +35,9 @@ class Snapshot:
     branch: str
 
 
-HookStatus: TypeAlias = Literal["running", "skipped", "triggered", "stopped"]
+HookStatus: TypeAlias = Literal[
+    "running", "skipped", "triggered", "feedback", "stopped"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +45,6 @@ class HookEvent:
     text: str  # E.g. "Refactor: hook triggered".
     hook_name: str
     status: HookStatus
-    prompt: str | None = None  # Configured prompt when the hook is triggered.
     type: Literal["faltoobot.post_response_hook"] = field(
         init=False, default="faltoobot.post_response_hook"
     )
@@ -177,7 +180,7 @@ async def _request_hook_trigger(
 ) -> HookTriggerResponse:
     response_text = ""
     async with client.responses.stream(
-        model=HOOK_TRIGGER_MODEL,
+        model=HOOK_MODEL,
         input=input_items,
         instructions=HOOK_TRIGGER_INSTRUCTIONS,
         store=False,
@@ -232,13 +235,56 @@ Return a corrected response."""
     return parsed
 
 
+async def _run_hook_review(
+    hook: HookCheck,
+    diff_text: str,
+    *,
+    messages: MessageHistory,
+    instructions: str,
+) -> str:
+    config = build_config()
+    input_items = trim_input(
+        messages,
+        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+    )
+    input_items.append(
+        {
+            "type": "message",
+            "role": "user",
+            "content": f"""{hook.prompt}
+
+Incremental diff from the assistant's last response:
+<diff>
+{diff_text}
+</diff>""".strip(),
+        }
+    )
+    client = get_openai_client(config)
+    response_text = ""
+    try:
+        async with client.responses.stream(
+            model=HOOK_MODEL,
+            input=cast(Any, input_items),
+            instructions=instructions,
+            store=False,
+        ) as stream:
+            async for event in stream:
+                if event.type == "response.output_text.done":
+                    response_text = event.text  # type: ignore
+    finally:
+        await client.close()
+    return response_text
+
+
 def _hook_event(
     status: HookStatus,
     *,
     hook_name: str = "",
-    prompt: str | None = None,
+    feedback: str | None = None,
 ) -> HookEvent:
-    if status == "running":
+    if feedback is not None:
+        text = f"## {hook_name} hook feedback\n\n{feedback}"
+    elif status == "running":
         text = f"Running post-response hook: {hook_name}"
     else:
         text = f"{hook_name}: hook {status}"
@@ -246,7 +292,6 @@ def _hook_event(
         text=text,
         hook_name=hook_name,
         status=status,
-        prompt=prompt,
     )
 
 
@@ -299,6 +344,9 @@ async def capture_snapshot(workspace: Path) -> Snapshot | None:
 async def run_hooks(
     workspace: Path,
     against: Snapshot | HookDiffScope | None,
+    *,
+    messages: MessageHistory,
+    instructions: str,
 ) -> AsyncIterator[HookEvent]:
     """Run matching hooks against a snapshot or selected Git changes."""
     if isinstance(against, HookDiffScope):
@@ -316,8 +364,24 @@ async def run_hooks(
 
     trigger_response = await _run_hook_trigger(hooks, diff_text)
     triggered_names = set(trigger_response.hooks_to_run)
+    triggered_hooks: list[HookCheck] = []
     for hook in hooks:
         if hook.name not in triggered_names:
             yield _hook_event("skipped", hook_name=hook.name)
             continue
-        yield _hook_event("triggered", hook_name=hook.name, prompt=hook.prompt)
+        yield _hook_event("triggered", hook_name=hook.name)
+        triggered_hooks.append(hook)
+
+    feedback_texts = await asyncio.gather(
+        *(
+            _run_hook_review(
+                hook,
+                diff_text,
+                messages=messages,
+                instructions=instructions,
+            )
+            for hook in triggered_hooks
+        )
+    )
+    for hook, feedback in zip(triggered_hooks, feedback_texts, strict=True):
+        yield _hook_event("feedback", hook_name=hook.name, feedback=feedback)

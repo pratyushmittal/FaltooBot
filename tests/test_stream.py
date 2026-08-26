@@ -52,7 +52,6 @@ from faltoobot.faltoochat.stream import get_event_text
                 text="Refactor: hook triggered",
                 hook_name="Refactor",
                 status="triggered",
-                prompt="Review the changes.",
             ),
             (True, "tool", "Refactor: hook triggered"),
         ),
