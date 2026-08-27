@@ -2,6 +2,15 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.6.0 — 2026-08-27
+
+### Added
+- Added opt-in post-response hooks for automated, LLM-assisted code review. Hooks can be defined globally or per project, run automatically after assistant changes, or be invoked manually against staged and unstaged work.
+- Session integrations can now append developer messages directly.
+
+### Changed
+- Hook reviews use the active chat model, history, instructions, and tools, then return relevant feedback to the assistant for another pass.
+
 ## 7.5.0 — 2026-08-14
 
 ### Added
