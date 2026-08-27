@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -6,17 +7,24 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
+from uuid import uuid4
 
 import yaml
 from pydantic import BaseModel
 
 from faltoobot.config import app_root, build_config
 from faltoobot.faltoochat.git import run_git_async
-from faltoobot.gpt_utils import get_openai_client
+from faltoobot.gpt_utils import (
+    MessageHistory,
+    Tool,
+    get_openai_client,
+    get_streaming_reply,
+)
 
 HOOKS_DIR = "hooks"
 DEFAULT_MAX_ITERATIONS = 3
 HOOK_TRIGGER_MODEL = "gpt-5.6-luna"
+NO_MAJOR_CHANGES_MARKER = "<no_major_changes>"
 HOOK_TRIGGER_INSTRUCTIONS = """You are a code reviewer selecting user-defined review hooks.
 Decide which hooks should run based only on the supplied code diff and each hook's trigger condition."""
 
@@ -30,9 +38,12 @@ class HookDiffScope(StrEnum):
 class Snapshot:
     repo_root: Path
     tree: str
+    branch: str
 
 
-HookStatus: TypeAlias = Literal["running", "skipped", "triggered", "stopped"]
+HookStatus: TypeAlias = Literal[
+    "running", "skipped", "triggered", "feedback", "stopped"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +51,6 @@ class HookEvent:
     text: str  # E.g. "Refactor: hook triggered".
     hook_name: str
     status: HookStatus
-    prompt: str | None = None  # Configured prompt when the hook is triggered.
     type: Literal["faltoobot.post_response_hook"] = field(
         init=False, default="faltoobot.post_response_hook"
     )
@@ -51,6 +61,15 @@ class HookCheck:
     name: str
     trigger: str
     prompt: str
+
+
+@dataclass(frozen=True, slots=True)
+class HookContext:
+    messages: MessageHistory
+    instructions: str
+    tools: list[Tool]
+    prompt_cache_key: str
+    session_dir: Path
 
 
 class HookTriggerResponse(BaseModel):
@@ -231,13 +250,66 @@ Return a corrected response."""
     return parsed
 
 
+async def _run_hook_review(
+    hook: HookCheck,
+    context: HookContext,
+) -> str:
+    config = build_config()
+    input_items = [*context.messages]
+    history_size = len(input_items)
+    input_items.append(
+        {
+            "type": "message",
+            "role": "user",
+            "content": f"""{hook.prompt}
+
+Return only suggestions you consider important.
+Use tools only to inspect the changes; do not modify files or make changes yourself.
+It is fine to have no suggestions. In that case, include this exact marker in your response:
+{NO_MAJOR_CHANGES_MARKER}""".strip(),
+        }
+    )
+
+    response_text = ""
+    # Codex completion output can be empty. Drop pre-tool commentary so the last
+    # text-done event contains only the final review.
+    async for event in get_streaming_reply(
+        config,
+        instructions=context.instructions,
+        input=input_items,
+        tools=context.tools,
+        prompt_cache_key=context.prompt_cache_key,
+    ):
+        if event.type == "function_call_output":
+            response_text = ""
+        elif event.type == "response.output_text.done":
+            response_text = event.text  # type: ignore
+
+    (context.session_dir / f"post-response-hook.{uuid4().hex}.json").write_text(
+        json.dumps(
+            {"hook": hook.name, "messages": input_items[history_size:]},
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    return response_text
+
+
 def _hook_event(
     status: HookStatus,
     *,
     hook_name: str = "",
-    prompt: str | None = None,
+    feedback: str | None = None,
 ) -> HookEvent:
-    if status == "running":
+    if feedback is not None:
+        text = (
+            f'This is the post-response hook feedback from "{hook_name}" agent.'
+            f"\n\n{feedback}"
+        )
+    elif status == "running":
         text = f"Running post-response hook: {hook_name}"
     else:
         text = f"{hook_name}: hook {status}"
@@ -245,7 +317,6 @@ def _hook_event(
         text=text,
         hook_name=hook_name,
         status=status,
-        prompt=prompt,
     )
 
 
@@ -271,6 +342,11 @@ async def _diff_for_scope(workspace: Path, scope: HookDiffScope) -> str:
 async def _diff_since(snapshot: Snapshot | None) -> str:
     if snapshot is None:
         return ""
+    branch = (
+        await _checked_git(snapshot.repo_root, "branch", "--show-current")
+    ).stdout.strip()
+    if branch != snapshot.branch:
+        return ""
     return await _diff_trees(
         snapshot.repo_root,
         snapshot.tree,
@@ -282,12 +358,18 @@ async def capture_snapshot(workspace: Path) -> Snapshot | None:
     repo_root = await _repo_root(workspace)
     if repo_root is None:
         return None
-    return Snapshot(repo_root=repo_root, tree=await _write_worktree_tree(repo_root))
+    branch = (await _checked_git(repo_root, "branch", "--show-current")).stdout.strip()
+    return Snapshot(
+        repo_root=repo_root,
+        tree=await _write_worktree_tree(repo_root),
+        branch=branch,
+    )
 
 
 async def run_hooks(
     workspace: Path,
     against: Snapshot | HookDiffScope | None,
+    context: HookContext,
 ) -> AsyncIterator[HookEvent]:
     """Run matching hooks against a snapshot or selected Git changes."""
     if isinstance(against, HookDiffScope):
@@ -309,4 +391,8 @@ async def run_hooks(
         if hook.name not in triggered_names:
             yield _hook_event("skipped", hook_name=hook.name)
             continue
-        yield _hook_event("triggered", hook_name=hook.name, prompt=hook.prompt)
+
+        yield _hook_event("triggered", hook_name=hook.name)
+        feedback = (await _run_hook_review(hook, context)).strip()
+        if feedback and NO_MAJOR_CHANGES_MARKER not in feedback.casefold():
+            yield _hook_event("feedback", hook_name=hook.name, feedback=feedback)

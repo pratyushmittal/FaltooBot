@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,7 @@ class HookBDD:
     hooks: list[post_response_hooks.HookCheck] = field(default_factory=list)
     triggered_names: list[str] = field(default_factory=list)
     trigger_calls: int = 0
+    review_feedback: str = ""
     response_calls: list[dict[str, Any]] = field(default_factory=list)
     client_closed: bool = False
     unknown_trigger_once: bool = False
@@ -90,12 +92,8 @@ def _hook_statuses(events: list[Any]) -> list[str]:
     ]
 
 
-def _hook_prompts(events: list[Any]) -> list[str]:
-    return [
-        event.prompt
-        for event in events
-        if event.type == "faltoobot.post_response_hook" and event.prompt is not None
-    ]
+def _hook_feedback(events: list[Any]) -> list[str]:
+    return [event.text for event in events if event.status == "feedback"]
 
 
 @given("a git workspace with an initial page")
@@ -146,6 +144,17 @@ def assistant_creates_new_file(hook_bdd: HookBDD) -> None:
     hook_bdd.diff = asyncio.run(post_response_hooks._diff_since(hook_bdd.snapshot))
 
 
+@when("the assistant switches branches")
+def assistant_switches_branches(hook_bdd: HookBDD) -> None:
+    workspace = _workspace(hook_bdd)
+    snapshot = asyncio.run(post_response_hooks.capture_snapshot(workspace))
+    git(workspace, "switch", "-c", "review")
+    (workspace / "page.html").write_text(
+        "<main>review branch</main>\n", encoding="utf-8"
+    )
+    hook_bdd.diff = asyncio.run(post_response_hooks._diff_since(snapshot))
+
+
 @then("the incremental diff contains only the assistant changes")
 def incremental_diff_contains_only_assistant_changes(hook_bdd: HookBDD) -> None:
     assert "user change" in hook_bdd.diff
@@ -159,6 +168,11 @@ def incremental_diff_contains_only_assistant_changes(hook_bdd: HookBDD) -> None:
 def incremental_diff_contains_new_file(hook_bdd: HookBDD) -> None:
     assert "new.txt" in hook_bdd.diff
     assert "new file" in hook_bdd.diff
+
+
+@then("the incremental hook diff is empty")
+def incremental_hook_diff_is_empty(hook_bdd: HookBDD) -> None:
+    assert hook_bdd.diff == ""
 
 
 @given("global and project hook files")
@@ -222,6 +236,11 @@ def structured_hook_trigger_selects_no_hooks(hook_bdd: HookBDD) -> None:
     hook_bdd.triggered_names = []
 
 
+@given(parsers.parse('the hook review returns "{feedback}"'))
+def hook_review_returns(hook_bdd: HookBDD, feedback: str) -> None:
+    hook_bdd.review_feedback = feedback
+
+
 @given("HTML changes exist after a post-response snapshot")
 def html_changes_exist_after_snapshot(hook_bdd: HookBDD) -> None:
     workspace = _workspace(hook_bdd)
@@ -247,11 +266,27 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", fake_hook_trigger)
 
+    async def fake_hook_review(
+        _hook: post_response_hooks.HookCheck,
+        _context: post_response_hooks.HookContext,
+    ) -> str:
+        return hook_bdd.review_feedback
+
+    monkeypatch.setattr(post_response_hooks, "_run_hook_review", fake_hook_review)
+
     async def collect_events() -> list[Any]:
         return [
             event
             async for event in post_response_hooks.run_hooks(
-                _workspace(hook_bdd), hook_bdd.snapshot
+                _workspace(hook_bdd),
+                hook_bdd.snapshot,
+                post_response_hooks.HookContext(
+                    [{"type": "message", "role": "user", "content": "context"}],
+                    "system prompt",
+                    [],
+                    "session",
+                    hook_bdd.tmp_path,
+                ),
             )
         ]
 
@@ -260,7 +295,7 @@ def run_the_hook(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @then("the hook is triggered")
 def hook_is_triggered(hook_bdd: HookBDD) -> None:
-    assert _hook_statuses(hook_bdd.events) == ["running", "triggered"]
+    assert _hook_statuses(hook_bdd.events) == ["running", "triggered", "feedback"]
 
 
 @then("the hook is skipped")
@@ -268,9 +303,14 @@ def hook_is_skipped(hook_bdd: HookBDD) -> None:
     assert _hook_statuses(hook_bdd.events) == ["running", "skipped"]
 
 
-@then(parsers.parse('the hook prompt is "{prompt}"'))
-def hook_prompt_is(hook_bdd: HookBDD, prompt: str) -> None:
-    assert _hook_prompts(hook_bdd.events) == [prompt]
+@then("the hook is triggered without feedback")
+def hook_is_triggered_without_feedback(hook_bdd: HookBDD) -> None:
+    assert _hook_statuses(hook_bdd.events) == ["running", "triggered"]
+
+
+@then(parsers.parse('the hook feedback is "{feedback}"'))
+def hook_feedback_is(hook_bdd: HookBDD, feedback: str) -> None:
+    assert feedback in _hook_feedback(hook_bdd.events)[0]
 
 
 @then("batched hook statuses show one skipped and one triggered")
@@ -288,10 +328,80 @@ def trigger_is_called_once(hook_bdd: HookBDD) -> None:
     assert hook_bdd.trigger_calls == 1
 
 
-@then("no hook prompt is queued")
-def no_hook_prompt_is_queued(hook_bdd: HookBDD) -> None:
-    assert _hook_prompts(hook_bdd.events) == []
-    assert hook_bdd.trigger_calls == 1
+@then("no hook feedback is returned")
+def no_hook_feedback_is_returned(hook_bdd: HookBDD) -> None:
+    assert _hook_feedback(hook_bdd.events) == []
+
+
+@given("a fake hook review stream")
+def fake_hook_review_stream(hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = SimpleNamespace(openai_oauth="", openai_model="main-model")
+    monkeypatch.setattr(post_response_hooks, "build_config", lambda: config)
+
+    async def fake_streaming_reply(request_config: Any, **kwargs: Any):
+        hook_bdd.response_calls.append({"config": request_config, **kwargs})
+        kwargs["input"].append(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Review feedback."}],
+            }
+        )
+        yield SimpleNamespace(
+            type="response.output_text.done",
+            text="Inspecting with tools.",
+        )
+        yield SimpleNamespace(type="function_call_output")
+        yield SimpleNamespace(
+            type="response.output_text.done",
+            text="Review feedback.",
+        )
+
+    monkeypatch.setattr(
+        post_response_hooks, "get_streaming_reply", fake_streaming_reply
+    )
+
+
+@when("the hook review runs")
+def hook_review_runs(hook_bdd: HookBDD) -> None:
+    result = asyncio.run(
+        post_response_hooks._run_hook_review(
+            post_response_hooks.HookCheck("Review", "any", "Review carefully."),
+            post_response_hooks.HookContext(
+                [{"role": "user", "content": "history"}],
+                "system prompt",
+                [cast(Any, object())],
+                "session",
+                hook_bdd.tmp_path,
+            ),
+        )
+    )
+    assert result == "Review feedback."
+
+
+@then("it uses the main model and session context")
+def uses_main_model_and_session_context(hook_bdd: HookBDD) -> None:
+    call = hook_bdd.response_calls[0]
+    assert call["config"].openai_model == "main-model"
+    assert call["input"][0] == {"role": "user", "content": "history"}
+    assert "Review carefully." in call["input"][1]["content"]
+    assert "do not modify files" in call["input"][1]["content"]
+    assert post_response_hooks.NO_MAJOR_CHANGES_MARKER in call["input"][1]["content"]
+    assert call["instructions"] == "system prompt"
+    assert call["tools"]
+    assert call["prompt_cache_key"] == "session"
+
+
+@then("the hook turn is saved separately")
+def hook_turn_is_saved_separately(hook_bdd: HookBDD) -> None:
+    paths = list(hook_bdd.tmp_path.glob("post-response-hook.*.json"))
+    assert len(paths) == 1
+    payload = json.loads(paths[0].read_text(encoding="utf-8"))
+    assert payload["hook"] == "Review"
+    assert [message["role"] for message in payload["messages"]] == [
+        "user",
+        "assistant",
+    ]
 
 
 @given("a fake structured Responses client")
@@ -449,18 +559,16 @@ def hook_run_result_is_skipped(
     monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", fake_hook_trigger)
 
 
-@given(parsers.parse('the hook trigger selects a prompt "{prompt}"'))
-def hook_trigger_selects_prompt(
-    hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch, prompt: str
+@given(parsers.parse('the hook review returns feedback "{feedback}"'))
+def hook_review_returns_feedback(
+    hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch, feedback: str
 ) -> None:
     hook_batches = iter(
-        [[post_response_hooks.HookCheck("Refactor", "any", prompt)], []]
+        [[post_response_hooks.HookCheck("Refactor", "any", "Review it")], []]
     )
 
     async def fake_load_hooks(_workspace: Path) -> list[post_response_hooks.HookCheck]:
         return next(hook_batches)
-
-    monkeypatch.setattr(post_response_hooks, "_load_hooks", fake_load_hooks)
 
     async def fake_hook_trigger(
         _hooks: list[post_response_hooks.HookCheck],
@@ -468,7 +576,19 @@ def hook_trigger_selects_prompt(
     ) -> post_response_hooks.HookTriggerResponse:
         return post_response_hooks.HookTriggerResponse(hooks_to_run=["Refactor"])
 
+    async def fake_hook_review(
+        _hook: post_response_hooks.HookCheck,
+        context: post_response_hooks.HookContext,
+    ) -> str:
+        assert context.messages == []
+        assert context.instructions == "system prompt"
+        assert context.tools
+        assert context.prompt_cache_key
+        return feedback
+
+    monkeypatch.setattr(post_response_hooks, "_load_hooks", fake_load_hooks)
     monkeypatch.setattr(post_response_hooks, "_run_hook_trigger", fake_hook_trigger)
+    monkeypatch.setattr(post_response_hooks, "_run_hook_review", fake_hook_review)
 
 
 @when("the assistant answer is streamed")
@@ -504,10 +624,11 @@ def hook_status_events_are_running_and_skipped(hook_bdd: HookBDD) -> None:
     assert hook_bdd.events[2].status == "skipped"
 
 
-@then("the assistant is rerun with the hook prompt")
-def assistant_is_rerun_with_hook_prompt(hook_bdd: HookBDD) -> None:
+@then("the assistant is rerun with the hook feedback")
+def assistant_is_rerun_with_hook_feedback(hook_bdd: HookBDD) -> None:
     assert [event.type for event in hook_bdd.events] == [
         "response.completed",
+        "faltoobot.post_response_hook",
         "faltoobot.post_response_hook",
         "faltoobot.post_response_hook",
         "response.completed",
@@ -515,12 +636,14 @@ def assistant_is_rerun_with_hook_prompt(hook_bdd: HookBDD) -> None:
     assert hook_bdd.events[1].hook_name == "Refactor"
     assert hook_bdd.events[1].status == "running"
     assert hook_bdd.events[2].status == "triggered"
+    assert hook_bdd.events[3].status == "feedback"
     assert hook_bdd.stream_calls == sum(
         event.type == "response.completed" for event in hook_bdd.events
     )
     developer_message = sessions.get_messages(_session(hook_bdd))["messages"][-1]
     assert developer_message["role"] == "developer"
-    assert developer_message["content"][0]["text"] == "fix it"
+    assert 'feedback from "Refactor" agent' in developer_message["content"][0]["text"]
+    assert "fix it" in developer_message["content"][0]["text"]
 
 
 @given("a git workspace with staged and unstaged changes")
