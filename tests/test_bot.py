@@ -3119,3 +3119,28 @@ async def test_start_polling_notification_requeues_failure_and_continues(
     await whatsapp_app._start_polling_notifications()
 
     assert events == ["requeue"]
+
+
+def test_message_summary_redacts_text_content() -> None:
+    summary = runtime._message_summary("my private medical question", None, False)
+
+    assert summary == "<text; 27 chars>"
+    assert "private" not in summary
+
+
+def test_message_summary_redacts_voice_transcript() -> None:
+    audio_message = SimpleNamespace(seconds=17)
+
+    summary = runtime._message_summary(
+        "The user sent a voice note. Secret transcript body.", audio_message, False
+    )
+
+    assert summary == "<voice note transcript; 17s; 51 chars>"
+    assert "Secret" not in summary
+
+
+def test_message_summary_redacts_image_caption() -> None:
+    summary = runtime._message_summary("sensitive image caption", None, True)
+
+    assert summary == "<image with caption; 23 chars>"
+    assert "sensitive" not in summary
