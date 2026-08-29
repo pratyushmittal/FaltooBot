@@ -104,6 +104,29 @@ class FakeItem:
         return self.payload
 
 
+def test_to_message_item_disables_sdk_serializer_warnings(monkeypatch) -> None:
+    item = ResponseFunctionToolCall(
+        arguments="{}",
+        call_id="call_123",
+        name="example_tool",
+        type="function_call",
+        id="fc_123",
+    )
+    original_to_dict = item.to_dict
+    seen: dict[str, bool] = {}
+
+    def tracked_to_dict(*, warnings: bool = True, **kwargs: Any) -> dict[str, object]:
+        seen["warnings"] = warnings
+        return original_to_dict(warnings=warnings, **kwargs)
+
+    monkeypatch.setattr(item, "to_dict", tracked_to_dict)
+
+    result = gpt_utils._to_message_item(item)
+
+    assert seen == {"warnings": False}
+    assert result["type"] == "function_call"
+
+
 class FakeResponse:
     def __init__(
         self,
