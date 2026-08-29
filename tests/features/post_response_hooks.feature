@@ -98,3 +98,9 @@ Feature: Post-response hooks
     And the hook review returns feedback "fix it"
     When the assistant answer is streamed
     Then the assistant is rerun with the hook feedback
+
+  Scenario: No hooks run when max iterations are reached
+    Given a hook-enabled session with one hook
+    And max hook iterations are exhausted
+    When the assistant answer is streamed
+    Then the hook loop stops before any hook is run

@@ -20,7 +20,15 @@ from openai.types.responses import (
 )
 from openai.types.responses.response_output_item import ImageGenerationCall
 
-from faltoobot import post_response_hooks
+from faltoobot.post_response_hooks import (
+    DEFAULT_MAX_ITERATIONS,
+    HookContext,
+    HookDiffScope,
+    HookEvent,
+    Snapshot,
+    capture_snapshot,
+    run_hooks,
+)
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
     MessageHistory,
@@ -647,10 +655,8 @@ async def _get_answer_streaming(
 
 async def get_answer_streaming(  # noqa: C901
     session: Session,
-    against: post_response_hooks.Snapshot
-    | post_response_hooks.HookDiffScope
-    | None = None,
-) -> AsyncIterator[StreamingReplyItem | post_response_hooks.HookEvent]:
+    against: Snapshot | HookDiffScope | None = None,
+) -> AsyncIterator[StreamingReplyItem | HookEvent]:
     """Stream an answer and repeat while enabled post-response hooks match."""
     if against is None and not getattr(build_config(), "hook_enabled", False):
         # Disabled hooks should add no work to the ordinary response path.
@@ -663,9 +669,20 @@ async def get_answer_streaming(  # noqa: C901
 
     while True:
         if against is None:
-            against = await post_response_hooks.capture_snapshot(workspace)
+            against = await capture_snapshot(workspace)
             async for event in _get_answer_streaming(session):
                 yield event
+
+        # Repeated hook feedback must not keep the assistant running indefinitely.
+        if iteration >= DEFAULT_MAX_ITERATIONS:
+            text = "Post-response hooks stopped after max iterations"
+            logger.warning(text)
+            yield HookEvent(
+                text=text,
+                hook_name="",
+                status="stopped",
+            )
+            return
 
         messages_json = get_messages(session)
         instructions = messages_json["system_prompt"]
@@ -675,10 +692,10 @@ async def get_answer_streaming(  # noqa: C901
                 build_config(), session.chat_key, workspace
             )
         feedback_messages: list[str] = []
-        async for event in post_response_hooks.run_hooks(
+        async for event in run_hooks(
             workspace,
             against,
-            post_response_hooks.HookContext(
+            HookContext(
                 messages=messages_json["messages"],
                 instructions=instructions,
                 tools=_session_tools(messages_json),
@@ -691,16 +708,6 @@ async def get_answer_streaming(  # noqa: C901
             yield event
 
         if not feedback_messages:
-            return
-        # Repeated hook feedback must not keep the assistant running indefinitely.
-        if iteration >= post_response_hooks.DEFAULT_MAX_ITERATIONS:
-            text = "Post-response hooks stopped after max iterations"
-            logger.warning(text)
-            yield post_response_hooks.HookEvent(
-                text=text,
-                hook_name="",
-                status="stopped",
-            )
             return
 
         for text in feedback_messages:
