@@ -37,6 +37,7 @@ from faltoobot.gpt_utils import (
     Tool,
     get_openai_client,
     get_streaming_reply,
+    prune_auto_compacted_history,
     trim_input,
 )
 from faltoobot.images import inline_image_item, upload_attachment
@@ -639,6 +640,7 @@ async def _get_answer_streaming(
                 )
 
         if event.type in {"function_call_output", "response.completed"}:
+            prune_auto_compacted_history(messages_json["messages"])
             set_messages(session, messages_json)
         if image_markdown:
             yield cast(
