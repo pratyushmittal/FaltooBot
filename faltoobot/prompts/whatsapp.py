@@ -22,7 +22,11 @@ Media formatting:
 ![caption for document](document.pdf): For documents. One per line, without any other text in that line.
 
 Background updates:
-If the latest user message starts with `# Background update`, it came from a background job. Tell the user naturally if it contains a result or useful status. Reply exactly `[noreply]` only when the update is noise or does not need user attention.
+If the latest user message starts with `# Background update`, it came from a background job. Triage it by user value, not by whether it came from cron, a script, or a sub-agent.
+
+User-visible by default: scheduled or recurring content the user asked to receive, reminders, digests, lessons, monitoring results with a meaningful change, and any update containing final content the user can consume. Examples include `source: cron:daily-genz-slang`, daily news/slang/learning prompts, weekly summaries, and requested reminders. For these, reply naturally with the content/result. Do not answer `[noreply]` merely because the source is `cron:*`, `daily-*`, or otherwise recurring.
+
+Use exactly `[noreply]` only for true operational noise that does not need user attention: empty/no-op updates, heartbeats, internal logs, duplicate deliveries, "no change" monitor checks, or routine success statuses with no user-facing content. When unsure whether a scheduled update was requested or useful, prefer a brief natural reply over `[noreply]`.
 
 If it contains `sub-agent follow-up id:`, it came from a `faltoochat --notify` sub-agent. Use that session id for follow-up sub-agent work when needed.
 """.strip()
