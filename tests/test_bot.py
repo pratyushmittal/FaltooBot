@@ -2729,7 +2729,7 @@ async def test_start_polling_notifications_claims_and_acks(
     monkeypatch.setattr(
         whatsapp_app.notify_queue,
         "requeue_notification",
-        lambda path: calls.append("requeue"),
+        lambda path, **kwargs: calls.append("requeue"),
     )
 
     await whatsapp_app._start_polling_notifications()
@@ -3039,13 +3039,51 @@ async def test_start_polling_global_notification_targets_allowed_chats(
     monkeypatch.setattr(
         whatsapp_app.notify_queue,
         "requeue_notification",
-        lambda path: processed.append("requeue"),
+        lambda path, **kwargs: processed.append("requeue"),
     )
 
     await whatsapp_app._start_polling_notifications()
 
     assert stored == ["# Background update\n\n## message\nFaltoobot updated"]
     assert processed == ["15555550123@s.whatsapp.net", "ack"]
+
+
+@pytest.mark.anyio
+async def test_process_notification_retries_even_if_notification_id_was_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(whatsapp_app, "client", cast(NewAClient, FakePresenceClient()))
+    monkeypatch.setattr(
+        whatsapp_app, "config", make_config(tmp_path, allowed_chats=set())
+    )
+    monkeypatch.setattr(whatsapp_app, "chat_locks", defaultdict(asyncio.Lock))
+    chat_key = "15555550123@s.whatsapp.net"
+    session = get_session(chat_key=chat_key)
+    messages_json = get_messages(session)
+    messages_json["message_ids"] = ["notify_1"]
+    set_messages(session, messages_json)
+    processed: list[str] = []
+
+    async def fake_process_turn_locked(*args: object, **kwargs: Any) -> None:
+        processed.append(get_messages(session)["messages"][-1]["content"])
+
+    monkeypatch.setattr(
+        whatsapp_app.runtime, "process_turn_locked", fake_process_turn_locked
+    )
+
+    await whatsapp_app._process_notification_for_chat(
+        chat_key,
+        {
+            "id": "notify_1",
+            "chat_key": chat_key,
+            "message": "queued user message",
+            "created_at": "2026-04-05T00:00:00+00:00",
+        },
+    )
+
+    assert processed == ["# Background update\n\n## message\nqueued user message"]
+    assert get_messages(session)["message_ids"] == ["notify_1"]
 
 
 @pytest.mark.anyio
@@ -3104,7 +3142,7 @@ async def test_start_polling_notification_requeues_failure_and_continues(
     async def fail_process(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("boom")
 
-    def fake_requeue(_path: Path) -> None:
+    def fake_requeue(_path: Path, **_kwargs: object) -> None:
         events.append("requeue")
         whatsapp_app.notifications_stop.set()
 

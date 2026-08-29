@@ -23,7 +23,7 @@ from faltoobot.config import (
     merge_config,
     normalize_chat,
 )
-from faltoobot.sessions import append_user_turn, get_session
+from faltoobot.sessions import append_user_turn, get_messages, get_session, set_messages
 
 from . import login, runtime
 
@@ -72,6 +72,15 @@ async def on_exit() -> None:
     await client.stop()
 
 
+def _mark_notification_delivered(chat_key: str, notification_id: str) -> None:
+    session = get_session(chat_key=chat_key)
+    messages_json = get_messages(session)
+    if notification_id in messages_json["message_ids"]:
+        return
+    messages_json["message_ids"].append(notification_id)
+    set_messages(session, messages_json)
+
+
 async def _process_notification_for_chat(
     chat_key: str, notification: notify_queue.Notification
 ) -> None:
@@ -94,7 +103,10 @@ async def _process_notification_for_chat(
             session,
             question=turn["prompt"],
             attachments=turn["attachments"] or None,
-            message_ids=turn["message_ids"],
+            # comment: queue files are the source of truth until ack. Marking the
+            # id before the WhatsApp send succeeds can make a requeued notification
+            # look like a duplicate and get acked without ever being delivered.
+            message_ids=[],
         )
         if stored:
             await runtime.process_turn_locked(
@@ -103,6 +115,7 @@ async def _process_notification_for_chat(
                 config=config,
                 turn=turn,
             )
+            _mark_notification_delivered(chat_key, notification["id"])
 
 
 async def _wait_for_whatsapp_connection() -> bool:
@@ -150,7 +163,11 @@ async def _start_polling_notifications() -> None:
                     "Notify-queue item %s failed; requeueing",
                     notification.get("id", path.name),
                 )
-                notify_queue.requeue_notification(path)
+                delay = notify_queue.retry_delay_seconds(
+                    notification.get("attempts", 0)
+                )
+                logger.warning("Retrying notify-queue item in %.0f seconds", delay)
+                notify_queue.requeue_notification(path, delay_seconds=delay)
                 continue
             notify_queue.ack_notification(path)
         try:
