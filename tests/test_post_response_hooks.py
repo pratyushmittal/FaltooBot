@@ -532,7 +532,7 @@ def hook_enabled_session_with_one_hook(
     async def fake_load_hooks(_workspace: Path) -> list[post_response_hooks.HookCheck]:
         return [post_response_hooks.HookCheck("Refactor", "any", "fix")]
 
-    monkeypatch.setattr(post_response_hooks, "capture_snapshot", fake_capture_snapshot)
+    monkeypatch.setattr(sessions, "capture_snapshot", fake_capture_snapshot)
     monkeypatch.setattr(post_response_hooks, "_load_hooks", fake_load_hooks)
 
 
@@ -591,6 +591,11 @@ def hook_review_returns_feedback(
     monkeypatch.setattr(post_response_hooks, "_run_hook_review", fake_hook_review)
 
 
+@given("max hook iterations are exhausted")
+def max_hook_iterations_are_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sessions, "DEFAULT_MAX_ITERATIONS", 0)
+
+
 @when("the assistant answer is streamed")
 def assistant_answer_is_streamed(
     hook_bdd: HookBDD, monkeypatch: pytest.MonkeyPatch
@@ -644,6 +649,11 @@ def assistant_is_rerun_with_hook_feedback(hook_bdd: HookBDD) -> None:
     assert developer_message["role"] == "developer"
     assert 'feedback from "Refactor" agent' in developer_message["content"][0]["text"]
     assert "fix it" in developer_message["content"][0]["text"]
+
+
+@then("the hook loop stops before any hook is run")
+def hook_loop_stops_before_any_hook(hook_bdd: HookBDD) -> None:
+    assert _hook_statuses(hook_bdd.events) == ["stopped"]
 
 
 @given("a git workspace with staged and unstaged changes")
