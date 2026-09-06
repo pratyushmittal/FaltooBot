@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.6.2 — 2026-09-06
+
+### Fixed
+- Post-response hooks no longer run an extra review after reaching the iteration limit.
+
 ## 7.6.1 — 2026-09-06
 
 ### Fixed
