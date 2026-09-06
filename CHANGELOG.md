@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Sessions containing incomplete image-generation calls can reopen without deleting their local history.
+
 ## 7.6.0 — 2026-08-27
 
 ### Added

@@ -223,6 +223,9 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
+        # Failed hosted image calls cannot be resolved by a store=False backend.
+        if item.get("type") == "image_generation_call" and not item.get("result"):
+            continue
         kept_keys = (
             IMAGE_GENERATION_REPLAY_KEYS
             if item.get("type") == "image_generation_call"
