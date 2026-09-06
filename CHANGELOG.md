@@ -2,15 +2,18 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
-## Unreleased
+## 7.6.1 — 2026-09-06
 
 ### Fixed
 - Sessions containing incomplete image-generation calls can reopen without deleting their local history.
 
+### Changed
+- Added the developer message recommended on the GPT Astra page to keep code changes focused, including after compaction.
+
 ## 7.6.0 — 2026-08-27
 
 ### Added
-- Added opt-in post-response hooks for automated, LLM-assisted code review. Hooks can be defined globally or per project, run automatically after assistant changes, or be invoked manually against staged and unstaged work.
+- Added opt-in AI code-review hooks with global or project settings and automatic or manual execution.
 - Session integrations can now append developer messages directly.
 
 ### Changed
