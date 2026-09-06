@@ -580,7 +580,7 @@ def hook_review_returns_feedback(
         _hook: post_response_hooks.HookCheck,
         context: post_response_hooks.HookContext,
     ) -> str:
-        assert context.messages == []
+        assert context.messages == sessions._get_new_message_history("code@test")
         assert context.instructions == "system prompt"
         assert context.tools
         assert context.prompt_cache_key

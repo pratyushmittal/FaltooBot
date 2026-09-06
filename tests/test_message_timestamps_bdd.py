@@ -89,6 +89,7 @@ def ask_question(timestamp_ctx: dict[str, Any]) -> None:
 def messages_json_contains_timestamps(timestamp_ctx: dict[str, Any]) -> None:
     session = cast(sessions.Session, timestamp_ctx["session"])
     messages = json.loads(session.messages_path.read_text(encoding="utf-8"))["messages"]
+    messages = [message for message in messages if message["role"] != "developer"]
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[0]["content"] == "Hi"
     assert all(isinstance(message.get("timestamp"), str) for message in messages)

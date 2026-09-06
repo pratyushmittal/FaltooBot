@@ -34,6 +34,7 @@ from faltoobot.gpt_utils import (
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
+from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import invalidate_history as invalidate_websocket_history
@@ -102,6 +103,13 @@ def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
     return f"{prefix}@{name}-{digest}"
 
 
+def _get_new_message_history(chat_key: str) -> MessageHistory:
+    # WhatsApp and sub-agent chats use their own instructions.
+    if not chat_key.startswith("code@"):
+        return []
+    return [{"type": "message", "role": "developer", "content": DEVELOPER_PROMPT}]
+
+
 def _normalized_messages_json(
     chat_key: str,
     session_id: str,
@@ -125,7 +133,7 @@ def _normalized_messages_json(
         "chat_key": chat_key,
         "workspace": str(workspace),
         "system_prompt": system_prompt if isinstance(system_prompt, str) else "",
-        "messages": [item for item in payload.get("messages", [])],
+        "messages": list(payload.get("messages", _get_new_message_history(chat_key))),
         "message_ids": [item for item in payload.get("message_ids", [])],
     }
 
@@ -319,8 +327,10 @@ async def _compact_codex_history(
 async def compact_message_history(session: Session) -> bool:
     config = build_config()
     messages_json = get_messages(session)
-    if not messages_json["messages"]:
-        # comment: nothing to compact for a new/empty session.
+    if not messages_json["messages"] or messages_json[
+        "messages"
+    ] == _get_new_message_history(session.chat_key):
+        # New coding sessions contain only guidance, not a conversation to compact.
         return False
 
     workspace = Path(messages_json["workspace"])
@@ -371,7 +381,7 @@ async def compact_message_history(session: Session) -> bool:
         session.session_dir / f"messages.archive.{uuid4().hex}.json",
         json.dumps(messages_json, indent=2, ensure_ascii=False) + "\n",
     )
-    messages_json["messages"] = output
+    messages_json["messages"] = output + _get_new_message_history(session.chat_key)
     set_messages(session, messages_json)
     return True
 
@@ -628,6 +638,12 @@ async def _get_answer_streaming(
                 # Middle insertions invalidate the websocket's cached history prefix.
                 invalidate_websocket_history(
                     messages_json["id"], len(messages_json["messages"])
+                )
+
+            # Auto-compaction can discard the original developer message.
+            if any(item.type == "compaction" for item in output):
+                messages_json["messages"].extend(
+                    _get_new_message_history(session.chat_key)
                 )
 
         if event.type in {"function_call_output", "response.completed"}:
