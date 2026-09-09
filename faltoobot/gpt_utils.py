@@ -213,6 +213,10 @@ def _has_oversized_encrypted_content(item: MessageItem) -> bool:
 
 
 def _trim_history_item(item: MessageItem) -> MessageItem | None:
+    # Failed hosted image calls cannot be resolved by a store=False backend.
+    if item.get("type") == "image_generation_call" and not item.get("result"):
+        return None
+
     if _has_oversized_encrypted_content(item):
         item_type = item.get("type")
         logger.warning(

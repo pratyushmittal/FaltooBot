@@ -11,6 +11,7 @@ from PIL import Image
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from faltoobot import sessions
+from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
 from faltoobot.gpt_utils import MessageHistory, _to_message_item, get_tools_definition
 
 
@@ -100,12 +101,15 @@ class FakeClient:
         self.closed = True
 
 
+@pytest.mark.parametrize(
+    "chat_key", ["code@test", "sub-agent@test", "15555550123@s.whatsapp.net"]
+)
 def test_get_session_creates_messages_json_and_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    chat_key: str,
 ) -> None:
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
-    chat_key = "code@test"
 
     session = sessions.get_session(chat_key=chat_key)
     payload = sessions.get_messages(session)
@@ -114,7 +118,14 @@ def test_get_session_creates_messages_json_and_workspace(
     assert payload["id"] == session.session_id
     assert payload["chat_key"] == chat_key
     assert payload["system_prompt"] == ""
-    assert payload["messages"] == []
+    expected = (
+        [{"type": "message", "role": "developer", "content": DEVELOPER_PROMPT}]
+        if chat_key.startswith("code@")
+        else []
+    )
+    assert payload["messages"] == expected
+    reopened = sessions.get_session(chat_key=chat_key, session_id=session.session_id)
+    assert sessions.get_messages(reopened)["messages"] == expected
     assert payload["message_ids"] == []
     assert Path(payload["workspace"]).is_dir()
     assert (Path(payload["workspace"]) / "AGENTS.md").exists()
@@ -404,11 +415,12 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     assert duplicate == ""
     assert len(calls) == 1
     assert _without_timestamp(calls[0]) == [
+        {"type": "message", "role": "developer", "content": DEVELOPER_PROMPT},
         {
             "type": "message",
             "role": "user",
             "content": "Hi",
-        }
+        },
     ]
     tool_defs_by_name = {tool_def["name"]: tool_def for tool_def in tool_defs}
     assert set(tool_defs_by_name) == {
@@ -470,6 +482,7 @@ async def test_get_answer_updates_messages_and_ignores_duplicate_message_id(  # 
     }
     assert payload["message_ids"] == ["msg-1"]
     assert _without_timestamp(payload["messages"]) == [
+        {"type": "message", "role": "developer", "content": DEVELOPER_PROMPT},
         {
             "type": "message",
             "role": "user",
@@ -736,11 +749,12 @@ async def test_get_answer_uploads_image_attachments(
         uploaded = client.files.calls[0]["file"]
         assert uploaded.name.endswith(str(case["expected_name_suffix"]))
     assert _without_timestamp(payload["messages"]) == [
+        {"type": "message", "role": "developer", "content": DEVELOPER_PROMPT},
         {
             "type": "message",
             "role": "user",
             "content": cast(list[dict[str, Any]], case["expected_content"]),
-        }
+        },
     ]
     assert client.closed is True
 
@@ -884,10 +898,36 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
 
     assert answer == ""
     assert client.files.calls == []
-    assert payload["messages"][0]["content"][1]["type"] == "input_image"
-    assert payload["messages"][0]["content"][1]["image_url"].startswith(
+    assert payload["messages"][1]["content"][1]["type"] == "input_image"
+    assert payload["messages"][1]["content"][1]["image_url"].startswith(
         "data:image/png;base64,"
     )
+
+
+def test_append_developer_message_persists_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="desktop")
+
+    sessions.append_developer_message(session, "Be concise")
+
+    message = sessions.get_messages(session)["messages"][-1]
+    assert message["role"] == "developer"
+    assert message["content"] == [{"type": "input_text", "text": "Be concise"}]
+    assert message["timestamp"]
+
+
+def test_append_developer_message_rejects_empty_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="desktop")
+
+    with pytest.raises(ValueError, match="empty"):
+        sessions.append_developer_message(session, "  ")
 
 
 @pytest.mark.anyio
@@ -921,6 +961,7 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
 
     assert sessions.get_messages(session)["message_ids"] == ["msg-1", "msg-2"]
     assert _without_timestamp(sessions.get_messages(session)["messages"]) == [
+        {"type": "message", "role": "developer", "content": DEVELOPER_PROMPT},
         {
             "type": "message",
             "role": "user",
@@ -928,7 +969,7 @@ async def test_append_user_turn_appends_user_content_and_message_ids(
                 {"type": "input_text", "text": "compare"},
                 {"type": "input_image", "file_id": "file_123", "detail": "auto"},
             ],
-        }
+        },
     ]
 
 
@@ -1006,13 +1047,15 @@ async def test_get_answer_reuses_existing_user_turn(
 
     assert answer == "hello"
     assert _without_timestamp(calls[0]) == [
+        {"type": "message", "role": "developer", "content": DEVELOPER_PROMPT},
         {
             "type": "message",
             "role": "user",
             "content": "Hi",
-        }
+        },
     ]
     assert _without_timestamp(sessions.get_messages(session)["messages"]) == [
+        {"type": "message", "role": "developer", "content": DEVELOPER_PROMPT},
         {
             "type": "message",
             "role": "user",
@@ -1024,3 +1067,37 @@ async def test_get_answer_reuses_existing_user_turn(
             "content": [{"type": "output_text", "text": "hello"}],
         },
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("chat_key", ["code@test", "15555550123@s.whatsapp.net"])
+async def test_automatic_compaction_restores_coding_guidance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, chat_key: str
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: SimpleNamespace())
+    monkeypatch.setattr(sessions, "get_system_instructions", lambda *_: "system prompt")
+    session = sessions.get_session(chat_key=chat_key)
+    await sessions.append_user_turn(session, question="Continue working")
+
+    async def compacting_reply(**kwargs: Any):
+        history = kwargs["input"]
+        history.append(
+            {"type": "compaction", "id": "cmp_test", "encrypted_content": "summary"}
+        )
+        yield SimpleNamespace(
+            type="response.completed",
+            response=SimpleNamespace(output=[SimpleNamespace(type="compaction")]),
+        )
+        # The transport resumes with guidance already persisted and ready for its next request.
+        assert sessions.get_messages(session)["messages"] == history
+        replay = sessions.trim_input(history)
+        expected = sessions._get_new_message_history(chat_key)
+        assert [item for item in replay if item.get("role") == "developer"] == expected
+        # Coding guidance must follow the compacted window.
+        if expected:
+            assert replay[-1] == expected[0]
+
+    monkeypatch.setattr(sessions, "_get_streaming_reply", compacting_reply)
+    async for _ in sessions._get_answer_streaming(session):
+        pass

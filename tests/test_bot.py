@@ -8,6 +8,7 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from neonize.aioze.client import NewAClient
@@ -1637,6 +1638,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 '• gemini_gemini_api_key=""',
                 '• gemini_model="gemini-3.1-flash-image-preview"',
                 '• google_places_api_key=""',
+                "• hooks_enabled=false",
                 '• ui_theme=""',
                 (
                     '• browser_binary="/Applications/Google Chrome.app/Contents/MacOS/'
@@ -2451,13 +2453,33 @@ async def test_process_turn_locked_handles_notification_turn_answers(
     assert client.replies == []
 
 
+class FakeResponseStream:
+    def __init__(self, events: list[Any]) -> None:
+        self.events = events
+
+    async def __aenter__(self) -> "FakeResponseStream":
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        return None
+
+    def __aiter__(self) -> "FakeResponseStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        if not self.events:
+            raise StopAsyncIteration
+        return self.events.pop(0)
+
+
 @pytest.mark.anyio
+@pytest.mark.parametrize("chat_key", ["code@test", "15555550123@s.whatsapp.net"])
 async def test_compact_message_history_replaces_messages_with_compacted_window(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chat_key: str
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
     config = make_config(tmp_path, allowed_chats=set())
-    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    session = get_session(chat_key=chat_key)
     messages_json = get_messages(session)
     messages_json["messages"] = [
         {"type": "message", "role": "user", "content": "old"},
@@ -2514,7 +2536,9 @@ async def test_compact_message_history_replaces_messages_with_compacted_window(
     assert await sessions.compact_message_history(session) is True
 
     saved = get_messages(session)
-    assert saved["messages"] == saved_compacted_output
+    assert saved[
+        "messages"
+    ] == saved_compacted_output + sessions._get_new_message_history(chat_key)
     assert saved["message_ids"] == ["msg-1"]
     assert saved["system_prompt"] == "system prompt"
     archive_paths = list(session.session_dir.glob("messages.archive.*.json"))
@@ -2538,6 +2562,62 @@ async def test_compact_message_history_replaces_messages_with_compacted_window(
             "prompt_cache_key": session.session_id,
         }
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("chat_key", ["code@test", "15555550123@s.whatsapp.net"])
+async def test_compact_message_history_uses_response_stream_for_codex_oauth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chat_key: str
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    config.openai_oauth = "auth.json"
+    session = get_session(chat_key=chat_key)
+    messages_json = get_messages(session)
+    messages_json["messages"] = [{"type": "message", "role": "user", "content": "old"}]
+    set_messages(session, messages_json)
+
+    events = [
+        SimpleNamespace(
+            type="response.output_item.done",
+            item={
+                "type": "compaction",
+                "id": "cmp_2",
+                "encrypted_content": "new",
+            },
+        ),
+        SimpleNamespace(type="response.completed"),
+    ]
+
+    create = AsyncMock(return_value=FakeResponseStream(events))
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=create),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(sessions, "build_config", lambda: config)
+    monkeypatch.setattr(sessions, "get_openai_client", lambda _: client)
+    monkeypatch.setattr(sessions, "get_system_instructions", lambda *_: "system prompt")
+
+    assert await sessions.compact_message_history(session) is True
+    assert get_messages(session)["messages"] == [
+        {
+            "type": "compaction",
+            "id": "cmp_2",
+            "encrypted_content": "new",
+            sessions.STANDALONE_COMPACTION_KEY: True,
+        }
+    ] + sessions._get_new_message_history(chat_key)
+    create.assert_awaited_once_with(
+        model="gpt-5.4",
+        input=[
+            {"type": "message", "role": "user", "content": "old"},
+            {"type": "compaction_trigger"},
+        ],
+        instructions="system prompt",
+        prompt_cache_key=session.session_id,
+        store=False,
+        stream=True,
+    )
 
 
 @pytest.mark.anyio
@@ -2591,14 +2671,17 @@ async def test_compact_message_history_creates_archive_file_per_compaction(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("chat_key", ["code@test", "15555550123@s.whatsapp.net"])
 async def test_compact_message_history_skips_empty_sessions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chat_key: str
 ) -> None:
     monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
-    session = get_session(chat_key="15555550123@s.whatsapp.net")
+    session = get_session(chat_key=chat_key)
 
     assert await sessions.compact_message_history(session) is False
-    assert get_messages(session)["messages"] == []
+    assert get_messages(session)["messages"] == sessions._get_new_message_history(
+        chat_key
+    )
 
 
 def _set_whatsapp_connected(monkeypatch: pytest.MonkeyPatch) -> None:
