@@ -375,7 +375,10 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
         "summary": "concise",
         "effort": "low",
     }
-    assert client.responses.calls[0]["tools"][-1] == {"type": "image_generation"}
+    assert client.responses.calls[0]["tools"][-1] == {
+        "type": "image_generation",
+        "model": "gpt-image-2.5-sunburst",
+    }
     assert client.responses.calls[0]["prompt_cache_key"] == omit
     assert client.responses.calls[0]["extra_headers"] is None
     assert client.responses.calls[1]["input"][-1] == {
@@ -1206,7 +1209,10 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     assert websocket.sent[0]["prompt_cache_key"] == "session-123"
     assert websocket.sent[0]["tool_choice"] == "auto"
     assert websocket.sent[0]["reasoning"] == {"summary": "concise", "effort": "low"}
-    assert websocket.sent[0]["tools"][-1] == {"type": "image_generation"}
+    assert websocket.sent[0]["tools"][-1] == {
+        "type": "image_generation",
+        "model": "gpt-image-2.5-sunburst",
+    }
     assert "stream" not in websocket.sent[0]
     assert "background" not in websocket.sent[0]
     assert websocket.sent[1]["previous_response_id"] == "resp_warm"

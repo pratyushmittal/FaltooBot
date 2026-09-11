@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.6.3 — 2026-09-11
+
+### Changed
+- Image generation now uses GPT-Image-2.5 Sunburst.
+
 ## 7.6.2 — 2026-09-06
 
 ### Fixed

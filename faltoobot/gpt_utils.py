@@ -306,7 +306,7 @@ def _cloud_tools() -> list[dict[str, Any]]:
                 "region": "Lucknow",
             },
         },
-        {"type": "image_generation"},
+        {"type": "image_generation", "model": "gpt-image-2.5-sunburst"},
     ]
 
 
