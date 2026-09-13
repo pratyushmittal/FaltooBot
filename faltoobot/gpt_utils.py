@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, TypeAlias, TypedDict, cast
 
-from openai import AsyncOpenAI, Timeout, omit
+from openai import AsyncOpenAI, BaseModel, Timeout, omit
 from openai.types.responses import (
     FunctionToolParam,
     ResponseCompletedEvent,
@@ -170,7 +170,12 @@ def get_tools_definition(function: Callable[..., Any]) -> FunctionToolParam:
 
 
 def _to_message_item(value: Any) -> MessageItem:
-    if hasattr(value, "to_dict"):
+    if isinstance(value, BaseModel):
+        # comment: ChatGPT Codex can return newer response variants before the installed
+        # SDK union types catch up. We persist the API-shaped data, so expected schema-drift
+        # serializer warnings are noise here rather than an indication of data loss.
+        value = value.to_dict(warnings=False)
+    elif hasattr(value, "to_dict"):
         value = value.to_dict()
     if not isinstance(value, dict):
         raise TypeError(f"Expected dict-like item, got {type(value).__name__}")
