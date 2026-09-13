@@ -131,3 +131,24 @@ def test_format_notification_message_includes_session_id() -> None:
 
     assert "sub-agent follow-up id: session-1" in message
     assert "--session-id" not in message
+
+
+def test_notify_queue_delays_retried_notifications(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(notify_queue, "app_root", lambda: tmp_path / ".faltoobot")
+    now = 1_000.0
+    monkeypatch.setattr(notify_queue, "time", lambda: now)
+    notify_queue.enqueue_notification("code@demo", "hello")
+    path, _notification = notify_queue.claim_notifications(lambda _item: True)[0]
+
+    notify_queue.requeue_notification(path, delay_seconds=30)
+
+    assert notify_queue.claim_notifications(lambda _item: True) == []
+    now = 1_031.0
+    claimed = notify_queue.claim_notifications(lambda _item: True)
+    assert len(claimed) == 1
+    assert claimed[0][1]["attempts"] == 1
+
+
+def test_retry_delay_seconds_is_bounded_exponential_backoff() -> None:
+    delays = tuple(notify_queue.retry_delay_seconds(value) for value in (0, 3, 100))
+    assert delays == (5, 40, 300)
