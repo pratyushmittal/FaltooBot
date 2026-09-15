@@ -516,6 +516,9 @@ async def streaming_reply(  # noqa: C901
                     result = await _tool_result(tools_by_name, tool_call)
                     input.append(_to_message_item(result))
                     yield result
+    except asyncio.CancelledError:
+        await _close_session(session)
+        raise
     except Exception as exc:
         if _is_client_error(exc):
             # comment: bad auth/payload should fail instead of replaying history.

@@ -2,6 +2,8 @@ import asyncio
 import logging
 import signal
 from collections import defaultdict
+from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from neonize.aioze.client import NewAClient
@@ -23,7 +25,13 @@ from faltoobot.config import (
     merge_config,
     normalize_chat,
 )
-from faltoobot.sessions import append_user_turn, get_session
+from faltoobot.sessions import (
+    Session,
+    append_user_turn,
+    get_messages,
+    get_session,
+    record_interrupted_response,
+)
 
 from . import login, runtime
 
@@ -35,10 +43,36 @@ __all__ = ["main"]
 config: Config = build_config()
 client = NewAClient(str(config.session_db))
 tasks: set[asyncio.Task[Any]] = set()
-# comment: serialize turns per WhatsApp chat so follow-up messages wait for the current
-# turn to finish instead of racing and corrupting shared session history.
-chat_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-debounce_timers: dict[str, asyncio.TimerHandle] = {}
+
+
+@dataclass
+class ChatState:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    debounce_timer: asyncio.TimerHandle | None = None
+    response_task: asyncio.Task[None] | None = None
+
+
+chats: dict[str, ChatState] = defaultdict(ChatState)
+
+
+async def _stop_response(session: Session) -> bool:
+    chat = chats[session.chat_key]
+    timer = chat.debounce_timer
+    if timer is not None:
+        timer.cancel()
+        chat.debounce_timer = None
+    task = chat.response_task
+    if task is None or task.done():
+        return timer is not None
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    record_interrupted_response(session)
+    return True
+
+
 pending_albums: dict[str, runtime.PendingAlbum] = {}
 notifications_stop = asyncio.Event()
 whatsapp_connected = asyncio.Event()
@@ -65,8 +99,9 @@ def _refresh_bot_allowlists() -> None:
 async def on_exit() -> None:
     logger.info("Stopping Faltoobot")
     notifications_stop.set()
-    for handle in debounce_timers.values():
-        handle.cancel()
+    for chat in chats.values():
+        if chat.debounce_timer is not None:
+            chat.debounce_timer.cancel()
     for task in list(tasks):
         task.cancel()
     await client.stop()
@@ -79,7 +114,7 @@ async def _process_notification_for_chat(
     # comment: notify-queue items only store the string chat key. We rebuild the
     # JID object here because typing presence and the final reply both need it.
     chat_jid = build_jid(user, server)
-    async with chat_locks[chat_key]:
+    async with chats[chat_key].lock:
         session = get_session(chat_key=chat_key)
         turn: runtime.Turn = {
             "event": None,
@@ -194,13 +229,10 @@ async def _handle_debounce_timer(
     chat_key: str,
     turn: runtime.Turn,
 ) -> None:
-    async with chat_locks[chat_key]:
+    async with chats[chat_key].lock:
         session = get_session(chat_key=chat_key)
         await runtime.process_turn_locked(
-            current_client,
-            session,
-            config=config,
-            turn=turn,
+            current_client, session, config=config, turn=turn
         )
 
 
@@ -209,11 +241,28 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
     source = event.Info.MessageSource
     chat_jid = Jid2String(source.Chat)
     chat_key = normalize_chat(chat_jid)
+    chat = chats[chat_key]
+    session = get_session(chat_key=chat_key)
+    command_text = runtime.get_immediate_slash_command(event.Message)
+    if (
+        command_text
+        and runtime.should_store_event(event, config=config)
+        and await runtime.should_reply_now(current_client, event)
+    ):
+        await runtime.handle_slash_command(
+            current_client,
+            session=session,
+            config=config,
+            event=event,
+            prompt=command_text,
+            messages_json=get_messages(session),
+            stop_response=partial(_stop_response, session),
+        )
+        return
 
     # comment: same-chat turn normalization and history updates must stay serialized
     # so album buffers and session writes never race within one chat.
-    async with chat_locks[chat_key]:
-        session = get_session(chat_key=chat_key)
+    async with chat.lock:
         # comment: `turn` is the normalized user input for one model run, like the
         # combined question text plus any attachments gathered from the event(s).
         turn = await runtime.get_turn_locked(
@@ -235,12 +284,12 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
         )
     if not stored or not await runtime.should_reply_now(current_client, turn["event"]):
         return
-    current_timer = debounce_timers.pop(chat_key, None)
-    if current_timer is not None:
-        current_timer.cancel()
+    if chat.debounce_timer is not None:
+        chat.debounce_timer.cancel()
     loop = asyncio.get_running_loop()
 
     def start_debounce_timer() -> None:
+        chat.debounce_timer = None
         task = asyncio.create_task(
             _handle_debounce_timer(
                 current_client,
@@ -248,10 +297,11 @@ async def _handle_message(current_client: NewAClient, event: MessageEv) -> None:
                 turn=turn,
             )
         )
+        chat.response_task = task
         tasks.add(task)
         task.add_done_callback(tasks.discard)
 
-    debounce_timers[chat_key] = loop.call_later(DEBOUNCE_SECONDS, start_debounce_timer)
+    chat.debounce_timer = loop.call_later(DEBOUNCE_SECONDS, start_debounce_timer)
 
 
 @client.event(MessageEv)
@@ -268,8 +318,7 @@ async def main(this_config: Config | None = None) -> None:
         client, \
         config, \
         tasks, \
-        chat_locks, \
-        debounce_timers, \
+        chats, \
         pending_albums, \
         notifications_stop, \
         whatsapp_connected
@@ -277,8 +326,7 @@ async def main(this_config: Config | None = None) -> None:
     config = this_config or build_config()
     login.configure_logging(config.log_file)
     tasks = set()
-    chat_locks = defaultdict(asyncio.Lock)
-    debounce_timers = {}
+    chats = defaultdict(ChatState)
     pending_albums = {}
     notifications_stop = asyncio.Event()
     whatsapp_connected = asyncio.Event()
