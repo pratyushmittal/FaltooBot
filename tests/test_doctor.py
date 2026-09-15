@@ -3,6 +3,10 @@ from pathlib import Path
 
 from faltoobot import doctor
 from faltoobot.config import Config
+from faltoobot.sessions import (
+    MISSING_FUNCTION_CALL_OUTPUT,
+    ensure_function_call_outputs,
+)
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -31,7 +35,7 @@ def make_config(tmp_path: Path) -> Config:
 
 
 def test_ensure_function_call_outputs_repairs_dangling_and_null_outputs() -> None:
-    history: doctor.MessageHistory = [
+    history = [
         {"type": "message", "role": "user", "content": "old"},
         {
             "type": "function_call",
@@ -55,7 +59,7 @@ def test_ensure_function_call_outputs_repairs_dangling_and_null_outputs() -> Non
         },
     ]
 
-    assert doctor.ensure_function_call_outputs(history) is True
+    assert ensure_function_call_outputs(history) is True
 
     assert history == [
         {"type": "message", "role": "user", "content": "old"},
@@ -70,7 +74,7 @@ def test_ensure_function_call_outputs_repairs_dangling_and_null_outputs() -> Non
             "id": "fco_call_missing",
             "type": "function_call_output",
             "call_id": "call_missing",
-            "output": doctor.MISSING_FUNCTION_CALL_OUTPUT,
+            "output": MISSING_FUNCTION_CALL_OUTPUT,
             "status": "completed",
         },
         {"type": "message", "role": "user", "content": "next"},
@@ -84,11 +88,11 @@ def test_ensure_function_call_outputs_repairs_dangling_and_null_outputs() -> Non
         {
             "type": "function_call_output",
             "call_id": "call_null",
-            "output": doctor.MISSING_FUNCTION_CALL_OUTPUT,
+            "output": MISSING_FUNCTION_CALL_OUTPUT,
             "status": "completed",
         },
     ]
-    assert doctor.ensure_function_call_outputs(history) is False
+    assert ensure_function_call_outputs(history) is False
 
 
 def test_heal_last_used_files_uses_existing_mtime_convention(tmp_path: Path) -> None:

@@ -401,6 +401,82 @@ def set_messages(session: Session, messages_json: MessagesJson) -> None:
     )
 
 
+MISSING_FUNCTION_CALL_OUTPUT = "Tool call failed before output was saved."
+
+
+def _call_id(item: dict[str, Any], item_type: str) -> str | None:
+    if item.get("type") != item_type:
+        return None
+    call_id = item.get("call_id")
+    return call_id if isinstance(call_id, str) and call_id else None
+
+
+def _missing_function_call_output(call_id: str) -> dict[str, Any]:
+    return {
+        "id": f"fco_{call_id}",
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": MISSING_FUNCTION_CALL_OUTPUT,
+        "status": "completed",
+    }
+
+
+def ensure_function_call_outputs(items: MessageHistory) -> bool:
+    """Mutate history so every function_call has a non-null output item."""
+    output_ids = {
+        call_id
+        for item in items
+        if (call_id := _call_id(item, "function_call_output"))
+        and item.get("output") is not None
+    }
+    fixed: MessageHistory = []
+    pending: list[str] = []
+    changed = False
+
+    for item in items:
+        output_call_id = _call_id(item, "function_call_output")
+        if output_call_id:
+            item = dict(item)
+            if item.get("output") is None:
+                # comment: Responses treats null output as not answering the call.
+                item.update(output=MISSING_FUNCTION_CALL_OUTPUT, status="completed")
+                changed = True
+            if output_call_id in pending:
+                pending.remove(output_call_id)
+            fixed.append(item)
+            continue
+
+        call_id = _call_id(item, "function_call")
+        if call_id and call_id not in output_ids and call_id not in pending:
+            pending.append(call_id)
+        elif not call_id and pending:
+            fixed.extend(_missing_function_call_output(call_id) for call_id in pending)
+            pending.clear()
+            changed = True
+        fixed.append(item)
+
+    if pending:
+        fixed.extend(_missing_function_call_output(call_id) for call_id in pending)
+        changed = True
+    if changed:
+        items[:] = fixed
+    return changed
+
+
+INTERRUPTED_RESPONSE_INSTRUCTION = (
+    "The previous response was interrupted by user. Before handling the next request, "
+    "clean up temporary processes or resources started during that response. Preserve "
+    "intentionally persistent background tasks and notifications."
+)
+
+
+def record_interrupted_response(session: Session) -> None:
+    messages_json = get_messages(session)
+    ensure_function_call_outputs(messages_json["messages"])
+    set_messages(session, messages_json)
+    append_developer_message(session, INTERRUPTED_RESPONSE_INSTRUCTION)
+
+
 def append_developer_message(session: Session, text: str) -> None:
     text = text.strip()
     if not text:
