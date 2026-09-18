@@ -429,7 +429,13 @@ def _completed_update(
     item: _CompletedResponse,
 ) -> tuple[MessageHistory, Any | None, list[Any]]:
     messages = [_to_message_item(output) for output in item.response_output]
-    usage = item.event.response.usage.to_dict() if item.event.response.usage else None
+    usage = (
+        item.event.response.usage.model_dump(
+            by_alias=True, exclude_unset=True, exclude={"attribution"}
+        )
+        if item.event.response.usage
+        else None
+    )
     if messages and item.response_id:
         # comment: item["id"] is msg_/fc_/rs_; previous_response_id needs resp_.
         messages[-1]["response_id"] = item.response_id

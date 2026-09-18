@@ -408,7 +408,9 @@ async def get_streaming_reply(  # noqa: C901
             current_input[-1]["response_id"] = response_id
         # comment: empty responses have no assistant item to attach usage to.
         if response_output and completed.response.usage:
-            current_input[-1]["usage"] = completed.response.usage.to_dict()
+            current_input[-1]["usage"] = completed.response.usage.model_dump(
+                by_alias=True, exclude_unset=True, exclude={"attribution"}
+            )
         yield event
 
         tool_calls = _tool_calls_from_response(event, response_output)
