@@ -5,7 +5,8 @@ from http import HTTPStatus
 import mimetypes
 import re
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from collections.abc import Awaitable, Callable
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from markdown_it import MarkdownIt
@@ -69,11 +70,13 @@ SLASH_COMMANDS = {
     "/status",
     "/reset",
     "/compact",
+    "/stop",
     "/approve_group",
     "/deny_group",
     "/groups",
 }
 ARG_SLASH_COMMANDS = {"/approve_group", "/deny_group"}
+IMMEDIATE_SLASH_COMMANDS = {"/help", "/status", "/stop", "/groups"}
 
 
 HELP_TEXT = (
@@ -81,6 +84,7 @@ HELP_TEXT = (
     "• Send any message to ask the model\n"
     "• /reset — clear this chat's memory\n"
     "• /compact — compact this chat's memory\n"
+    "• /stop — stop the current response\n"
     "• /status — show bot status\n"
     "• /inspect — show recent tool calls\n"
     "• /help — show this help"
@@ -394,16 +398,16 @@ class Turn(TypedDict):
     audio: Any
 
 
-async def _handle_slash_command(
+async def handle_slash_command(  # noqa: C901, PLR0913
     client: NewAClient,
     *,
     session: Session,
     config: Config,
-    turn: Turn,
+    event: MessageEv,
+    prompt: str,
     messages_json: MessagesJson,
+    stop_response: Callable[[], Awaitable[bool]] | None = None,
 ) -> None:
-    event = cast(MessageEv, turn["event"])
-    prompt = turn["prompt"]
     if await group_approvals.handle_command(
         client,
         config=config,
@@ -414,6 +418,15 @@ async def _handle_slash_command(
         return
     command_text = get_slash_command(prompt)
     command = command_text.split(maxsplit=1)[0] if command_text else None
+    if command == "/stop":
+        if stop_response is None:
+            await client.reply_message("Nothing to stop.", event)
+            return
+        await client.reply_message("Stopping response...", event)
+        stopped = await stop_response()
+        await client.reply_message("Stopped." if stopped else "Nothing to stop.", event)
+        return
+
     if command == "/help":
         await client.reply_message(HELP_TEXT, event)
     elif command == "/status":
@@ -451,7 +464,6 @@ async def _handle_slash_command(
 STREAM_MAX_RETRIES = 5
 RETRY_BASE_DELAY_SECONDS = 0.2
 RETRY_MAX_DELAY_SECONDS = 5.0
-
 TRANSIENT_ANSWER_ERROR_NAMES = {
     "APIConnectionError",
     "APITimeoutError",
@@ -525,11 +537,12 @@ async def process_turn_locked(
     attachments = turn["attachments"]
     messages_json = get_messages(session)
     if event is not None and not attachments and get_slash_command(prompt):
-        await _handle_slash_command(
+        await handle_slash_command(
             client,
             session=session,
             config=config,
-            turn=turn,
+            event=event,
+            prompt=prompt,
             messages_json=messages_json,
         )
         return
@@ -543,15 +556,6 @@ async def process_turn_locked(
             await send_text(
                 client, chat=chat, text=answer, event=event, workspace=workspace
             )
-    except asyncio.CancelledError:
-        await send_text(
-            client,
-            chat=chat,
-            text="interrupted by user",
-            event=event,
-            workspace=workspace,
-        )
-        raise
     except Exception as exc:
         logger.exception(
             "Failed to handle message %s",
@@ -704,6 +708,19 @@ def get_slash_command(text: str) -> str | None:
         return " ".join(parts)
     if command not in ARG_SLASH_COMMANDS and not args:
         return command
+    return None
+
+
+def get_immediate_slash_command(message: Message) -> str | None:
+    if not (
+        message.conversation
+        or message.HasField("extendedTextMessage")
+        or message.HasField("interactiveResponseMessage")
+    ):
+        return None
+    command_text = get_slash_command(_message_text(message))
+    if command_text and command_text.split(maxsplit=1)[0] in IMMEDIATE_SLASH_COMMANDS:
+        return command_text
     return None
 
 
@@ -985,16 +1002,10 @@ async def _transcribe_audio_or_reply(
         return None
 
 
-async def _should_store_event(  # noqa: PLR0913
-    client: NewAClient,
-    event: MessageEv,
-    *,
-    config: Config,
-    chat_jid: str,
-    sender_jid: str,
-    message_text: str,
-) -> bool:
+def should_store_event(event: MessageEv, *, config: Config) -> bool:
     source = event.Info.MessageSource
+    chat_jid = Jid2String(source.Chat)
+    sender_jid = Jid2String(source.Sender)
     if source.IsFromMe:
         return False
 
@@ -1010,17 +1021,6 @@ async def _should_store_event(  # noqa: PLR0913
             chat_jid,
             ", ".join(sorted(source_ids)) or "<none>",
         )
-        if await _event_addresses_bot(client, event):
-            await group_approvals.request_approval(
-                client,
-                config=config,
-                group=event.Info.MessageSource.Chat,
-                group_jid=group_id,
-                sender_jid=sender_jid,
-                sender_name=_sender_name(event),
-                message=message_text,
-                logger=logger,
-            )
         return False
 
     allowed = matches_allowed_chats(config.allowed_chats, source_ids)
@@ -1051,14 +1051,22 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     message_id = event.Info.ID
     user_text = _message_text(message)
 
-    if not await _should_store_event(
-        client,
-        event,
-        config=config,
-        chat_jid=chat_jid,
-        sender_jid=sender_jid,
-        message_text=user_text,
-    ):
+    if not should_store_event(event, config=config):
+        if (
+            not source.IsFromMe
+            and source.IsGroup
+            and await _event_addresses_bot(client, event)
+        ):
+            await group_approvals.request_approval(
+                client,
+                config=config,
+                group=source.Chat,
+                group_jid=normalize_chat(chat_jid),
+                sender_jid=sender_jid,
+                sender_name=_sender_name(event),
+                message=user_text,
+                logger=logger,
+            )
         return None
 
     workspace = Path(get_messages(session)["workspace"])
