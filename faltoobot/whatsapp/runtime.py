@@ -950,12 +950,15 @@ async def _handle_album_event(  # noqa: PLR0913
     return None, False
 
 
-def _message_summary(user_text: str, audio: Any, image_message: bool) -> str:
-    if user_text:
-        return user_text
+def _message_log_metadata(
+    user_text: str, audio: Any, image_message: bool
+) -> tuple[str, int]:
+    """Return useful message telemetry without logging private message content."""
+    if audio is not None:
+        return "voice", int(getattr(audio, "seconds", 0) or 0)
     if image_message:
-        return "<image>"
-    return f"<voice note {int(getattr(audio, 'seconds', 0) or 0)}s>"
+        return "image", len(user_text)
+    return "text", len(user_text)
 
 
 async def _transcribe_audio_or_reply(
@@ -1110,10 +1113,9 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
     if handled_album:
         if album_turn is not None:
             logger.info(
-                "Received message from %s in %s: %s",
-                sender_jid,
-                chat_jid,
-                album_turn["prompt"],
+                "Received album message; prompt_chars=%s attachments=%s",
+                len(album_turn["prompt"]),
+                len(album_turn["attachments"]),
             )
         return album_turn
 
@@ -1129,11 +1131,12 @@ async def get_turn_locked(  # noqa: C901, PLR0911, PLR0912, PLR0915
         if image_message
         else []
     )
+    message_kind, message_size = _message_log_metadata(user_text, audio, image_message)
     logger.info(
-        "Received message from %s in %s: %s",
-        sender_jid,
-        chat_jid,
-        _message_summary(user_text, audio, image_message),
+        "Received %s message; size=%s attachments=%s",
+        message_kind,
+        message_size,
+        len(attachments),
     )
     return {
         "event": event,
