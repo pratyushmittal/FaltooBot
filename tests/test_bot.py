@@ -2377,6 +2377,41 @@ async def test_get_answer_with_retry_uses_stream_retry_limit(
 
 
 @pytest.mark.anyio
+async def test_get_answer_with_retry_retries_overloaded_api_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("faltoobot.sessions.app_root", lambda: tmp_path / ".faltoobot")
+
+    class APIError(Exception):
+        pass
+
+    sleeps: list[float] = []
+    attempts = 0
+    expected_attempts = 2
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def fake_get_answer(session: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise APIError("Our servers are currently overloaded. Please try again later.")
+        return "Done"
+
+    monkeypatch.setattr(runtime.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(runtime, "get_answer", fake_get_answer)
+
+    answer = await runtime._get_answer_with_retry(
+        get_session(chat_key="15555550123@s.whatsapp.net")
+    )
+
+    assert answer == "Done"
+    assert attempts == expected_attempts
+    assert sleeps == [runtime.RETRY_BASE_DELAY_SECONDS]
+
+
+@pytest.mark.anyio
 async def test_get_answer_with_retry_does_not_retry_429(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
