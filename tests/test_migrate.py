@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -122,3 +123,26 @@ def test_migrate_main_does_not_disable_websocket_after_default_flip(
 
     assert main(config, previous_version="7.0.0", current_version="7.0.1") == []
     assert "websocket = true" in config.config_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("filename", ["messages.json", "messages.archive.old.json"])
+def test_usage_attribution_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
+    config = make_config(tmp_path)
+    path = config.sessions_dir / "chat" / "session" / filename
+    path.parent.mkdir(parents=True)
+    usage = {"total_tokens": 130, "input_tokens_details": {"cached_tokens": 20}}
+    messages = [{"content": "hello"}, {"usage": usage | {"attribution": {}}}]
+    path.write_text(json.dumps({"messages": messages}), encoding="utf-8")
+    timestamp = path.stat().st_mtime_ns
+
+    assert main(config) == ["migration:drop-usage-attribution"]
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "messages": [{"content": "hello"}, {"usage": usage}],
+    }
+    assert path.stat().st_mtime_ns == timestamp
+    monkeypatch.setattr(Path, "glob", lambda *_: pytest.fail("histories rescanned"))
+    assert main(config) == []

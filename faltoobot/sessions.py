@@ -20,6 +20,15 @@ from openai.types.responses import (
 )
 from openai.types.responses.response_output_item import ImageGenerationCall
 
+from faltoobot.post_response_hooks import (
+    DEFAULT_MAX_ITERATIONS,
+    HookContext,
+    HookDiffScope,
+    HookEvent,
+    Snapshot,
+    capture_snapshot,
+    run_hooks,
+)
 from faltoobot.config import Config, app_root, build_config
 from faltoobot.gpt_utils import (
     MessageHistory,
@@ -33,6 +42,7 @@ from faltoobot.gpt_utils import (
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import uses_chatgpt_oauth
+from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
 from faltoobot.websockets import invalidate_history as invalidate_websocket_history
@@ -101,6 +111,13 @@ def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
     return f"{prefix}@{name}-{digest}"
 
 
+def _get_new_message_history(chat_key: str) -> MessageHistory:
+    # WhatsApp and sub-agent chats use their own instructions.
+    if not chat_key.startswith("code@"):
+        return []
+    return [{"type": "message", "role": "developer", "content": DEVELOPER_PROMPT}]
+
+
 def _normalized_messages_json(
     chat_key: str,
     session_id: str,
@@ -124,7 +141,7 @@ def _normalized_messages_json(
         "chat_key": chat_key,
         "workspace": str(workspace),
         "system_prompt": system_prompt if isinstance(system_prompt, str) else "",
-        "messages": [item for item in payload.get("messages", [])],
+        "messages": list(payload.get("messages", _get_new_message_history(chat_key))),
         "message_ids": [item for item in payload.get("message_ids", [])],
     }
 
@@ -286,33 +303,86 @@ def get_last_usage(session: Session) -> dict[str, Any] | None:
     return None
 
 
+async def _compact_codex_history(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    input_items: MessageHistory,
+    instructions: str,
+    prompt_cache_key: str,
+) -> MessageHistory:
+    """Compact Codex OAuth history through the streamed Responses API.
+
+    The request ends with `compaction_trigger`; its compacted window arrives as one
+    `response.output_item.done` compaction item before `response.completed`.
+    """
+    stream = await client.responses.create(
+        model=model,
+        input=cast(Any, [*input_items, {"type": "compaction_trigger"}]),
+        instructions=instructions or omit,
+        prompt_cache_key=prompt_cache_key,
+        store=False,
+        stream=True,
+    )
+    output: MessageHistory = []
+    completed = False
+    async with stream:
+        async for event in stream:
+            if event.type == "response.completed":
+                completed = True
+            elif event.type == "response.output_item.done":
+                item = getattr(event, "item", None)
+                item = item.to_dict() if hasattr(item, "to_dict") else item
+                if isinstance(item, dict) and item.get("type") == "compaction":
+                    output.append(item)
+
+    if not completed or len(output) != 1:
+        raise ValueError(
+            "Codex compaction did not return one completed compaction item"
+        )
+    return output
+
+
 async def compact_message_history(session: Session) -> bool:
     config = build_config()
     messages_json = get_messages(session)
-    if not messages_json["messages"]:
-        # comment: nothing to compact for a new/empty session.
+    if not messages_json["messages"] or messages_json[
+        "messages"
+    ] == _get_new_message_history(session.chat_key):
+        # New coding sessions contain only guidance, not a conversation to compact.
         return False
 
     workspace = Path(messages_json["workspace"])
     instructions = get_system_instructions(config, session.chat_key, workspace)
+    codex_oauth = uses_chatgpt_oauth(config)
     input_items = trim_input(
         messages_json["messages"],
-        replace_unavailable_uploads=uses_chatgpt_oauth(config),
+        replace_unavailable_uploads=codex_oauth,
     )
     client = get_openai_client(config)
     try:
-        compacted = await client.responses.compact(
-            model=config.openai_model,
-            input=cast(Any, input_items),
-            instructions=instructions or omit,
-            prompt_cache_key=messages_json["id"],
-        )
+        if codex_oauth:
+            raw_output = await _compact_codex_history(
+                client,
+                model=config.openai_model,
+                input_items=input_items,
+                instructions=instructions,
+                prompt_cache_key=messages_json["id"],
+            )
+        else:
+            compacted = await client.responses.compact(
+                model=config.openai_model,
+                input=cast(Any, input_items),
+                instructions=instructions or omit,
+                prompt_cache_key=messages_json["id"],
+            )
+            raw_output = compacted.output
     finally:
         await client.close()
 
     output: MessageHistory = []
-    for raw_item in compacted.output:
-        item = raw_item.to_dict() if hasattr(raw_item, "to_dict") else raw_item
+    for raw_item in raw_output:
+        item = raw_item if isinstance(raw_item, dict) else raw_item.to_dict()
         if not isinstance(item, dict):
             # comment: compaction output should be a response input item.
             raise TypeError(f"Expected compacted item dict, got {type(item).__name__}")
@@ -329,13 +399,32 @@ async def compact_message_history(session: Session) -> bool:
     _write_json_atomic(
         session.session_dir / f"messages.archive.{uuid4().hex}.json", messages_json
     )
-    messages_json["messages"] = output
+    messages_json["messages"] = output + _get_new_message_history(session.chat_key)
     set_messages(session, messages_json)
     return True
 
 
 def set_messages(session: Session, messages_json: MessagesJson) -> None:
     _write_json_atomic(session.messages_path, messages_json)
+
+
+def append_developer_message(session: Session, text: str) -> None:
+    text = text.strip()
+    if not text:
+        # Developer instructions must contain an actual directive.
+        raise ValueError("Developer message cannot be empty")
+
+    messages_json = get_messages(session)
+    messages_json["messages"].append(
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": text}],
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+    )
+    set_messages(session, messages_json)
+    logger.info("Appended developer message")
 
 
 async def _upload_attachments(
@@ -527,9 +616,10 @@ async def _get_streaming_reply(
         yield item
 
 
-async def get_answer_streaming(
+async def _get_answer_streaming(
     session: Session,
 ) -> AsyncIterator[StreamingReplyItem]:
+    """Stream one assistant response without running post-response hooks."""
     logger.info("Starting answer stream")
     config = build_config()
     messages_json = get_messages(session)
@@ -538,7 +628,6 @@ async def get_answer_streaming(
 
     instructions = get_system_instructions(config, session.chat_key, workspace)
     if messages_json["system_prompt"] != instructions:
-        # comment: keep a debug snapshot without trusting stale prompts from older app versions.
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
@@ -566,6 +655,12 @@ async def get_answer_streaming(
                     messages_json["id"], len(messages_json["messages"])
                 )
 
+            # Auto-compaction can discard the original developer message.
+            if any(item.type == "compaction" for item in output):
+                messages_json["messages"].extend(
+                    _get_new_message_history(session.chat_key)
+                )
+
         if event.type in {"function_call_output", "response.completed"}:
             set_messages(session, messages_json)
         if image_markdown:
@@ -577,7 +672,71 @@ async def get_answer_streaming(
                 ),
             )
         yield event
+
     logger.info("Finished answer stream")
+
+
+async def get_answer_streaming(  # noqa: C901
+    session: Session,
+    against: Snapshot | HookDiffScope | None = None,
+) -> AsyncIterator[StreamingReplyItem | HookEvent]:
+    """Stream an answer and repeat while enabled post-response hooks match."""
+    if against is None and not getattr(build_config(), "hook_enabled", False):
+        # Disabled hooks should add no work to the ordinary response path.
+        async for event in _get_answer_streaming(session):
+            yield event
+        return
+
+    workspace = Path(get_messages(session)["workspace"])
+    iteration = 0
+
+    while True:
+        if against is None:
+            against = await capture_snapshot(workspace)
+            async for event in _get_answer_streaming(session):
+                yield event
+
+        # Repeated hook feedback must not keep the assistant running indefinitely.
+        if iteration >= DEFAULT_MAX_ITERATIONS:
+            text = "Post-response hooks stopped after max iterations"
+            logger.warning(text)
+            yield HookEvent(
+                text=text,
+                hook_name="",
+                status="stopped",
+            )
+            return
+
+        messages_json = get_messages(session)
+        instructions = messages_json["system_prompt"]
+        # Manual hook commands can run before the first answer initializes the prompt.
+        if not instructions:
+            instructions = get_system_instructions(
+                build_config(), session.chat_key, workspace
+            )
+        feedback_messages: list[str] = []
+        async for event in run_hooks(
+            workspace,
+            against,
+            HookContext(
+                messages=messages_json["messages"],
+                instructions=instructions,
+                tools=_session_tools(messages_json),
+                prompt_cache_key=messages_json["id"],
+                session_dir=session.session_dir,
+            ),
+        ):
+            if event.status == "feedback":
+                feedback_messages.append(event.text)
+            yield event
+
+        if not feedback_messages:
+            return
+
+        for text in feedback_messages:
+            append_developer_message(session, text)
+        against = None
+        iteration += 1
 
 
 async def prewarm_openai_websocket(session: Session) -> None:

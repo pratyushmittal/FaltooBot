@@ -223,6 +223,9 @@ def trim_input(
 
     trimmed_items: MessageHistory = []
     for item in items:
+        # Failed hosted image calls cannot be resolved by a store=False backend.
+        if item.get("type") == "image_generation_call" and not item.get("result"):
+            continue
         kept_keys = (
             IMAGE_GENERATION_REPLAY_KEYS
             if item.get("type") == "image_generation_call"
@@ -303,7 +306,7 @@ def _cloud_tools() -> list[dict[str, Any]]:
                 "region": "Lucknow",
             },
         },
-        {"type": "image_generation"},
+        {"type": "image_generation", "model": "gpt-image-2.5-sunburst"},
     ]
 
 
@@ -405,7 +408,9 @@ async def get_streaming_reply(  # noqa: C901
             current_input[-1]["response_id"] = response_id
         # comment: empty responses have no assistant item to attach usage to.
         if response_output and completed.response.usage:
-            current_input[-1]["usage"] = completed.response.usage.to_dict()
+            current_input[-1]["usage"] = completed.response.usage.model_dump(
+                by_alias=True, exclude_unset=True, exclude={"attribution"}
+            )
         yield event
 
         tool_calls = _tool_calls_from_response(event, response_output)

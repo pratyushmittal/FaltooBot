@@ -19,6 +19,13 @@ def _read_agents_text(path: Path) -> str | None:
 
 def _instruction_parts(prompt: str, config: Config, workspace: Path) -> list[str]:
     parts = [prompt.format(bot_name=config.bot_name)]
+    if config.hook_enabled:
+        parts.append(
+            "The user has enabled post-response hooks: automated, LLM-assisted "
+            "code reviews triggered when configured conditions match. You may receive "
+            "their feedback as developer messages. Address relevant feedback as you "
+            "see fit while following the user's instructions."
+        )
     seen = set[Path]()
     for base, label in (
         (config.root, "Global AGENTS.md"),

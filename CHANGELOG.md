@@ -2,6 +2,41 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.6.3 — 2026-09-11
+
+### Changed
+- Image generation now uses GPT-Image-2.5 Sunburst.
+
+## 7.6.2 — 2026-09-06
+
+### Fixed
+- Post-response hooks no longer run an extra review after reaching the iteration limit.
+
+## 7.6.1 — 2026-09-06
+
+### Fixed
+- Sessions containing incomplete image-generation calls can reopen without deleting their local history.
+
+### Changed
+- Added the developer message recommended on the GPT Astra page to keep code changes focused, including after compaction.
+
+## 7.6.0 — 2026-08-27
+
+### Added
+- Added opt-in AI code-review hooks with global or project settings and automatic or manual execution.
+- Session integrations can now append developer messages directly.
+
+### Changed
+- Hook reviews use the active chat model, history, instructions, and tools, then return relevant feedback to the assistant for another pass.
+
+## 7.5.0 — 2026-08-14
+
+### Added
+- Generated images are now saved in the session workspace and recorded beside their image-generation calls, so Faltoochat can display them and the assistant can reuse them in later work.
+
+### Fixed
+- `/compact` now works with Codex OAuth after the backend moved compaction to the streamed Responses API.
+
 ## 7.4.1 — 2026-07-10
 
 ### Fixed

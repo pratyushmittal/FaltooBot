@@ -1,6 +1,7 @@
 from pathlib import Path
 from faltoobot import instructions
 from faltoobot.config import Config
+from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
 
 
 def test_get_system_instructions_skips_empty_agents_files(
@@ -35,3 +36,4 @@ def test_get_system_instructions_skips_empty_agents_files(
 
     assert "You are Faltoo, an AI coding agent with shell access." in result
     assert "Session AGENTS.md" not in result
+    assert DEVELOPER_PROMPT not in result

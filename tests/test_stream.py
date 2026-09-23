@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import pytest
 
+from faltoobot import post_response_hooks
 from faltoobot.faltoochat.stream import get_event_text
 
 
@@ -39,6 +40,22 @@ from faltoobot.faltoochat.stream import get_event_text
             (True, "thinking", "**Planning** reply"),
         ),
         (
+            post_response_hooks.HookEvent(
+                text="Running post-response hook: Refactor Code",
+                hook_name="Refactor Code",
+                status="running",
+            ),
+            (True, "tool", "Running post-response hook: Refactor Code"),
+        ),
+        (
+            post_response_hooks.HookEvent(
+                text="Refactor: hook triggered",
+                hook_name="Refactor",
+                status="triggered",
+            ),
+            (True, "tool", "Refactor: hook triggered"),
+        ),
+        (
             SimpleNamespace(
                 type="codex.response.metadata",
                 headers={
@@ -46,6 +63,10 @@ from faltoobot.faltoochat.stream import get_event_text
                     "x-codex-safety-buffering-faster-model": "gpt-5.6-luna",
                 },
             ),
+            (False, "", ""),
+        ),
+        (
+            SimpleNamespace(type="responsesapi.websocket_timing"),
             (False, "", ""),
         ),
         (
