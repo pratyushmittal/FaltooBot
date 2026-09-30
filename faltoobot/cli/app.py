@@ -592,6 +592,39 @@ def run_notify_command(args: argparse.Namespace) -> str:
     return notification_id
 
 
+def run_doctor_command(
+    config: Config | None = None, *, heal: bool = True
+) -> tuple[list[str], list[str]]:
+    """Run health diagnostics, optionally applying the existing history healers."""
+    config = config or build_config()
+    changes = run_doctor(config) if heal else []
+    if not heal:
+        console.print("[dim]Doctor check mode: no changes will be made.[/]")
+    elif changes:
+        console.print(f"[green]Doctor healed:[/] {', '.join(changes)}")
+    else:
+        console.print("[dim]Doctor healers: no changes.[/]")
+
+    from faltoobot.doctor import (
+        format_session_health_summary,
+        inspect_cron_health,
+        summarize_session_health,
+    )
+
+    console.print("[cyan]Session health:[/]")
+    for line in format_session_health_summary(summarize_session_health(config)):
+        console.print(f"- {line}")
+
+    issues = [issue.render() for issue in inspect_cron_health(config)]
+    if issues:
+        console.print("[yellow]Cron health warnings:[/]")
+        for issue in issues:
+            console.print(f"- {issue}")
+    else:
+        console.print("[green]Cron health: no obvious recurring issues found.[/]")
+    return changes, issues
+
+
 def parse_args() -> argparse.Namespace:
     # comment: keep the service entrypoint hidden from public help while still accepting it.
     if sys.argv[1:2] == [SERVICE_COMMAND]:
@@ -606,7 +639,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login}",
+        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login,doctor}",
     )
 
     sub.add_parser(
@@ -634,6 +667,14 @@ def parse_args() -> argparse.Namespace:
         help="identifier explaining why this notification was sent",
     )
     sub.add_parser("codex-login", help="sign in to Codex / ChatGPT OAuth")
+    doctor = sub.add_parser(
+        "doctor", help="run self-healing checks and cron health diagnostics"
+    )
+    doctor.add_argument(
+        "--check",
+        action="store_true",
+        help="report health without modifying session histories",
+    )
     return parser.parse_args()
 
 
@@ -656,6 +697,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_notify_command(args)
     elif args.command == "codex-login":
         run_openai_login(console)
+    elif args.command == "doctor":
+        run_doctor_command(config, heal=not getattr(args, "check", False))
     else:
         # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
         raise SystemExit(f"unknown command: {args.command}")
