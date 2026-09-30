@@ -637,7 +637,6 @@ class FaltooChatApp(App[None]):
         try:
             await self._stream_events(transcript, against)
         except asyncio.CancelledError:
-            # comment: user/app cancellations leave messages.json unchanged.
             pass
         except Exception as error:
             await self._show_retry_error(error)
@@ -668,6 +667,7 @@ class FaltooChatApp(App[None]):
             return
         self.composer.border_subtitle = "cancelling..."
         worker.cancel()
+        sessions.record_interrupted_response(self.session)
 
     async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
         message = str(error).strip() or repr(error)

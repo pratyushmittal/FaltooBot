@@ -1182,7 +1182,8 @@ async def test_minchat_ctrl_c_cancels_response_and_keeps_queue(
         assert str(composer.border_subtitle) == ""
         assert submit_queue.get_queue(app.session)
         texts = sessions.get_messages(app.session)["messages"]
-        assert [item["role"] for item in texts] == ["developer", "user"]
+        assert [item["role"] for item in texts] == ["developer", "user", "developer"]
+        assert "clean up temporary processes" in texts[-1]["content"][0]["text"]
 
 
 def test_get_local_user_message_item_keeps_local_image_paths() -> None:
