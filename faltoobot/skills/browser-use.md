@@ -9,7 +9,8 @@ Runtime value:
 
 Important:
 - First try `connect_over_cdp("{cdp_url}")`.
-- If CDP is not running, start `faltoobot browser` and then connect over CDP.
+- If CDP is not running, start `faltoobot browser` and then connect over CDP. Capture its stdout/stderr to a log file instead of `/dev/null` so cron/browser startup failures are diagnosable.
+- For cron/background monitors, fail fast with a clear notification when the shared browser is unavailable; do not silently keep retrying with hidden browser logs.
 - Do not start Chrome directly with the profile path; use `faltoobot browser` so the normal keychain/login state is available.
 - Do not use Playwright `launch_persistent_context(...)` with the shared profile. Playwright launches Chrome with automation/keychain flags that can make saved logins appear missing.
 - Do not launch a headless browser against the shared profile for login-sensitive sites.
@@ -30,6 +31,7 @@ from playwright.sync_api import sync_playwright
 cdp_url = "{cdp_url}"
 url = "https://example.com"
 screenshot = Path("browser-home.png")
+browser_log = Path("faltoobot-browser.log")
 
 
 def cdp_ready() -> bool:
@@ -42,18 +44,25 @@ def cdp_ready() -> bool:
 
 if not cdp_ready():
     faltoobot = shutil.which("faltoobot") or str(Path.home() / ".local/bin/faltoobot")
-    subprocess.Popen(
-        [faltoobot, "browser"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    with browser_log.open("ab") as log:
+        subprocess.Popen(
+            [faltoobot, "browser"],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     for _ in range(30):
         if cdp_ready():
             break
         time.sleep(1)
     else:
-        raise RuntimeError("FaltooBot browser did not become ready")
+        detail = ""
+        if browser_log.exists():
+            detail = "\nRecent browser log:\n" + browser_log.read_text(errors="replace")[-2000:]
+        raise RuntimeError(
+            "FaltooBot browser did not become ready. "
+            f"Run `faltoobot browser` manually or inspect {browser_log}." + detail
+        )
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.connect_over_cdp(cdp_url)
@@ -70,6 +79,11 @@ with sync_playwright() as playwright:
 Use `load_image` tool for seeing saved screenshots.
 
 If the website requires 2FA or user's login, ask them to run `faltoobot browser` on their machine and complete the login there. After that, reconnect to the same CDP URL.
+
+Cron/background monitor guidance:
+- Add `flock` so browser-heavy jobs do not overlap.
+- Keep a per-job browser startup log (for example `.watch_logs/faltoobot-browser.log`) and include the tail of that log in failures.
+- Prefer a deterministic non-browser fallback (API/feed/sitemap/search result) before using the shared browser for simple monitoring.
 
 Screenshot guidance:
 - save screenshots inside the current `workspace` directory
