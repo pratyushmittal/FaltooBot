@@ -427,6 +427,20 @@ class FakePresenceClient:
         return self.audio_bytes
 
 
+def test_message_log_metadata_does_not_include_private_content() -> None:
+    secret = "private message body"
+
+    assert runtime._message_log_metadata(secret, None, False) == (
+        "text",
+        len(secret),
+    )
+    assert secret not in repr(runtime._message_log_metadata(secret, None, False))
+    assert runtime._message_log_metadata("caption", None, True) == ("image", 7)
+    assert runtime._message_log_metadata(
+        "transcribed private speech", SimpleNamespace(seconds=12), False
+    ) == ("voice", 12)
+
+
 async def handle_message(
     client: NewAClient,
     event: MessageEv,
