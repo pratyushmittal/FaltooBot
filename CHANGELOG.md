@@ -2,6 +2,14 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.7.0 — 2026-09-30
+
+### Added
+- Added support for Claude and other models through OpenRouter.
+
+### Changed
+- Saved chats and archives now omit bulky token-attribution data, with cleanup on `faltoobot update`.
+
 ## 7.6.3 — 2026-09-11
 
 ### Changed
