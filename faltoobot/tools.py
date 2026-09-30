@@ -14,7 +14,7 @@ from openai.types.responses import (
 from faltoobot import images
 from faltoobot.config import build_config
 from faltoobot.gpt_utils import get_openai_client
-from faltoobot.openai_auth import uses_chatgpt_oauth
+from faltoobot.openai_auth import inlines_uploads
 
 MAX_SHELL_OUTPUT = 12_000
 ToolOutput = str | list[ResponseInputText | ResponseInputImage | ResponseInputFile]
@@ -61,6 +61,9 @@ def _tool_env_overrides() -> dict[str, str]:
     if config.openai_api_key:
         # comment: tool examples use SDKs that read API keys from the environment.
         env["OPENAI_API_KEY"] = config.openai_api_key
+    if config.openrouter_api_key:
+        # comment: OpenRouter snippets need the configured key in their environment too.
+        env["OPENROUTER_API_KEY"] = config.openrouter_api_key
     if config.gemini_api_key:
         # comment: Gemini snippets expect the key in the process environment.
         env["GEMINI_API_KEY"] = config.gemini_api_key
@@ -142,7 +145,7 @@ async def load_image_in_workspace(workspace: str, image_path: str) -> ToolOutput
     resolved = path.resolve()
     config = build_config()
 
-    if uses_chatgpt_oauth(config):
+    if inlines_uploads(config):
         return [images.inline_image_item(workspace_path, resolved)]
 
     client = get_openai_client(config)

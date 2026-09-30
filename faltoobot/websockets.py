@@ -414,7 +414,7 @@ async def prewarm(  # noqa: PLR0913
             config,
             instructions=instructions,
             input=input,
-            tools=[get_tools_definition(tool) for tool in tools] + _cloud_tools(),
+            tools=[get_tools_definition(tool) for tool in tools] + _cloud_tools(config),
             prompt_cache_key=prompt_cache_key,
         )
         if not session.previous_response_id:
@@ -463,7 +463,9 @@ async def streaming_reply(  # noqa: C901
     tools: list[Tool],
     prompt_cache_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
-    tools_payload = [get_tools_definition(tool) for tool in tools] + _cloud_tools()
+    tools_payload = [get_tools_definition(tool) for tool in tools] + _cloud_tools(
+        config
+    )
     session = await prewarm(
         config,
         instructions=instructions,

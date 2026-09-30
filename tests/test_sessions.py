@@ -865,7 +865,7 @@ async def test_get_answer_uses_inline_images_for_chatgpt_oauth(
         "get_system_instructions",
         lambda config, chat_key, workspace: "system prompt",
     )
-    monkeypatch.setattr(sessions, "uses_chatgpt_oauth", lambda config: True)
+    monkeypatch.setattr(sessions, "inlines_uploads", lambda config: True)
     client = FakeClient()
     monkeypatch.setattr(sessions, "AsyncOpenAI", lambda api_key=None: client)
 

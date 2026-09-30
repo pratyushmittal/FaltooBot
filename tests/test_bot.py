@@ -1635,6 +1635,7 @@ async def test_process_turn_locked_status_reports_version_and_config(
                 "• openai_fast=false",
                 "• openai_websocket=false",
                 '• openai_transcription_model="gpt-4o-transcribe"',
+                '• openrouter_api_key=""',
                 '• gemini_gemini_api_key=""',
                 '• gemini_model="gemini-3.1-flash-image-preview"',
                 '• google_places_api_key=""',
@@ -2668,6 +2669,27 @@ async def test_compact_message_history_creates_archive_file_per_compaction(
         {**second_snapshot, "system_prompt": "system prompt"},
         {**first_snapshot, "system_prompt": "system prompt"},
     ]
+
+
+@pytest.mark.anyio
+async def test_compact_message_history_rejects_openrouter_without_changing_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    config = make_config(tmp_path, allowed_chats=set())
+    config.openai_model = "anthropic/claude-sonnet-5.5"
+    monkeypatch.setattr(sessions, "build_config", lambda: config)
+    session = get_session(chat_key="code@test")
+    sessions.append_developer_message(session, "Review this project.")
+    saved = session.messages_path.read_text()
+
+    with pytest.raises(
+        ValueError, match="Compaction is not supported for OpenRouter models"
+    ):
+        await sessions.compact_message_history(session)
+
+    assert session.messages_path.read_text() == saved
+    assert not list(session.session_dir.glob("messages.archive.*.json"))
 
 
 @pytest.mark.anyio

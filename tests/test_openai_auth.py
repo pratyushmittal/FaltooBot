@@ -67,6 +67,29 @@ def test_get_openai_client_options_prefers_api_key(tmp_path: Path) -> None:
     assert default_headers is None
 
 
+@pytest.mark.parametrize("api_key", ["router-key", ""])
+def test_openrouter_auth_does_not_fall_back_to_openai(
+    tmp_path: Path, api_key: str
+) -> None:
+    config = _config(tmp_path, api_key="openai-key", oauth="missing-auth.json")
+    config.openai_model = "anthropic/claude-sonnet-5.5"
+    config.openrouter_api_key = api_key
+
+    assert not openai_auth.uses_chatgpt_oauth(config)
+    assert openai_auth.inlines_uploads(config)
+    if api_key:
+        assert openai_auth.get_openai_client_options(config) == (
+            api_key,
+            openai_auth.OPENROUTER_BASE_URL,
+            None,
+        )
+    else:
+        with pytest.raises(
+            openai_auth.OpenAIAuthError, match="OpenRouter auth missing"
+        ):
+            openai_auth.get_openai_client_options(config)
+
+
 def test_get_openai_client_options_prefers_oauth_over_api_key(
     tmp_path: Path,
 ) -> None:

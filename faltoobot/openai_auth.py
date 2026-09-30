@@ -30,15 +30,16 @@ CHATGPT_USER_AGENT_HEADER = "User-Agent"
 # env override if OpenAI rotates it in the future.
 CHATGPT_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 REFRESH_MARGIN = timedelta(minutes=5)
 REFRESH_INTERVAL = timedelta(minutes=55)
 JWT_PART_COUNT = 3
 
 JsonObject: TypeAlias = dict[str, Any]
 OpenAIClientOptions: TypeAlias = tuple[
-    str | Callable[[], Awaitable[str]],
-    str | None,
-    dict[str, str] | None,
+    str | Callable[[], Awaitable[str]],  # API key or async access-token provider.
+    str | None,  # Base URL override; None uses the SDK default.
+    dict[str, str] | None,  # Default request headers, e.g. Codex account metadata.
 ]
 
 
@@ -228,8 +229,19 @@ def _auth_file_error() -> OpenAIAuthError:
     )
 
 
+def uses_openrouter(config: Config) -> bool:
+    # comment: Model ids with a provider prefix select OpenRouter.
+    return "/" in config.openai_model
+
+
 def uses_chatgpt_oauth(config: Config) -> bool:
-    return _configured_auth_file(config) is not None
+    # comment: an OpenRouter model must not get Codex headers or endpoints from `oauth`.
+    return not uses_openrouter(config) and _configured_auth_file(config) is not None
+
+
+def inlines_uploads(config: Config) -> bool:
+    # comment: Codex OAuth and OpenRouter cannot read OpenAI platform file ids.
+    return uses_chatgpt_oauth(config) or uses_openrouter(config)
 
 
 def _token_url() -> str:
@@ -353,6 +365,14 @@ def _refresh_access_token(auth_file: Path) -> str:
 
 
 def get_openai_client_options(config: Config) -> OpenAIClientOptions:
+    if uses_openrouter(config):
+        if not config.openrouter_api_key:
+            # comment: an OpenRouter model name without a key is a config mistake.
+            raise OpenAIAuthError(
+                "OpenRouter auth missing. Set openrouter.api_key or OPENROUTER_API_KEY."
+            )
+        return config.openrouter_api_key, OPENROUTER_BASE_URL, None
+
     auth_file = _configured_auth_file(config)
     if auth_file is None:
         if config.openai_api_key:

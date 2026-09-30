@@ -19,7 +19,12 @@ from openai.types.responses import (
 )
 
 from faltoobot.config import Config
-from faltoobot.openai_auth import get_openai_client_options, uses_chatgpt_oauth
+from faltoobot.openai_auth import (
+    get_openai_client_options,
+    inlines_uploads,
+    uses_chatgpt_oauth,
+    uses_openrouter,
+)
 
 COMPACT_THRESHOLD = 200_000
 STANDALONE_COMPACTION_KEY = "_standalone_compaction"
@@ -189,11 +194,10 @@ def _replace_unavailable_upload(value: Any) -> Any:
 
     item_type = value.get("type")
     if item_type == "input_image" and isinstance(value.get("file_id"), str):
-        # comment: historical platform file ids cannot be replayed through ChatGPT Codex OAuth,
-        # so keep the turn structure but downgrade the missing image to a text placeholder.
+        # comment: Codex and OpenRouter cannot fetch platform file ids; keep a placeholder.
         return {"type": "input_text", "text": "[image-not-available-now]"}
     if item_type == "input_file" and isinstance(value.get("file_id"), str):
-        # comment: Codex OAuth cannot fetch prior uploaded files from platform storage either.
+        # comment: The same platform-storage restriction applies to file attachments.
         return {"type": "input_text", "text": "[file-not-available-now]"}
     return {key: _replace_unavailable_upload(item) for key, item in value.items()}
 
@@ -295,19 +299,21 @@ async def _tool_result(
     )
 
 
-def _cloud_tools() -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "web_search",
-            "user_location": {
-                "type": "approximate",
-                "country": "IN",
-                "city": "Lucknow",
-                "region": "Lucknow",
-            },
+def _cloud_tools(config: Config) -> list[dict[str, Any]]:
+    web_search = {
+        "type": "web_search",
+        "user_location": {
+            "type": "approximate",
+            "country": "IN",
+            "city": "Lucknow",
+            "region": "Lucknow",
         },
-        {"type": "image_generation", "model": "gpt-image-2.5-sunburst"},
-    ]
+    }
+    if uses_openrouter(config):
+        # comment: OpenRouter's image_generation drops Claude's reasoning signature, and
+        # its `openrouter:image_generation` items are not saved like OpenAI's.
+        return [web_search]
+    return [web_search, {"type": "image_generation", "model": "gpt-image-2.5-sunburst"}]
 
 
 def _remember_response_event(
@@ -363,6 +369,7 @@ async def get_streaming_reply(  # noqa: C901
     prompt_cache_key: str | None = None,
 ) -> AsyncIterator[StreamingReplyItem]:
     client = get_openai_client(config)
+    openrouter = uses_openrouter(config)
     tool_defs = [get_tools_definition(tool) for tool in tools]
     tools_by_name = {_callable_name(tool): tool for tool in tools}
 
@@ -376,22 +383,28 @@ async def get_streaming_reply(  # noqa: C901
                 Any,
                 trim_input(
                     current_input,
-                    replace_unavailable_uploads=uses_chatgpt_oauth(config),
+                    replace_unavailable_uploads=inlines_uploads(config),
                 ),
             ),
-            tools=tool_defs + _cloud_tools(),
+            tools=tool_defs + _cloud_tools(config),
             store=False,
             stream=True,
             parallel_tool_calls=True,
             instructions=instructions,
             reasoning={"summary": "concise", "effort": config.openai_thinking},
-            include=["reasoning.encrypted_content", "web_search_call.action.sources"],
-            context_management=[
-                {"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}
-            ],
+            # comment: OpenRouter rejects `web_search_call.action.sources` with a 400.
+            include=["reasoning.encrypted_content"]
+            if openrouter
+            else ["reasoning.encrypted_content", "web_search_call.action.sources"],
+            # comment: OpenRouter does not support OpenAI Responses compaction.
+            context_management=omit
+            if openrouter
+            else [{"type": "compaction", "compact_threshold": COMPACT_THRESHOLD}],
             prompt_cache_key=prompt_cache_key or omit,
             extra_headers=_request_extra_headers(config, prompt_cache_key),
             service_tier="priority" if config.openai_fast else omit,
+            # comment: Enable automatic Claude caching; the breakpoint advances with history.
+            extra_body={"cache_control": {"type": "ephemeral"}} if openrouter else None,
         )
 
         # comment: raw streamed events avoid SDK snapshot parsing bugs on empty output.

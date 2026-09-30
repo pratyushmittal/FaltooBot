@@ -41,7 +41,7 @@ from faltoobot.gpt_utils import (
 )
 from faltoobot.images import inline_image_item, upload_attachment
 from faltoobot.instructions import get_system_instructions
-from faltoobot.openai_auth import uses_chatgpt_oauth
+from faltoobot.openai_auth import inlines_uploads, uses_chatgpt_oauth, uses_openrouter
 from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
 from faltoobot.skills import get_load_skill_tool
 from faltoobot.tools import get_load_image_tool, get_run_shell_call_tool
@@ -341,6 +341,10 @@ async def compact_message_history(session: Session) -> bool:
         # New coding sessions contain only guidance, not a conversation to compact.
         return False
 
+    # comment: OpenRouter has no Responses compaction endpoint.
+    if uses_openrouter(config):
+        raise ValueError("Compaction is not supported for OpenRouter models.")
+
     workspace = Path(messages_json["workspace"])
     instructions = get_system_instructions(config, session.chat_key, workspace)
     codex_oauth = uses_chatgpt_oauth(config)
@@ -425,9 +429,9 @@ async def _upload_attachments(
     workspace: Path,
     config: Config,
 ) -> list[dict[str, Any]]:
-    if uses_chatgpt_oauth(config):
-        # comment: ChatGPT Codex OAuth requests go straight to chatgpt.com responses, so
-        # platform file uploads are unavailable. Inline images keep attachments working there.
+    if inlines_uploads(config):
+        # comment: Codex OAuth and OpenRouter cannot read platform file uploads.
+        # Inline images keep attachments working there.
         return [
             inline_image_item(workspace, source).to_dict() for source in attachments
         ]
@@ -586,8 +590,11 @@ async def _get_streaming_reply(
     tools: list[Tool],
     prompt_cache_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
-    if getattr(config, "openai_websocket", False) and (
-        config.openai_api_key or config.openai_oauth
+    # comment: OpenRouter has no websocket transport, so it always streams over HTTP.
+    if (
+        not uses_openrouter(config)
+        and getattr(config, "openai_websocket", False)
+        and (config.openai_api_key or config.openai_oauth)
     ):
         async for item in websocket_streaming_reply(
             config,
@@ -736,7 +743,8 @@ async def prewarm_openai_websocket(session: Session) -> None:
     config = build_config()
     if not getattr(config, "openai_websocket", False):
         return
-    if not (config.openai_api_key or config.openai_oauth):
+    # comment: Only authenticated OpenAI/Codex sessions can prewarm a websocket.
+    if uses_openrouter(config) or not (config.openai_api_key or config.openai_oauth):
         return
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])

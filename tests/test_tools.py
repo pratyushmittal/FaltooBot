@@ -70,15 +70,17 @@ def test_run_shell_call_in_workspace_runs_in_workspace(tmp_path: Path) -> None:
     assert "xworld" in result["stdout"]
 
 
-def test_run_shell_call_in_workspace_sets_openai_key_from_config(
+def test_run_shell_call_in_workspace_sets_api_keys_from_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(
         tools,
         "build_config",
         lambda: SimpleNamespace(
             openai_api_key="openai-key",
             gemini_api_key="gemini-key",
+            openrouter_api_key="openrouter-key",
         ),
         raising=False,
     )
@@ -90,6 +92,7 @@ def test_run_shell_call_in_workspace_sets_openai_key_from_config(
 import os
 print(os.environ.get("OPENAI_API_KEY", ""))
 print(os.environ.get("GEMINI_API_KEY", ""))
+print(os.environ.get("OPENROUTER_API_KEY", ""))
 PY""",
             timeout_ms=5000,
         )
@@ -100,6 +103,7 @@ PY""",
     assert result["timed_out"] is False
     assert "openai-key" in result["stdout"]
     assert "gemini-key" in result["stdout"]
+    assert "openrouter-key" in result["stdout"]
 
 
 def test_tool_env_adds_uv_tool_bins_to_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,7 +113,9 @@ def test_tool_env_adds_uv_tool_bins_to_path(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         tools,
         "build_config",
-        lambda: SimpleNamespace(openai_api_key="", gemini_api_key=""),
+        lambda: SimpleNamespace(
+            openai_api_key="", gemini_api_key="", openrouter_api_key=""
+        ),
         raising=False,
     )
 
@@ -153,7 +159,7 @@ async def test_load_image_in_workspace_returns_inline_images_for_oauth(
     image.write_bytes(b"png")
 
     monkeypatch.setattr(tools, "build_config", lambda: object(), raising=False)
-    monkeypatch.setattr(tools, "uses_chatgpt_oauth", lambda config: True, raising=False)
+    monkeypatch.setattr(tools, "inlines_uploads", lambda config: True)
     monkeypatch.setattr(
         images,
         "inline_image_item",
@@ -191,9 +197,7 @@ async def test_load_image_in_workspace_returns_uploaded_images_for_api_key(
             closed.append("closed")
 
     monkeypatch.setattr(tools, "build_config", lambda: object(), raising=False)
-    monkeypatch.setattr(
-        tools, "uses_chatgpt_oauth", lambda config: False, raising=False
-    )
+    monkeypatch.setattr(tools, "inlines_uploads", lambda config: False)
     monkeypatch.setattr(
         tools, "get_openai_client", lambda config: FakeClient(), raising=False
     )

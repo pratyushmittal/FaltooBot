@@ -40,6 +40,7 @@ class Config:
     gemini_model: str = GEMINI_MODEL
     google_places_api_key: str = ""
     openai_websocket: bool = False
+    openrouter_api_key: str = ""
 
 
 def app_root() -> Path:
@@ -57,6 +58,7 @@ def default_config() -> dict[str, dict[str, Any]]:
             "websocket": False,
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
+        "openrouter": {"api_key": ""},
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
         "google": {"places_api_key": ""},
         "hooks": {"enabled": False},
@@ -73,6 +75,7 @@ def default_config() -> dict[str, dict[str, Any]]:
 def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     defaults = default_config()
     openai = as_dict(data.get("openai"))
+    openrouter = as_dict(data.get("openrouter"))
     gemini = as_dict(data.get("gemini"))
     ui = as_dict(data.get("ui"))
     google = as_dict(data.get("google"))
@@ -93,6 +96,11 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 openai.get("transcription_model"),
                 defaults["openai"]["transcription_model"],
                 TRANSCRIPTION_MODEL_OPTIONS,
+            ),
+        },
+        "openrouter": {
+            "api_key": as_str(
+                openrouter.get("api_key"), defaults["openrouter"]["api_key"]
             ),
         },
         "gemini": {
@@ -149,6 +157,7 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
     data = merge_config(data)
     bot = data["bot"]
     openai = data["openai"]
+    openrouter = data["openrouter"]
     gemini = data["gemini"]
     ui = data["ui"]
     google = data["google"]
@@ -176,6 +185,9 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             f"fast = {str(bool(openai['fast'])).lower()}",
             f"websocket = {str(bool(openai['websocket'])).lower()}",
             f"transcription_model = {quote(str(openai['transcription_model']))}",
+            "",
+            "[openrouter]",
+            f"api_key = {quote(str(openrouter['api_key']))}",
             "",
             "[gemini]",
             f"gemini_api_key = {quote(str(gemini['gemini_api_key']))}",
@@ -268,6 +280,7 @@ def build_config() -> Config:
     path = ensure_config_file()
     data = merge_config(load_toml(path))
     openai = data["openai"]
+    openrouter = data["openrouter"]
     bot = data["bot"]
     browser = data["browser"]
     gemini = data["gemini"]
@@ -299,6 +312,8 @@ def build_config() -> Config:
         google_places_api_key=str(google["places_api_key"])
         or os.environ.get("GOOGLE_MAPS_API_KEY", ""),
         openai_websocket=bool(openai["websocket"]),
+        openrouter_api_key=str(openrouter["api_key"])
+        or os.environ.get("OPENROUTER_API_KEY", ""),
     )
 
 

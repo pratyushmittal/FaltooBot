@@ -38,7 +38,8 @@ def _tool_call_text(item: dict[str, Any]) -> str | None:
         name = _inspect_text(item.get("name")) or "function_call"
         summary = _tool_summary(name, _tool_arguments(item.get("arguments")))
         return f"{name}: {summary}" if summary else name
-    if item_type == "web_search_call":
+    # comment: OpenRouter returns its own `openrouter:web_search` item type.
+    if item_type in ("web_search_call", "openrouter:web_search"):
         action = item.get("action")
         query = _inspect_text(action.get("query")) if isinstance(action, dict) else ""
         return f"web_search: {query}" if query else "web_search"
