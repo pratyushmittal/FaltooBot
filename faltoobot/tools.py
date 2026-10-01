@@ -3,6 +3,7 @@ import os
 import subprocess
 from collections.abc import Awaitable
 from collections.abc import Callable
+from functools import cache
 from pathlib import Path
 
 from openai.types.responses import (
@@ -23,7 +24,17 @@ ToolOutput = str | list[ResponseInputText | ResponseInputImage | ResponseInputFi
 def _clipped_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         value = value.decode(errors="replace")
-    return (value or "")[:MAX_SHELL_OUTPUT]
+    value = value or ""
+    if len(value) <= MAX_SHELL_OUTPUT:
+        return value
+    # comment: keep the end too; test summaries and tracebacks are printed last.
+    # Sessions showed models acting on silently cut output, so say what was cut.
+    half = MAX_SHELL_OUTPUT // 2
+    cut = len(value) - 2 * half
+    return (
+        f"{value[:half]}\n[... {cut:,} characters cut from the middle; "
+        f"re-run with a narrower command ...]\n{value[-half:]}"
+    )
 
 
 def _append_path(path: str, value: str) -> str:
@@ -77,6 +88,8 @@ def _tool_env() -> dict[str, str]:
     for bin_dir in _tool_path_dirs():
         path = _append_path(bin_dir, path)
     env["PATH"] = path
+    # comment: buffered Python output is lost when a timeout kills the script.
+    env["PYTHONUNBUFFERED"] = "1"
     env.update(_tool_env_overrides())
     return env
 
@@ -90,6 +103,9 @@ def run_shell_call_in_workspace(
         process = subprocess.run(
             ["/bin/bash", "-lc", command],
             capture_output=True,
+            # comment: headless faltoochat has a piped stdin; `rg pattern` would search it
+            # instead of the workspace and hang until the timeout.
+            stdin=subprocess.DEVNULL,
             text=False,
             timeout=timeout_ms / 1000,
             cwd=workspace,
@@ -119,6 +135,29 @@ def run_shell_call_in_workspace(
     return json.dumps(result)
 
 
+@cache
+def _python_hint() -> str:
+    # comment: models habitually run `python`; on machines with only `python3`,
+    # 73% of WhatsApp sub-agent sessions hit `python: command not found`.
+    try:
+        found = subprocess.run(
+            ["/bin/bash", "-lc", "command -v python"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+            env=_tool_env(),
+        )
+    except subprocess.TimeoutExpired:
+        # comment: a slow login profile should not block the tool; skip the hint.
+        return ""
+    if found.returncode == 0:
+        return ""
+    return (
+        "There is no `python` command here. Use `uv run python`; add "
+        "`--with <package>` for packages like `requests`.\n\n    "
+    )
+
+
 def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
     workspace = workspace.expanduser().resolve()
 
@@ -128,6 +167,8 @@ def get_run_shell_call_tool(workspace: Path) -> Callable[[str, str, int], str]:
     run_shell_call.__doc__ = f"""Returns the output of a shell command. Use it to inspect files and run CLI tasks.
 
     Commands are run from `{workspace}` directory.
+
+    {_python_hint()}Output over {MAX_SHELL_OUTPUT:,} characters per stream is cut in the middle. Keep output small: filter or limit long output, and read large files in chunks.
 
     Args:
         - command: Bash command to run.
