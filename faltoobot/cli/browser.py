@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import quote
@@ -31,6 +32,14 @@ def _cdp_version() -> dict[str, object] | None:
 
 def _cdp_is_running() -> bool:
     return _cdp_version() is not None
+
+
+def _wait_for_cdp(timeout_seconds: int = 30) -> None:
+    for _ in range(timeout_seconds):
+        if _cdp_is_running():
+            return
+        time.sleep(1)
+    raise SystemExit(f"Browser did not open CDP on {cdp_url()} in time.")
 
 
 def _running_cdp_commands() -> list[str]:
@@ -152,6 +161,13 @@ def default_browser_binary() -> str | None:
     return None
 
 
+def _app_bundle(binary: str) -> Path | None:
+    # macOS app binaries live at <name>.app/Contents/MacOS/<binary>.
+    return next(
+        (parent for parent in Path(binary).parents if parent.suffix == ".app"), None
+    )
+
+
 def _browser_command(binary: str, profile_dir: Path, url: str | None) -> list[str]:
     command = [
         binary,
@@ -189,11 +205,23 @@ def open_browser(*, root: Path, binary: str, url: str | None = None) -> None:
             print(f"Opened URL: {url}")
         return
 
-    process = subprocess.Popen(_browser_command(binary, profile_dir, url))
+    command = _browser_command(binary, profile_dir, url)
+    app = _app_bundle(binary) if sys.platform == "darwin" else None
+    if app:
+        # Chrome started from cron/SSH cannot unlock the Keychain key that encrypts
+        # saved cookies, so every login looks missing. `open` launches it inside the
+        # logged-in desktop session instead, detached from this terminal.
+        subprocess.run(["open", "-na", str(app), "--args", *command[1:]], check=True)
+        _wait_for_cdp()
+    process = None if app else subprocess.Popen(command)
 
-    print(f"Browser launched: {binary}")
+    print(f"Browser launched: {app or binary}")
     print(f"CDP: {cdp_url()}")
     print(f"Profile: {profile_dir}")
+    # This guard exists because the macOS app keeps running on its own after `open`.
+    if process is None:
+        return
+
     print("Press Ctrl+C to close the browser.")
     try:
         process.wait()
