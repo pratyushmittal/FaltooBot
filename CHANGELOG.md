@@ -2,6 +2,16 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.7.1 — 2026-10-01
+
+### Fixed
+- Long command output now keeps its end, where test summaries and errors are, and says how much was cut, instead of silently dropping everything after 12,000 characters.
+- Searches like `rg pattern` no longer hang until the timeout in headless runs and sub-agents.
+- Python scripts that time out now keep the output they printed before being stopped.
+
+### Changed
+- On machines without a `python` command, the assistant is told to use `uv run python`, avoiding repeated "command not found" errors.
+
 ## 7.7.0 — 2026-09-30
 
 ### Added
