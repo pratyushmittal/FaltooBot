@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,7 +12,7 @@ from neonize.utils.jid import build_jid
 from pytest_bdd import given, scenarios, then, when
 
 from faltoobot import sessions
-from faltoobot.config import Config, build_config
+from faltoobot.config import MODEL_OPTIONS, Config, build_config
 from faltoobot.whatsapp import runtime
 
 pytestmark = pytest.mark.external
@@ -54,10 +55,12 @@ class FakeWhatsAppClient:
 def whatsapp_image_ctx(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> dict[str, Any]:
-    config = build_config()
+    # comment: this tests OpenAI image generation; a configured OpenRouter model has none.
+    config = replace(build_config(), openai_model=MODEL_OPTIONS[0])
     if not (config.openai_api_key or config.openai_oauth):
         raise RuntimeError("OpenAI auth must be configured to run WhatsApp image E2E.")
 
+    monkeypatch.setattr(sessions, "build_config", lambda: config)
     monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
