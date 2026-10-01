@@ -2,6 +2,11 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.7.2 — 2026-10-01
+
+### Fixed
+- On macOS, the shared browser no longer loses its logins when a cron job or background agent restarts it. `faltoobot browser` now launches Chrome in your desktop session, so it can unlock its saved cookies, and the browser keeps running after the terminal closes.
+
 ## 7.7.1 — 2026-10-01
 
 ### Fixed
