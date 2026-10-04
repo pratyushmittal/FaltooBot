@@ -1,5 +1,9 @@
 import json
 import os
+import re
+import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias, cast
 
@@ -10,6 +14,274 @@ MessageItem: TypeAlias = dict[str, Any]
 MessageHistory: TypeAlias = list[MessageItem]
 
 MISSING_FUNCTION_CALL_OUTPUT = "Tool call failed before output was saved."
+MIN_QUOTED_LENGTH = 2
+CRON_COMMAND_FIELDS = 6
+CRON_LOG_MAX_BYTES = 256_000
+CRON_RECENT_SECONDS = 7 * 24 * 60 * 60
+SKIPPED_LOG_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
+
+CRON_LINE_RE = re.compile(r"\bcd\s+(?P<cwd>\"[^\"]+\"|'[^']+'|\S+)\s+&&\s+(?P<cmd>.*)")
+ABSOLUTE_HOME_RE = re.compile(r"/home/[A-Za-z0-9._-]+/")
+CRON_LOG_ERROR_PATTERNS: tuple[tuple[str, str], ...] = (
+    (
+        "missing interpreter/path",
+        r"Missing Python interpreter|No such file or directory",
+    ),
+    ("browser startup failure", r"CDP port 9222|browser did not become ready"),
+    ("python traceback", r"Traceback \(most recent call last\)|RuntimeError|Exception"),
+    (
+        "HTTP/service error",
+        r"\bHTTP/1\.1\"?\s+(?:429|500|502|503)\b|Internal Server Error|Bad Gateway",
+    ),
+)
+
+
+@dataclass(slots=True, frozen=True)
+class CronHealthIssue:
+    kind: str
+    detail: str
+
+    def render(self) -> str:
+        return f"{self.kind}: {self.detail}"
+
+
+def _strip_shell_quotes(value: str) -> str:
+    value = value.strip()
+    if (
+        len(value) >= MIN_QUOTED_LENGTH
+        and value[0] == value[-1]
+        and value[0] in {'"', "'"}
+    ):
+        return value[1:-1]
+    return value
+
+
+def _load_crontab_text() -> str:
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"], check=False, text=True, capture_output=True
+        )
+    except FileNotFoundError:
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _iter_cron_commands(crontab_text: str) -> list[tuple[int, Path | None, str]]:
+    commands: list[tuple[int, Path | None, str]] = []
+    for line_no, line in enumerate(crontab_text.splitlines(), 1):
+        stripped = line.strip()
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or "=" in stripped.split(maxsplit=1)[0]
+        ):
+            continue
+        match = CRON_LINE_RE.search(stripped)
+        if match:
+            commands.append(
+                (
+                    line_no,
+                    Path(_strip_shell_quotes(match.group("cwd"))).expanduser(),
+                    match.group("cmd"),
+                )
+            )
+            continue
+        parts = stripped.split(maxsplit=5)
+        if len(parts) == CRON_COMMAND_FIELDS:
+            commands.append((line_no, None, parts[5]))
+    return commands
+
+
+def _referenced_script(cwd: Path, command: str) -> Path | None:
+    token = command.strip().split(maxsplit=1)[0] if command.strip() else ""
+    if token.startswith("./"):
+        return cwd / token[2:]
+    if token.startswith("/") and token.endswith((".sh", ".py")):
+        return Path(token)
+    return None
+
+
+def _script_text(script: Path) -> str:
+    try:
+        return script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _script_home_references(script: Path, config: Config) -> list[str]:
+    text = _script_text(script)
+    current_home = config.home.as_posix().rstrip("/") + "/"
+    stale = sorted({match.group(0) for match in ABSOLUTE_HOME_RE.finditer(text)})
+    return [path for path in stale if path != current_home]
+
+
+def _script_uses_local_venv_python(script: Path) -> bool:
+    return ".venv/bin/python" in _script_text(script)
+
+
+def _recent_log_error_summary(path: Path, *, max_bytes: int) -> list[str]:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+
+    summaries: list[str] = []
+    for label, pattern in CRON_LOG_ERROR_PATTERNS:
+        count = len(re.findall(pattern, text, flags=re.IGNORECASE))
+        if count:
+            summaries.append(f"{label} x{count}")
+    return summaries
+
+
+def _inspect_cron_command(
+    *,
+    config: Config,
+    line_no: int,
+    cwd: Path | None,
+    command: str,
+    seen_workdirs: set[Path],
+) -> list[CronHealthIssue]:
+    issues: list[CronHealthIssue] = []
+    if cwd is None:
+        return issues
+    seen_workdirs.add(cwd)
+    if not cwd.exists():
+        return [
+            CronHealthIssue("cron", f"line {line_no} working directory missing: {cwd}")
+        ]
+
+    script = _referenced_script(cwd, command)
+    if script is None:
+        return issues
+    if not script.exists():
+        return [CronHealthIssue("cron", f"line {line_no} script missing: {script}")]
+    if not os.access(script, os.X_OK):
+        issues.append(
+            CronHealthIssue("cron", f"line {line_no} script not executable: {script}")
+        )
+    for stale_home in _script_home_references(script, config):
+        issues.append(
+            CronHealthIssue(
+                "cron",
+                f"line {line_no} script references another home directory: {stale_home}",
+            )
+        )
+    if _script_uses_local_venv_python(script):
+        python_bin = cwd / ".venv" / "bin" / "python"
+        if not os.access(python_bin, os.X_OK):
+            issues.append(
+                CronHealthIssue(
+                    "cron",
+                    f"line {line_no} uses missing local venv interpreter: {python_bin}",
+                )
+            )
+    return issues
+
+
+def _recent_log_paths(root: Path, *, recursive: bool, cutoff: float) -> list[Path]:
+    if not recursive:
+        try:
+            return [
+                path
+                for path in root.glob("*.log")
+                if path.is_file() and path.stat().st_mtime >= cutoff
+            ]
+        except OSError:
+            return []
+
+    paths: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in SKIPPED_LOG_DIRS]
+        directory = Path(dirpath)
+        for filename in filenames:
+            if not filename.endswith(".log"):
+                continue
+            path = directory / filename
+            try:
+                if path.is_file() and path.stat().st_mtime >= cutoff:
+                    paths.append(path)
+            except OSError:
+                continue
+    return paths
+
+
+def _recent_logs(workdirs: set[Path], config: Config, cutoff: float) -> list[Path]:
+    paths: list[Path] = []
+    for root in [*sorted(workdirs), config.root]:
+        if not root.exists():
+            continue
+        paths.extend(
+            _recent_log_paths(root, recursive=root != config.root, cutoff=cutoff)
+        )
+    return sorted(set(paths))
+
+
+def inspect_cron_health(
+    config: Config,
+    *,
+    crontab_text: str | None = None,
+    recent_seconds: int = CRON_RECENT_SECONDS,
+    max_log_bytes: int = CRON_LOG_MAX_BYTES,
+) -> list[CronHealthIssue]:
+    """Return non-mutating diagnostics for cron jobs and their recent logs."""
+    workdirs: set[Path] = set()
+    issues: list[CronHealthIssue] = []
+    text = _load_crontab_text() if crontab_text is None else crontab_text
+
+    for line_no, cwd, command in _iter_cron_commands(text):
+        issues.extend(
+            _inspect_cron_command(
+                config=config,
+                line_no=line_no,
+                cwd=cwd,
+                command=command,
+                seen_workdirs=workdirs,
+            )
+        )
+
+    cutoff = time.time() - recent_seconds
+    for log_path in _recent_logs(workdirs, config, cutoff):
+        summary = _recent_log_error_summary(log_path, max_bytes=max_log_bytes)
+        if summary:
+            issues.append(
+                CronHealthIssue("cron-log", f"{log_path}: {', '.join(summary)}")
+            )
+
+    # Preserve order while deduplicating repeated warnings from overlapping roots.
+    deduped = list(dict.fromkeys(issues))
+    return deduped
+
+
+LARGE_SESSION_HISTORY_BYTES = 25 * 1024 * 1024
+LARGE_SESSION_HISTORY_MESSAGES = 500
+
+
+@dataclass(frozen=True, slots=True)
+class SessionHealthSummary:
+    histories: int = 0
+    total_bytes: int = 0
+    largest_bytes: int = 0
+    largest_messages: int = 0
+    large_histories: int = 0
+    long_histories: int = 0
+    incomplete_histories: int = 0
+    unreadable_histories: int = 0
+    session_tree_bytes: int = 0
+    workspace_bytes: int = 0
+    archive_bytes: int = 0
+
+    @property
+    def has_issues(self) -> bool:
+        return (
+            self.large_histories > 0
+            or self.long_histories > 0
+            or self.incomplete_histories > 0
+            or self.unreadable_histories > 0
+        )
 
 
 def _call_id(item: MessageItem, item_type: str) -> str | None:
@@ -141,6 +413,139 @@ def heal_function_call_outputs(config: Config) -> bool:
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
         changed = True
     return changed
+
+
+def _history_is_incomplete(messages: MessageHistory) -> bool:
+    """Return True when a saved run ended without a final assistant message.
+
+    This usually means a one-shot/sub-agent process was killed or crashed after doing
+    tool work. Reporting it at the aggregate level helps monitor owners find silent
+    failures without exposing private prompt or output text.
+    """
+    dict_messages = [item for item in messages if isinstance(item, dict)]
+    if not dict_messages:
+        return False
+    if not any(item.get("role") == "user" for item in dict_messages):
+        return False
+    for item in reversed(dict_messages):
+        if item.get("type") == "reasoning":
+            continue
+        return not (item.get("type") == "message" and item.get("role") == "assistant")
+    return True
+
+
+def _storage_bytes(root: Path, *, workspace_only: bool = False) -> int:
+    """Return aggregate file bytes without following symlinked directories."""
+    total = 0
+    if not root.exists():
+        return total
+    for current_root, _dir_names, file_names in os.walk(root, followlinks=False):
+        current = Path(current_root)
+        if workspace_only and "workspace" not in current.relative_to(root).parts:
+            continue
+        for name in file_names:
+            path = current / name
+            try:
+                if not path.is_symlink():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def summarize_session_health(
+    config: Config,
+    *,
+    large_history_bytes: int = LARGE_SESSION_HISTORY_BYTES,
+    large_history_messages: int = LARGE_SESSION_HISTORY_MESSAGES,
+) -> SessionHealthSummary:
+    """Return privacy-safe aggregate health counters for saved sessions."""
+    sessions_dir = config.sessions_dir
+    if not sessions_dir.exists():
+        return SessionHealthSummary()
+
+    histories = 0
+    total_bytes = 0
+    largest_bytes = 0
+    largest_messages = 0
+    large_histories = 0
+    long_histories = 0
+    incomplete_histories = 0
+    unreadable_histories = 0
+
+    for path in sessions_dir.rglob("messages.json"):
+        histories += 1
+        try:
+            size = path.stat().st_size
+        except OSError:
+            unreadable_histories += 1
+            continue
+        total_bytes += size
+        largest_bytes = max(largest_bytes, size)
+        if size >= large_history_bytes:
+            large_histories += 1
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            unreadable_histories += 1
+            continue
+        messages = data.get("messages") if isinstance(data, dict) else None
+        if not isinstance(messages, list):
+            unreadable_histories += 1
+            continue
+        message_count = len(messages)
+        largest_messages = max(largest_messages, message_count)
+        if message_count >= large_history_messages:
+            long_histories += 1
+        if _history_is_incomplete(cast(MessageHistory, messages)):
+            incomplete_histories += 1
+
+    archive = config.root / "sessions.tar.gz"
+    try:
+        archive_bytes = archive.stat().st_size
+    except OSError:
+        archive_bytes = 0
+
+    return SessionHealthSummary(
+        histories=histories,
+        total_bytes=total_bytes,
+        largest_bytes=largest_bytes,
+        largest_messages=largest_messages,
+        large_histories=large_histories,
+        long_histories=long_histories,
+        incomplete_histories=incomplete_histories,
+        unreadable_histories=unreadable_histories,
+        session_tree_bytes=_storage_bytes(sessions_dir),
+        workspace_bytes=_storage_bytes(sessions_dir, workspace_only=True),
+        archive_bytes=archive_bytes,
+    )
+
+
+def format_session_health_summary(summary: SessionHealthSummary) -> list[str]:
+    """Format non-sensitive doctor lines for session-health diagnostics."""
+    lines = [
+        f"doctor:session-histories={summary.histories}",
+        f"doctor:session-history-bytes={summary.total_bytes}",
+        f"doctor:largest-session-messages={summary.largest_messages}",
+        f"doctor:session-tree-bytes={summary.session_tree_bytes}",
+        f"doctor:session-workspace-bytes={summary.workspace_bytes}",
+    ]
+    if summary.archive_bytes:
+        lines.append(f"doctor:session-archive-bytes={summary.archive_bytes}")
+    if summary.large_histories:
+        lines.append(f"doctor:large-session-histories={summary.large_histories}")
+    if summary.long_histories:
+        lines.append(f"doctor:long-session-histories={summary.long_histories}")
+    if summary.incomplete_histories:
+        lines.append(
+            f"doctor:incomplete-session-histories={summary.incomplete_histories}"
+        )
+    if summary.unreadable_histories:
+        lines.append(
+            f"doctor:unreadable-session-histories={summary.unreadable_histories}"
+        )
+    return lines
 
 
 def main(config: Config) -> list[str]:
