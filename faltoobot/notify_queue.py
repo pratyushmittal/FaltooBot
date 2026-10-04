@@ -16,6 +16,8 @@ class Notification(TypedDict):
     created_at: str
     source: NotRequired[str]
     session_id: NotRequired[str]
+    attempts: NotRequired[int]
+    not_before: NotRequired[float]
 
 
 ClaimedNotification = tuple[Path, Notification]
@@ -46,6 +48,8 @@ def _read_notification(path: Path) -> Notification | None:
     created_at = payload.get("created_at")
     source = payload.get("source")
     session_id = payload.get("session_id")
+    attempts = payload.get("attempts")
+    not_before = payload.get("not_before")
     if not all(
         isinstance(value, str) and value
         for value in (notification_id, chat_key, message, created_at)
@@ -57,6 +61,11 @@ def _read_notification(path: Path) -> Notification | None:
         for value in (source, session_id)
     ):
         return None
+    retry_metadata_invalid = (
+        attempts is not None and (not isinstance(attempts, int) or attempts < 0)
+    ) or (not_before is not None and not isinstance(not_before, (int, float)))
+    if retry_metadata_invalid:
+        return None
     notification: Notification = {
         "id": notification_id,
         "chat_key": chat_key,
@@ -67,6 +76,10 @@ def _read_notification(path: Path) -> Notification | None:
         notification["source"] = source
     if session_id is not None:
         notification["session_id"] = session_id
+    if attempts is not None:
+        notification["attempts"] = attempts
+    if not_before is not None:
+        notification["not_before"] = float(not_before)
     return notification
 
 
@@ -120,7 +133,11 @@ def claim_notifications(
     claimed: list[ClaimedNotification] = []
     for path in sorted(pending.glob("*.json")):
         notification = _read_notification(path)
-        if notification is None or not matches(notification):
+        if (
+            notification is None
+            or notification.get("not_before", 0) > time()
+            or not matches(notification)
+        ):
             continue
         claimed_path = processing / path.name
         try:
@@ -166,9 +183,27 @@ def ack_notification(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
-def requeue_notification(path: Path) -> None:
+def retry_delay_seconds(attempts: int) -> float:
+    """Return a bounded exponential delay for the next delivery attempt."""
+    return min(300.0, 5.0 * (2 ** min(attempts, 6)))
+
+
+def requeue_notification(path: Path, *, delay_seconds: float = 0) -> None:
     pending = _pending_dir()
     pending.mkdir(parents=True, exist_ok=True)
+    notification = _read_notification(path)
+    if notification is None:
+        path.replace(pending / path.name)
+        return
+
+    notification["attempts"] = notification.get("attempts", 0) + 1
+    if delay_seconds > 0:
+        notification["not_before"] = time() + delay_seconds
+    else:
+        notification.pop("not_before", None)
+    temp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    temp.write_text(json.dumps(notification, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
     path.replace(pending / path.name)
 
 
