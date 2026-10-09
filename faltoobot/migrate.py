@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any, cast
 
 from faltoobot.config import (
+    BACKEND_OPTIONS,
     Config,
+    DEFAULT_BACKEND,
     MODEL_OPTIONS,
     build_config,
     load_toml,
@@ -178,6 +180,31 @@ def drop_usage_attribution(config: Config) -> bool:
     return changed_any
 
 
+def add_session_backend(config: Config) -> bool:
+    """Write an explicit backend into histories that predate backends."""
+    marker = config.root / "migrations" / "add-session-backend"
+    if marker.exists():
+        return False
+
+    changed_any = False
+    for path in config.sessions_dir.glob(f"*/*/{MESSAGES_FILE}"):
+        stat = path.stat()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("backend") in BACKEND_OPTIONS:
+            continue
+        # comment: histories without a backend were always answered by OpenAI; pinning
+        # them keeps a later config change from moving a chat without a hand-off.
+        payload["backend"] = DEFAULT_BACKEND
+        _write_text_atomic(
+            path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        )
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        changed_any = True
+
+    _write_text_atomic(marker, "")
+    return changed_any
+
+
 def main(
     config: Config | None = None,
     *,
@@ -199,4 +226,6 @@ def main(
         changes.append("migration:add-generated-image-developer-messages")
     if drop_usage_attribution(config):
         changes.append("migration:drop-usage-attribution")
+    if add_session_backend(config):
+        changes.append("migration:add-session-backend")
     return changes

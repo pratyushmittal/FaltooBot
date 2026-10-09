@@ -29,7 +29,16 @@ from faltoobot.post_response_hooks import (
     capture_snapshot,
     run_hooks,
 )
-from faltoobot.config import Config, app_root, build_config
+from faltoobot import claude_cli
+from faltoobot.config import (
+    BACKEND_OPTIONS,
+    DEFAULT_BACKEND,
+    Config,
+    app_root,
+    build_config,
+    load_toml,
+    merge_config,
+)
 from faltoobot.gpt_utils import (
     MessageHistory,
     STANDALONE_COMPACTION_KEY,
@@ -64,6 +73,7 @@ class MessagesJson(TypedDict):
     system_prompt: str
     messages: MessageHistory
     message_ids: list[str]
+    backend: str
 
 
 Attachment = str | Path
@@ -111,6 +121,16 @@ def get_dir_chat_key(workspace: Path, *, is_sub_agent: bool = False) -> str:
     return f"{prefix}@{name}-{digest}"
 
 
+def configured_backend() -> str:
+    # comment: read the config without ensure_config_file so sessions never write config.toml.
+    backend = merge_config(load_toml(app_root() / "config.toml"))["llm_backend"]
+    return str(backend)
+
+
+def get_backend(messages_json: MessagesJson) -> str:
+    return messages_json["backend"]
+
+
 def _get_new_message_history(chat_key: str) -> MessageHistory:
     # WhatsApp and sub-agent chats use their own instructions.
     if not chat_key.startswith("code@"):
@@ -136,6 +156,10 @@ def _normalized_messages_json(
         workspace = workspace.expanduser()
 
     system_prompt = payload.get("system_prompt")
+    backend = payload.get("backend")
+    if backend not in BACKEND_OPTIONS:
+        # comment: legacy histories predate backends; only brand-new sessions take the config default.
+        backend = configured_backend() if not payload else DEFAULT_BACKEND
     return {
         "id": session_id,
         "chat_key": chat_key,
@@ -143,6 +167,7 @@ def _normalized_messages_json(
         "system_prompt": system_prompt if isinstance(system_prompt, str) else "",
         "messages": list(payload.get("messages", _get_new_message_history(chat_key))),
         "message_ids": [item for item in payload.get("message_ids", [])],
+        "backend": str(backend),
     }
 
 
@@ -340,6 +365,9 @@ async def compact_message_history(session: Session) -> bool:
     ] == _get_new_message_history(session.chat_key):
         # New coding sessions contain only guidance, not a conversation to compact.
         return False
+
+    if get_backend(messages_json) == "claude":
+        return await claude_cli.compact(session, messages_json)
 
     # comment: OpenRouter has no Responses compaction endpoint.
     if uses_openrouter(config):
@@ -707,13 +735,22 @@ async def _get_answer_streaming(
         messages_json["system_prompt"] = instructions
         set_messages(session, messages_json)
 
-    async for event in _get_streaming_reply(
-        config=config,
-        instructions=instructions,
-        input=messages_json["messages"],
-        tools=tools,
-        prompt_cache_key=messages_json["id"],
-    ):
+    if get_backend(messages_json) == "claude":
+        stream = claude_cli.stream_reply(
+            session,
+            messages_json,
+            config=config,
+            instructions=instructions,
+        )
+    else:
+        stream = _get_streaming_reply(
+            config=config,
+            instructions=instructions,
+            input=messages_json["messages"],
+            tools=tools,
+            prompt_cache_key=messages_json["id"],
+        )
+    async for event in stream:
         image_markdown = ""
         if event.type == "response.completed":
             completed = cast(ResponseCompletedEvent, event)
@@ -823,6 +860,8 @@ async def prewarm_openai_websocket(session: Session) -> None:
     if uses_openrouter(config) or not (config.openai_api_key or config.openai_oauth):
         return
     messages_json = get_messages(session)
+    if get_backend(messages_json) == "claude":
+        return
     workspace = Path(messages_json["workspace"])
     try:
         await websocket_prewarm(

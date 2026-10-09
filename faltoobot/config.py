@@ -13,6 +13,21 @@ TRANSCRIPTION_MODEL_OPTIONS = ("gpt-4o-mini-transcribe", "gpt-4o-transcribe")
 THINKING_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_THINKING = "high"
 GEMINI_MODEL = "gemini-3.1-flash-image-preview"
+BACKEND_OPTIONS = ("openai", "claude")
+DEFAULT_BACKEND = BACKEND_OPTIONS[0]
+CLAUDE_MODEL = "opus"
+CLAUDE_EFFORT_OPTIONS = ("low", "medium", "high", "xhigh", "max")
+DEFAULT_CLAUDE_EFFORT = "medium"
+CLAUDE_PERMISSION_MODES = (
+    "acceptEdits",
+    "auto",
+    "bypassPermissions",
+    "manual",
+    "dontAsk",
+    "plan",
+)
+DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions"
+DEFAULT_CLAUDE_IDLE_TIMEOUT = 600
 
 
 @dataclass(slots=True)
@@ -41,14 +56,21 @@ class Config:
     google_places_api_key: str = ""
     openai_websocket: bool = False
     openrouter_api_key: str = ""
+    llm_backend: str = DEFAULT_BACKEND
+    claude_binary: str = "claude"
+    claude_model: str = CLAUDE_MODEL
+    claude_effort: str = DEFAULT_CLAUDE_EFFORT
+    claude_permission_mode: str = DEFAULT_CLAUDE_PERMISSION_MODE
+    claude_idle_timeout: int = DEFAULT_CLAUDE_IDLE_TIMEOUT
 
 
 def app_root() -> Path:
     return Path.home() / ".faltoobot"
 
 
-def default_config() -> dict[str, dict[str, Any]]:
+def default_config() -> dict[str, Any]:
     return {
+        "llm_backend": DEFAULT_BACKEND,
         "openai": {
             "api_key": "",
             "oauth": "",
@@ -59,6 +81,13 @@ def default_config() -> dict[str, dict[str, Any]]:
             "transcription_model": TRANSCRIPTION_MODEL_OPTIONS[1],
         },
         "openrouter": {"api_key": ""},
+        "claude": {
+            "binary": "claude",
+            "model": CLAUDE_MODEL,
+            "effort": DEFAULT_CLAUDE_EFFORT,
+            "permission_mode": DEFAULT_CLAUDE_PERMISSION_MODE,
+            "idle_timeout": DEFAULT_CLAUDE_IDLE_TIMEOUT,
+        },
         "gemini": {"gemini_api_key": "", "model": GEMINI_MODEL},
         "google": {"places_api_key": ""},
         "hooks": {"enabled": False},
@@ -72,10 +101,11 @@ def default_config() -> dict[str, dict[str, Any]]:
     }
 
 
-def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def merge_config(data: dict[str, Any]) -> dict[str, Any]:
     defaults = default_config()
     openai = as_dict(data.get("openai"))
     openrouter = as_dict(data.get("openrouter"))
+    claude = as_dict(data.get("claude"))
     gemini = as_dict(data.get("gemini"))
     ui = as_dict(data.get("ui"))
     google = as_dict(data.get("google"))
@@ -83,6 +113,9 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     browser = as_dict(data.get("browser"))
     bot = as_dict(data.get("bot"))
     return {
+        "llm_backend": as_choice(
+            data.get("llm_backend"), defaults["llm_backend"], BACKEND_OPTIONS
+        ),
         "openai": {
             "api_key": as_str(openai.get("api_key"), defaults["openai"]["api_key"]),
             "oauth": as_str(openai.get("oauth"), defaults["openai"]["oauth"]),
@@ -101,6 +134,23 @@ def merge_config(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "openrouter": {
             "api_key": as_str(
                 openrouter.get("api_key"), defaults["openrouter"]["api_key"]
+            ),
+        },
+        "claude": {
+            "binary": as_str(claude.get("binary"), defaults["claude"]["binary"]),
+            "model": as_str(claude.get("model"), defaults["claude"]["model"]),
+            "effort": as_choice(
+                claude.get("effort"),
+                defaults["claude"]["effort"],
+                CLAUDE_EFFORT_OPTIONS,
+            ),
+            "permission_mode": as_choice(
+                claude.get("permission_mode"),
+                defaults["claude"]["permission_mode"],
+                CLAUDE_PERMISSION_MODES,
+            ),
+            "idle_timeout": as_int(
+                claude.get("idle_timeout"), defaults["claude"]["idle_timeout"], 0
             ),
         },
         "gemini": {
@@ -153,11 +203,12 @@ def quote(value: str) -> str:
     return json.dumps(value)
 
 
-def render_config(data: dict[str, dict[str, Any]]) -> str:
+def render_config(data: dict[str, Any]) -> str:
     data = merge_config(data)
     bot = data["bot"]
     openai = data["openai"]
     openrouter = data["openrouter"]
+    claude = data["claude"]
     gemini = data["gemini"]
     ui = data["ui"]
     google = data["google"]
@@ -177,6 +228,8 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
         [
             "# Faltoobot config",
             "",
+            f"llm_backend = {quote(str(data['llm_backend']))}",
+            "",
             "[openai]",
             f"api_key = {quote(str(openai['api_key']))}",
             f"oauth = {quote(str(openai['oauth']))}",
@@ -188,6 +241,13 @@ def render_config(data: dict[str, dict[str, Any]]) -> str:
             "",
             "[openrouter]",
             f"api_key = {quote(str(openrouter['api_key']))}",
+            "",
+            "[claude]",
+            f"binary = {quote(str(claude['binary']))}",
+            f"model = {quote(str(claude['model']))}",
+            f"effort = {quote(str(claude['effort']))}",
+            f"permission_mode = {quote(str(claude['permission_mode']))}",
+            f"idle_timeout = {int(claude['idle_timeout'])}",
             "",
             "[gemini]",
             f"gemini_api_key = {quote(str(gemini['gemini_api_key']))}",
@@ -281,6 +341,7 @@ def build_config() -> Config:
     data = merge_config(load_toml(path))
     openai = data["openai"]
     openrouter = data["openrouter"]
+    claude = data["claude"]
     bot = data["bot"]
     browser = data["browser"]
     gemini = data["gemini"]
@@ -314,6 +375,12 @@ def build_config() -> Config:
         openai_websocket=bool(openai["websocket"]),
         openrouter_api_key=str(openrouter["api_key"])
         or os.environ.get("OPENROUTER_API_KEY", ""),
+        llm_backend=str(data["llm_backend"]),
+        claude_binary=str(claude["binary"]),
+        claude_model=str(claude["model"]),
+        claude_effort=str(claude["effort"]),
+        claude_permission_mode=str(claude["permission_mode"]),
+        claude_idle_timeout=int(claude["idle_timeout"]),
     )
 
 

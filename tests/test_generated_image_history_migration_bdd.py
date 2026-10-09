@@ -114,7 +114,8 @@ def update_summary_includes_generated_image_migration(
     migration_ctx: dict[str, Any],
 ) -> None:
     assert migration_ctx["changes"] == [
-        "migration:add-generated-image-developer-messages"
+        "migration:add-generated-image-developer-messages",
+        "migration:add-session-backend",
     ]
 
 
@@ -140,12 +141,14 @@ def history_includes_developer_note_with_local_image_path(
 
 @then("the update summary is empty")
 def update_summary_is_empty(migration_ctx: dict[str, Any]) -> None:
-    assert migration_ctx["changes"] == []
+    # comment: pinning the backend on legacy histories is expected on every first update.
+    assert migration_ctx["changes"] == ["migration:add-session-backend"]
 
 
 @then("the saved chat history is unchanged")
 def saved_chat_history_is_unchanged(migration_ctx: dict[str, Any]) -> None:
-    assert migration_ctx["payload"] == migration_ctx["original_payload"]
+    payload = {k: v for k, v in migration_ctx["payload"].items() if k != "backend"}
+    assert payload == migration_ctx["original_payload"]
 
 
 @when("update migrations run after the generated image release")

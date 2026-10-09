@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -141,12 +142,18 @@ def test_usage_attribution_migration(
     path.write_text(json.dumps({"messages": messages}), encoding="utf-8")
     stat = path.stat()
 
-    assert main(config) == ["migration:drop-usage-attribution"]
-    assert path.stat().st_mtime_ns == stat.st_mtime_ns
-    assert path.stat().st_atime_ns == stat.st_atime_ns
-    assert json.loads(path.read_text(encoding="utf-8")) == {
+    expected_changes = ["migration:drop-usage-attribution"]
+    expected_payload: dict[str, Any] = {
         "messages": [{"content": "hello"}, {"usage": usage}],
     }
+    if filename == "messages.json":
+        # comment: histories (not archives) also get their backend pinned.
+        expected_changes.append("migration:add-session-backend")
+        expected_payload["backend"] = "openai"
+    assert main(config) == expected_changes
+    assert path.stat().st_mtime_ns == stat.st_mtime_ns
+    assert path.stat().st_atime_ns == stat.st_atime_ns
+    assert json.loads(path.read_text(encoding="utf-8")) == expected_payload
     assert json.loads(metadata.read_text(encoding="utf-8")) == {
         "attribution": "unrelated metadata"
     }
