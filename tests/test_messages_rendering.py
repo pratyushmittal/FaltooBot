@@ -79,12 +79,28 @@ def test_get_item_text_run_shell_calls(
             },
             ("**Estimating sunset time**\n**Calculating sunset time**", "thinking"),
         ),
+        (
+            {
+                "type": "reasoning",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "Checking primes"}],
+            },
+            ("Checking primes", "thinking"),
+        ),
     ],
 )
 def test_get_item_text_reasoning(
     item: dict[str, object], expected: tuple[str, str]
 ) -> None:
     assert get_item_text(item) == expected
+
+
+def test_get_item_text_renders_openrouter_web_search() -> None:
+    item = {
+        "type": "openrouter:web_search",
+        "action": {"type": "search", "query": "T20 World Cup winner"},
+    }
+    assert get_item_text(item) == ("web search\nT20 World Cup winner", "tool")
 
 
 def test_get_item_text_renders_developer_messages() -> None:

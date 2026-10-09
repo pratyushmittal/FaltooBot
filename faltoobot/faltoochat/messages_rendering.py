@@ -194,7 +194,8 @@ def _tool_text(item: MessageItem) -> str | None:
         case {"type": "function_call", "name": str(name), "arguments": str(arguments)}:
             return _tool_call_text(name, arguments)
         case {
-            "type": "web_search_call",
+            # comment: OpenRouter returns its own `openrouter:web_search` item type.
+            "type": "web_search_call" | "openrouter:web_search",
             "action": {"query": str(query)},
         }:
             return f"web search\n{query.strip()}" if query.strip() else "web search"
@@ -215,7 +216,10 @@ def get_item_text(item: MessageItem) -> tuple[str, str] | None:
             text = _get_text(content)
             return (text, "answer") if text else None
         case {"type": "reasoning", "summary": summary}:
-            text = visible_thinking_text(_get_text(summary))
+            # comment: OpenRouter's Claude reasoning has an empty summary; text is in content.
+            text = visible_thinking_text(
+                _get_text(summary) or _get_text(item.get("content"))
+            )
             return (text, "thinking") if text else None
         case {"type": "function_call_output"}:
             return None

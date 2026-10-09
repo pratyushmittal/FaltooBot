@@ -30,6 +30,7 @@ from openai.types.responses import (
     ResponseReasoningTextDoneEvent,
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
+    ResponseUsage,
 )
 
 from faltoobot import gpt_utils, sessions
@@ -220,8 +221,10 @@ def test_get_tools_definition() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("model", ["gpt-5-mini", "anthropic/claude-sonnet-5.5"])
 async def test_get_streaming_reply_recurses_for_tool_calls(
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     client = FakeClient(
         [
@@ -342,9 +345,13 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
 
+    config = _api_config()
+    config.openai_model = model
+    openrouter = "/" in model
     items = [
         item
-        async for item in get_streaming_reply(
+        async for item in get_api_streaming_reply(
+            config,
             instructions="system prompt",
             input=[{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
             tools=[greet],
@@ -368,14 +375,26 @@ async def test_get_streaming_reply_recurses_for_tool_calls(
     ]
     tool_output = cast(ResponseFunctionToolCallOutputItem, items[9])
     assert tool_output.output == "hello Faltoobot"
-    assert client.responses.calls[0]["context_management"] == [
-        {"type": "compaction", "compact_threshold": 200_000}
-    ]
+    assert client.responses.calls[0]["context_management"] == (
+        omit if openrouter else [{"type": "compaction", "compact_threshold": 200_000}]
+    )
     assert client.responses.calls[0]["reasoning"] == {
         "summary": "concise",
         "effort": "low",
     }
-    assert client.responses.calls[0]["tools"][-1] == {"type": "image_generation"}
+    assert [tool["type"] for tool in client.responses.calls[0]["tools"]] == (
+        ["function", "web_search"]
+        if openrouter
+        else ["function", "web_search", "image_generation"]
+    )
+    assert client.responses.calls[0]["include"] == (
+        ["reasoning.encrypted_content"]
+        if openrouter
+        else ["reasoning.encrypted_content", "web_search_call.action.sources"]
+    )
+    assert client.responses.calls[0]["extra_body"] == (
+        {"cache_control": {"type": "ephemeral"}} if openrouter else None
+    )
     assert client.responses.calls[0]["prompt_cache_key"] == omit
     assert client.responses.calls[0]["extra_headers"] is None
     assert client.responses.calls[1]["input"][-1] == {
@@ -806,7 +825,7 @@ async def test_get_streaming_reply_replaces_unavailable_uploaded_files_for_oauth
         ]
     )
     monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
-    monkeypatch.setattr(gpt_utils, "uses_chatgpt_oauth", lambda config: True)
+    monkeypatch.setattr(gpt_utils, "inlines_uploads", lambda config: True)
 
     history: MessageHistory = [
         {
@@ -1206,7 +1225,10 @@ async def test_get_streaming_reply_uses_websocket_incremental_tool_inputs(
     assert websocket.sent[0]["prompt_cache_key"] == "session-123"
     assert websocket.sent[0]["tool_choice"] == "auto"
     assert websocket.sent[0]["reasoning"] == {"summary": "concise", "effort": "low"}
-    assert websocket.sent[0]["tools"][-1] == {"type": "image_generation"}
+    assert websocket.sent[0]["tools"][-1] == {
+        "type": "image_generation",
+        "model": "gpt-image-2.5-sunburst",
+    }
     assert "stream" not in websocket.sent[0]
     assert "background" not in websocket.sent[0]
     assert websocket.sent[1]["previous_response_id"] == "resp_warm"
@@ -2034,3 +2056,42 @@ async def test_websocket_closes_when_completed_history_is_invalidated(
     assert session.previous_response_id is None
     assert session.input_index == 0
     assert session.close_after_turn is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("websocket", [False, True], ids=["http", "websocket"])
+async def test_streaming_reply_drops_usage_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+    websocket: bool,
+) -> None:
+    summary = {
+        "input_tokens": 100,
+        "input_tokens_details": {"cached_tokens": 20, "cache_write_tokens": 10},
+        "output_tokens": 30,
+        "output_tokens_details": {"reasoning_tokens": 5},
+        "total_tokens": 130,
+    }
+    usage = {**summary, "attribution": {"items": {"msg_1": {"input_tokens": 100}}}}
+    output = [{"type": "message", "role": "assistant", "content": []}]
+    if websocket:
+        response = _websocket_completed_response("resp_1", output)
+        response[0]["response"]["usage"] = usage
+        socket = FakeWebSocket([_websocket_completed_response("resp_warm"), response])
+        _patch_api_websocket(monkeypatch, socket)
+    else:
+        event = FakeCompletedEvent(output)
+        cast(Any, event.response).usage = ResponseUsage.model_validate(usage)
+        client = FakeClient([{"events": [event]}])
+        monkeypatch.setattr(gpt_utils, "get_openai_client", lambda config: client)
+
+    history: MessageHistory = []
+    async for _ in sessions._get_streaming_reply(
+        config=_websocket_config(openai_websocket=websocket),
+        instructions="system",
+        input=history,
+        tools=[],
+        prompt_cache_key="usage-test",
+    ):
+        pass
+
+    assert history[-1]["usage"] == summary

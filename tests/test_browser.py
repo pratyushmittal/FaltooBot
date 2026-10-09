@@ -48,6 +48,39 @@ def test_open_browser_terminates_on_keyboard_interrupt(
     assert calls == [("wait", None), ("terminate", None), ("wait", 5)]
 
 
+def test_open_browser_uses_launch_services_for_macos_apps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Chrome started from cron/SSH cannot unlock the Keychain, so every saved login
+    # looks missing; `open` launches it inside the logged-in desktop session.
+    chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    runs: list[list[str]] = []
+    cdp_checks = iter([False, False, True])
+    monkeypatch.setattr(browser.sys, "platform", "darwin")
+    monkeypatch.setattr(browser, "_cdp_is_running", lambda: next(cdp_checks))
+    monkeypatch.setattr(browser.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        browser.subprocess, "run", lambda args, check: runs.append(args)
+    )
+
+    browser.open_browser(root=tmp_path, binary=chrome, url="https://example.com")
+
+    profile_dir = browser.browser_profile_dir(tmp_path)
+    assert runs == [
+        [
+            "open",
+            "-na",
+            "/Applications/Google Chrome.app",
+            "--args",
+            f"--user-data-dir={profile_dir}",
+            f"--remote-debugging-port={browser.CDP_PORT}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "https://example.com",
+        ]
+    ]
+
+
 def test_default_browser_binary_prefers_google_chrome_on_macos(monkeypatch) -> None:
     chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 

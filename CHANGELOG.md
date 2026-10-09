@@ -2,6 +2,34 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## 7.7.2 — 2026-10-01
+
+### Fixed
+- On macOS, the shared browser no longer loses its logins when a cron job or background agent restarts it. `faltoobot browser` now launches Chrome in your desktop session, so it can unlock its saved cookies, and the browser keeps running after the terminal closes.
+
+## 7.7.1 — 2026-10-01
+
+### Fixed
+- Long command output now keeps its end, where test summaries and errors are, and says how much was cut, instead of silently dropping everything after 12,000 characters.
+- Searches like `rg pattern` no longer hang until the timeout in headless runs and sub-agents.
+- Python scripts that time out now keep the output they printed before being stopped.
+
+### Changed
+- On machines without a `python` command, the assistant is told to use `uv run python`, avoiding repeated "command not found" errors.
+
+## 7.7.0 — 2026-09-30
+
+### Added
+- Added support for Claude and other models through OpenRouter.
+
+### Changed
+- Saved chats and archives now omit bulky token-attribution data, with cleanup on `faltoobot update`.
+
+## 7.6.3 — 2026-09-11
+
+### Changed
+- Image generation now uses GPT-Image-2.5 Sunburst.
+
 ## 7.6.2 — 2026-09-06
 
 ### Fixed

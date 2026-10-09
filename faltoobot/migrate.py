@@ -1,4 +1,6 @@
 import json
+import os
+from itertools import chain
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,6 +14,7 @@ from faltoobot.config import (
 )
 from faltoobot.sessions import (
     MESSAGES_FILE,
+    _write_text_atomic,
     generated_image_developer_message,
     save_generated_image,
 )
@@ -136,6 +139,45 @@ def add_generated_image_developer_messages(
     return changed_any
 
 
+def drop_usage_attribution(config: Config) -> bool:
+    marker = config.root / "migrations" / "drop-usage-attribution"
+    if marker.exists():
+        # This cleanup only needs to run once.
+        return False
+
+    changed_any = False
+    # Only histories and compaction archives have the expected message structure.
+    for path in chain(
+        config.sessions_dir.glob(f"*/*/{MESSAGES_FILE}"),
+        config.sessions_dir.glob("*/*/messages.archive.*.json"),
+    ):
+        stat = path.stat()
+        text = path.read_text(encoding="utf-8")
+        if '"attribution"' not in text:
+            # Avoid decoding histories with no attribution data.
+            continue
+        payload = json.loads(text)
+        changed = False
+        for message in payload["messages"]:
+            usage = message.get("usage")
+            if isinstance(usage, dict) and "attribution" in usage:
+                del usage["attribution"]
+                changed = True
+        if not changed:
+            # The keyword can appear outside usage metadata.
+            continue
+        _write_text_atomic(
+            path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        )
+        # Keep session ordering and displayed dates unchanged by this cleanup.
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        changed_any = True
+
+    # Mark completion only after every file succeeds, so failures can be retried.
+    _write_text_atomic(marker, "")
+    return changed_any
+
+
 def main(
     config: Config | None = None,
     *,
@@ -155,4 +197,6 @@ def main(
         config, previous_version=previous_version, current_version=current_version
     ):
         changes.append("migration:add-generated-image-developer-messages")
+    if drop_usage_attribution(config):
+        changes.append("migration:drop-usage-attribution")
     return changes

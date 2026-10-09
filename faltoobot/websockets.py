@@ -414,7 +414,7 @@ async def prewarm(  # noqa: PLR0913
             config,
             instructions=instructions,
             input=input,
-            tools=[get_tools_definition(tool) for tool in tools] + _cloud_tools(),
+            tools=[get_tools_definition(tool) for tool in tools] + _cloud_tools(config),
             prompt_cache_key=prompt_cache_key,
         )
         if not session.previous_response_id:
@@ -429,7 +429,13 @@ def _completed_update(
     item: _CompletedResponse,
 ) -> tuple[MessageHistory, Any | None, list[Any]]:
     messages = [_to_message_item(output) for output in item.response_output]
-    usage = item.event.response.usage.to_dict() if item.event.response.usage else None
+    usage = (
+        item.event.response.usage.model_dump(
+            by_alias=True, exclude_unset=True, exclude={"attribution"}
+        )
+        if item.event.response.usage
+        else None
+    )
     if messages and item.response_id:
         # comment: item["id"] is msg_/fc_/rs_; previous_response_id needs resp_.
         messages[-1]["response_id"] = item.response_id
@@ -463,7 +469,9 @@ async def streaming_reply(  # noqa: C901
     tools: list[Tool],
     prompt_cache_key: str,
 ) -> AsyncIterator[StreamingReplyItem]:
-    tools_payload = [get_tools_definition(tool) for tool in tools] + _cloud_tools()
+    tools_payload = [get_tools_definition(tool) for tool in tools] + _cloud_tools(
+        config
+    )
     session = await prewarm(
         config,
         instructions=instructions,
