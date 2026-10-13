@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from faltoobot.sessions import MessagesJson
+from faltoobot.gpt_utils import MessageHistory
 
 TOOL_INSPECT_LIMIT = 20
 INSPECT_TEXT_LIMIT = 160
@@ -25,7 +25,19 @@ def _tool_arguments(value: Any) -> dict[str, Any]:
 
 
 def _tool_summary(name: str, arguments: dict[str, Any]) -> str:
-    for key in ("command_summary", "summary", "query", "image_path", "skill_name"):
+    # comment: the later keys are Claude Code's tool arguments (Read, Grep, WebFetch, ...).
+    for key in (
+        "command_summary",
+        "summary",
+        "query",
+        "image_path",
+        "skill_name",
+        "description",
+        "file_path",
+        "pattern",
+        "url",
+        "skill",
+    ):
         summary = _inspect_text(arguments.get(key))
         if summary:
             return summary
@@ -48,10 +60,10 @@ def _tool_call_text(item: dict[str, Any]) -> str | None:
     return None
 
 
-def inspect_text_for_messages(messages_json: MessagesJson) -> str:
+def inspect_text_for_messages(messages: MessageHistory) -> str:
     calls = [
         text
-        for item in messages_json["messages"]
+        for item in messages
         if isinstance(item, dict) and (text := _tool_call_text(item))
     ][-TOOL_INSPECT_LIMIT:]
     if not calls:

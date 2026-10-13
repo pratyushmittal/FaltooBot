@@ -1620,6 +1620,7 @@ async def test_status_command_reports_version_and_config(
                 "",
                 "Session",
                 f"• session_id={json.dumps(session.session_id)}",
+                '• backend="openai"',
                 f"• workspace={json.dumps(get_messages(session)['workspace'])}",
                 "",
                 "Config status",

@@ -95,6 +95,23 @@ If `oauth` is set, Faltoobot prefers that OAuth auth file over `api_key`. If `oa
 
 To use other models through [OpenRouter](https://openrouter.ai), set `model` under `[openai]` to an OpenRouter model id such as `"anthropic/claude-sonnet-5.5"` and set `openrouter.api_key` (or `OPENROUTER_API_KEY`). Any model with a `/` goes to OpenRouter over HTTP streaming; native image generation and compaction (including `/compact`) are OpenAI-only.
 
+### Using Claude through the Claude Code CLI
+
+Faltoobot can also run chats on Claude with a Claude subscription. It drives the official `claude` CLI, so install [Claude Code](https://code.claude.com) and sign in with `claude` once. Then pick the backend for new sessions at the top of `config.toml`:
+
+```toml
+llm_backend = "claude"   # "openai" or "claude"; applies to new sessions only
+
+[claude]
+binary = "claude"
+model = "opus"            # any `claude --model` alias or full model id
+effort = "medium"
+permission_mode = "bypassPermissions"
+idle_timeout = 600        # seconds before an idle chat's claude process is closed
+```
+
+Each session keeps the backend it started with, so changing `llm_backend` never moves an existing chat. To move one, use `/handoff claude` (or `/handoff openai`) in the chat, or `faltoobot hand-off` below. The current backend writes a hand-off summary, and a new session on the other backend starts with it plus the paths of the full previous history, which it can search when the summary missed something. The old session is left untouched; handing back is the rollback.
+
 By default, `websocket = true` uses the Responses API WebSocket mode for lower-latency tool loops with either an API key or ChatGPT/Codex OAuth. Set it to `false` to use normal HTTP streaming.
 
 Set `allowed_chats` to the WhatsApp phone numbers that should be allowed to it in direct chats. Use WhatsApp phone numbers or JIDs. Faltoobot normalizes phone numbers into WhatsApp JIDs when saving the config.
@@ -170,6 +187,16 @@ Signs in with Codex / ChatGPT OAuth and saves the auth file path in `~/.faltoobo
 
 To change other settings, edit `~/.faltoobot/config.toml` directly.
 
+### `faltoobot hand-off`
+
+```bash
+faltoobot hand-off --to claude --chat 15551234567@s.whatsapp.net --dry-run
+faltoobot hand-off --to claude --all-whatsapp
+faltoobot hand-off --to openai --workspace ./repo
+```
+
+Moves chats to another backend through a summary. `--dry-run` only writes the summary so you can read it first, and `--no-verify` skips the new backend's recap. Stop the WhatsApp service before handing off from the CLI; in a chat, `/handoff <backend>` needs no restart.
+
 ## Terminal chat
 
 You can also use Faltoobot locally in the terminal.
@@ -209,6 +236,8 @@ On WhatsApp:
 /help
 /reset
 /status
+/stop
+/handoff claude
 ```
 
 In terminal chat:
@@ -217,6 +246,7 @@ In terminal chat:
 /reset
 /status
 /tree
+/handoff openai
 ```
 
 Custom terminal slash commands are loaded from `~/.faltoobot/prompts/*.md`. For example, `~/.faltoobot/prompts/switch.md` is available as `/switch`. Arguments are substituted as `$1`, `$2`, and `$*`, so `/switch somebranch` can expand `$1` to `somebranch`.

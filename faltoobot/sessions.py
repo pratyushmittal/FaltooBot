@@ -29,7 +29,7 @@ from faltoobot.post_response_hooks import (
     capture_snapshot,
     run_hooks,
 )
-from faltoobot import claude_cli
+from faltoobot import claude_cli, claude_transcript
 from faltoobot.config import (
     BACKEND_OPTIONS,
     DEFAULT_BACKEND,
@@ -40,6 +40,7 @@ from faltoobot.config import (
     merge_config,
 )
 from faltoobot.gpt_utils import (
+    MessageItem,
     MessageHistory,
     STANDALONE_COMPACTION_KEY,
     StreamingReplyItem,
@@ -74,6 +75,7 @@ class MessagesJson(TypedDict):
     messages: MessageHistory
     message_ids: list[str]
     backend: str
+    claude_session_id: str
 
 
 Attachment = str | Path
@@ -168,6 +170,7 @@ def _normalized_messages_json(
         "messages": list(payload.get("messages", _get_new_message_history(chat_key))),
         "message_ids": [item for item in payload.get("message_ids", [])],
         "backend": str(backend),
+        "claude_session_id": str(payload.get("claude_session_id") or ""),
     }
 
 
@@ -307,6 +310,44 @@ def get_messages(session: Session) -> MessagesJson:
     )
 
 
+def _ensure_claude_session_id(session: Session, messages_json: MessagesJson) -> None:
+    """Pick this session's Claude conversation id before its first turn, and save it."""
+    if not messages_json["claude_session_id"]:
+        messages_json["claude_session_id"] = str(uuid4())
+        set_messages(session, messages_json)
+
+
+def _save_claude_turn(session: Session, messages_json: MessagesJson) -> None:
+    """Save a Claude turn marker without dropping items written since the turn began."""
+    stale = messages_json["messages"]
+    fresh = get_messages(session)["messages"]
+    # comment: e.g. the interrupted note TUI Ctrl+C records while the turn winds down.
+    messages_json["messages"] = stale + fresh[len(stale) - 1 :]
+    set_messages(session, messages_json)
+
+
+def get_messages_or_claude_transcript(session: Session) -> MessageHistory:
+    """History to show and inspect: Claude's own transcript for Claude sessions."""
+    messages_json = get_messages(session)
+    if get_backend(messages_json) == "claude":
+        if items := claude_transcript.read_transcript(
+            messages_json["claude_session_id"]
+        ):
+            return items
+    return messages_json["messages"]
+
+
+def get_messages_path_or_claude_transcript(session: Session) -> Path:
+    """File behind the history: Claude's transcript once a Claude session has one."""
+    messages_json = get_messages(session)
+    if get_backend(messages_json) == "claude":
+        if path := claude_transcript.transcript_path(
+            messages_json["claude_session_id"]
+        ):
+            return path
+    return session.messages_path
+
+
 def get_last_usage(session: Session) -> dict[str, Any] | None:
     for item in reversed(get_messages(session)["messages"]):
         if not isinstance(item, dict):
@@ -367,7 +408,12 @@ async def compact_message_history(session: Session) -> bool:
         return False
 
     if get_backend(messages_json) == "claude":
-        return await claude_cli.compact(session, messages_json)
+        if not messages_json["claude_session_id"]:
+            # comment: no Claude conversation yet, so nothing to compact.
+            return False
+        compacted = await claude_cli.compact(session, messages_json, config)
+        set_messages(session, messages_json)
+        return compacted
 
     # comment: OpenRouter has no Responses compaction endpoint.
     if uses_openrouter(config):
@@ -509,6 +555,15 @@ def record_interrupted_response(session: Session) -> None:
     append_developer_message(session, INTERRUPTED_RESPONSE_INSTRUCTION)
 
 
+def developer_message_item(text: str) -> MessageItem:
+    return {
+        "type": "message",
+        "role": "developer",
+        "content": [{"type": "input_text", "text": text}],
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
 def append_developer_message(session: Session, text: str) -> None:
     text = text.strip()
     if not text:
@@ -516,14 +571,7 @@ def append_developer_message(session: Session, text: str) -> None:
         raise ValueError("Developer message cannot be empty")
 
     messages_json = get_messages(session)
-    messages_json["messages"].append(
-        {
-            "type": "message",
-            "role": "developer",
-            "content": [{"type": "input_text", "text": text}],
-            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-        }
-    )
+    messages_json["messages"].append(developer_message_item(text))
     set_messages(session, messages_json)
     logger.info("Appended developer message")
 
@@ -643,7 +691,11 @@ async def append_user_turn(
         content: str | list[dict[str, Any]] = []
         if text:
             content.append({"type": "input_text", "text": text})
-        content.extend(await _upload_attachments(attachments, workspace, config))
+        if get_backend(messages_json) == "claude":
+            # comment: Claude reads files itself; keep base64 out of the thin history.
+            content.extend(claude_cli.attachment_items(workspace, attachments))
+        else:
+            content.extend(await _upload_attachments(attachments, workspace, config))
         if not content:
             raise ValueError("Question or attachments required")
     else:
@@ -728,7 +780,6 @@ async def _get_answer_streaming(
     config = build_config()
     messages_json = get_messages(session)
     workspace = Path(messages_json["workspace"])
-    tools = _session_tools(messages_json)
 
     instructions = get_system_instructions(config, session.chat_key, workspace)
     if messages_json["system_prompt"] != instructions:
@@ -736,18 +787,19 @@ async def _get_answer_streaming(
         set_messages(session, messages_json)
 
     if get_backend(messages_json) == "claude":
+        _ensure_claude_session_id(session, messages_json)
         stream = claude_cli.stream_reply(
             session,
             messages_json,
             config=config,
-            instructions=instructions,
+            persist=lambda: _save_claude_turn(session, messages_json),
         )
     else:
         stream = _get_streaming_reply(
             config=config,
             instructions=instructions,
             input=messages_json["messages"],
-            tools=tools,
+            tools=_session_tools(messages_json),
             prompt_cache_key=messages_json["id"],
         )
     async for event in stream:

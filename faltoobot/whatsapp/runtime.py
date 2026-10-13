@@ -26,7 +26,9 @@ from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import (
 from neonize.utils.enum import ChatPresence, ChatPresenceMedia
 from neonize.utils.jid import Jid2String
 
+from faltoobot import handoff
 from faltoobot.config import (
+    BACKEND_OPTIONS,
     Config,
     config_status_text,
     normalize_chat,
@@ -37,6 +39,8 @@ from faltoobot.sessions import (
     Session,
     compact_message_history,
     get_answer,
+    get_backend,
+    get_messages_or_claude_transcript,
     get_last_usage,
     get_messages,
     get_session,
@@ -71,11 +75,12 @@ SLASH_COMMANDS = {
     "/reset",
     "/compact",
     "/stop",
+    "/handoff",
     "/approve_group",
     "/deny_group",
     "/groups",
 }
-ARG_SLASH_COMMANDS = {"/approve_group", "/deny_group"}
+ARG_SLASH_COMMANDS = {"/approve_group", "/deny_group", "/handoff"}
 IMMEDIATE_SLASH_COMMANDS = {"/help", "/status", "/stop", "/groups"}
 
 
@@ -85,6 +90,7 @@ HELP_TEXT = (
     "• /reset — clear this chat's memory\n"
     "• /compact — compact this chat's memory\n"
     "• /stop — stop the current response\n"
+    "• /handoff <openai|claude> — move this chat to another model backend\n"
     "• /status — show bot status\n"
     "• /inspect — show recent tool calls\n"
     "• /help — show this help"
@@ -427,6 +433,10 @@ async def handle_slash_command(  # noqa: C901, PLR0913
         await client.reply_message("Stopped." if stopped else "Nothing to stop.", event)
         return
 
+    if command == "/handoff":
+        await _handle_handoff(client, session=session, event=event, args=command_text)
+        return
+
     if command == "/help":
         await client.reply_message(HELP_TEXT, event)
     elif command == "/status":
@@ -436,11 +446,14 @@ async def handle_slash_command(  # noqa: C901, PLR0913
                 get_last_usage(session),
                 session_id=session.session_id,
                 workspace=messages_json["workspace"],
+                backend=get_backend(messages_json),
             ),
             event,
         )
     elif command == "/inspect":
-        await client.reply_message(inspect_text_for_messages(messages_json), event)
+        await client.reply_message(
+            inspect_text_for_messages(get_messages_or_claude_transcript(session)), event
+        )
     elif command == "/compact":
         compacted = await compact_message_history(session)
         await client.reply_message(
@@ -459,6 +472,37 @@ async def handle_slash_command(  # noqa: C901, PLR0913
         reset_messages_json["message_ids"] = list(messages_json["message_ids"])
         set_messages(reset_session, reset_messages_json)
         await client.reply_message("Memory cleared for this chat.", event)
+
+
+async def _handle_handoff(
+    client: NewAClient, *, session: Session, event: MessageEv, args: str | None
+) -> None:
+    target = (args or "").split()[1:2]
+    if not target or target[0] not in BACKEND_OPTIONS:
+        await client.reply_message(
+            f"Usage: /handoff <{'|'.join(BACKEND_OPTIONS)}>", event
+        )
+        return
+    await client.reply_message(f"Handing this chat over to {target[0]}...", event)
+    try:
+        result = await handoff.hand_off(session.chat_key, to=target[0])
+    except Exception as exc:
+        logger.exception("Hand-off failed")
+        await client.reply_message(f"Hand-off failed: {exc}", event)
+        return
+    workspace = Path(get_messages(session)["workspace"])
+    chat = event.Info.MessageSource.Chat
+    # comment: the document is sent for the record; the new backend can also grep the transcript.
+    await send_text(
+        client,
+        chat=chat,
+        text=f"![Hand-off document]({result.document})",
+        workspace=workspace,
+    )
+    if result.verification.strip():
+        await send_text(
+            client, chat=chat, text=result.verification, workspace=workspace
+        )
 
 
 STREAM_MAX_RETRIES = 5

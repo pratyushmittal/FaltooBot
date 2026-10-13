@@ -5,8 +5,8 @@ from uuid import uuid4
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
-from faltoobot import post_response_hooks, sessions
-from faltoobot.config import build_config, config_status_text
+from faltoobot import handoff, post_response_hooks, sessions
+from faltoobot.config import BACKEND_OPTIONS, build_config, config_status_text
 from faltoobot.faltoochat.terminal import open_in_default_editor
 from faltoobot.session_utils import get_local_user_message_item
 
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 SLASH_COMMANDS = {
     "/compact": "compact this session history",
+    "/handoff": "hand this session to another backend",
     "/name": "name the current session",
     "/reset": "start a fresh session",
     "/resume": "resume another session",
@@ -43,6 +44,26 @@ async def _rename_session(app: "FaltooChatApp", name: str) -> None:
         return
     await app.show_local_answer(
         f"`Saved session name: {name}`" if name else "`Cleared session name.`"
+    )
+
+
+async def _hand_off(app: "FaltooChatApp", target: str) -> None:
+    if target not in BACKEND_OPTIONS:
+        await app.show_local_answer(f"`Usage: /handoff <{'|'.join(BACKEND_OPTIONS)}>`")
+        return
+    if app.is_answering:
+        app.notify("Wait for the current answer to finish.", severity="warning")
+        return
+    await app.show_local_answer(f"`Handing this session over to {target}...`")
+    try:
+        result = await handoff.hand_off(app.session.chat_key, to=target)
+    except Exception as error:
+        await app.show_local_answer(f"`Hand-off failed: {error}`")
+        return
+    app.session = cast(sessions.Session, result.session)
+    await app.load_messages()
+    await app.show_local_answer(
+        f"{result.verification}\n\n`Hand-off document: {result.document}`"
     )
 
 
@@ -157,6 +178,12 @@ class SlashCommandsOptionList(OptionList):
 
         match command:
             case "/compact":
+                if app.is_answering:
+                    # comment: compacting mid-answer would race the running turn.
+                    app.notify(
+                        "Wait for the current answer to finish.", severity="warning"
+                    )
+                    return True
                 compacted = await sessions.compact_message_history(app.session)
                 await app.load_messages()
                 await app.show_local_answer(
@@ -165,7 +192,9 @@ class SlashCommandsOptionList(OptionList):
             case "/name":
                 _open_name_modal(app)
             case "/tree":
-                open_in_default_editor(app.session.messages_path)
+                open_in_default_editor(
+                    sessions.get_messages_path_or_claude_transcript(app.session)
+                )
             case "/reset":
                 workspace = app.workspace
                 app.session = sessions.get_session(
@@ -187,6 +216,9 @@ class SlashCommandsOptionList(OptionList):
                         sessions.get_last_usage(app.session),
                         session_id=app.session.session_id,
                         workspace=app.workspace,
+                        backend=sessions.get_backend(
+                            sessions.get_messages(app.session)
+                        ),
                     )
                 )
             case _:
@@ -200,6 +232,10 @@ class SlashCommandsOptionList(OptionList):
     ) -> bool:
         composer = cast("Composer", self.app.query_one("#composer"))
         command, _separator, args_text = text.strip().partition(" ")
+        if command == "/handoff":
+            composer.load_text("")
+            await _hand_off(cast("FaltooChatApp", self.app), args_text.strip())
+            return True
         if command in SLASH_COMMANDS and not args_text:
             composer.load_text("")
             return await self._handle_builtin_command(command)

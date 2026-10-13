@@ -41,6 +41,8 @@ faltoochat "<follow-up question>" --session-id=<session_id> --notify="{chat_key}
 
 If a `faltoochat --notify` error looks transient, ask the same sub-agent to retry with the same `--session-id`.
 
+When the sub-agent runs on Claude, `--claude-model=<alias>` picks its model for that run, for example `--claude-model=sonnet` or `--claude-model=haiku` for simple, high-volume tasks. Leave it out to use the configured model. OpenAI sub-agents ignore it.
+
 Good `faltoochat --notify` use-cases:
 - email/news digests that need summarization
 - PR reviews and code investigations

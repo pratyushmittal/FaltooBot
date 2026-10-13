@@ -1,3 +1,5 @@
+import json
+import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -143,16 +145,61 @@ def load_skill(workspace: Path, skill_name: str, *, chat_key: str) -> str:
     by_name = {_skill_key(skill["name"]): skill for skill in skills}
     skill = by_name.get(_skill_key(skill_name))
     if skill is not None:
-        content = skill["content"]
-        for key, value in _skill_context(chat_key).items():
-            content = content.replace(f"{{{key}}}", value)
-        return content
+        return substitute_placeholders(skill["content"], chat_key)
 
     available = _available_skills_text(skills)
     return (
         f"Local skill not found: {skill_name!r}.\n\nAvailable skills:\n"
         f"{available or '(none)'}"
     )
+
+
+def substitute_placeholders(
+    content: str, chat_key: str, context: dict[str, str] | None = None
+) -> str:
+    for key, value in (context or _skill_context(chat_key)).items():
+        content = content.replace(f"{{{key}}}", value)
+    return content
+
+
+def _write_claude_plugin_file(path: Path, text: str) -> None:
+    # comment: Claude reads a skill body lazily, so never rewrite or remove it needlessly.
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def sync_claude_skills_plugin(
+    plugin_dir: Path, workspace: Path, *, chat_key: str
+) -> int:
+    """Sync the chat's skills into a Claude Code plugin; returns how many exist."""
+    skills = load_skills(workspace.expanduser().resolve(), chat_key=chat_key)
+    skills_dir = plugin_dir / "skills"
+    wanted = {skill["name"] for skill in skills}
+    if skills_dir.is_dir():
+        for stale in skills_dir.iterdir():
+            if stale.name not in wanted:
+                shutil.rmtree(stale, ignore_errors=True)
+    if not skills:
+        return 0
+    _write_claude_plugin_file(
+        plugin_dir / ".claude-plugin" / "plugin.json",
+        json.dumps({"name": "faltoobot", "description": "FaltooBot skills"}) + "\n",
+    )
+    # comment: one config read for all skills, not one per skill.
+    context = _skill_context(chat_key)
+    for skill in skills:
+        body = substitute_placeholders(skill["content"], chat_key, context)
+        _write_claude_plugin_file(
+            skills_dir / skill["name"] / "SKILL.md",
+            "---\n"
+            f"name: {json.dumps(skill['name'])}\n"
+            f"description: {json.dumps(skill['description'] or skill['name'])}\n"
+            "---\n\n"
+            f"{body}\n",
+        )
+    return len(skills)
 
 
 def get_load_skill_tool(

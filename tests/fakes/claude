@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Minimal stand-in for `claude -p` for the bridge's process tests.
+
+It speaks just enough stream-json to exercise how FaltooBot drives the process. A prompt
+starting with "crash" exits once, "big" sends a 200 KB tool result, "slow" waits for an
+interrupt, and anything else is echoed back. Without stream-json input it acts as the
+hand-off fork and prints one JSON result.
+"""
+
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+ARGV = sys.argv[1:]
+HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+CWD = os.getcwd()
+PROJECT = HOME / "projects" / "".join(char if char.isalnum() else "-" for char in CWD)
+
+
+def flag(name):
+    return ARGV[ARGV.index(name) + 1] if name in ARGV else None
+
+
+def emit(payload):
+    print(json.dumps(payload), flush=True)
+
+
+def result(text, subtype="success"):
+    usage = {"input_tokens": 10, "cache_read_input_tokens": 90, "output_tokens": 5}
+    return {"type": "result", "subtype": subtype, "is_error": False, "result": text,
+            "total_cost_usd": 0.01, "usage": usage}
+
+
+def record(kind, content):
+    # comment: Claude's own transcript, so history views can be tested end to end.
+    with TRANSCRIPT.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": kind, "cwd": CWD,
+                                 "message": {"role": kind, "content": content}}) + "\n")
+
+
+if log := os.environ.get("FAKE_CLAUDE_LOG"):
+    prompt_file, plugin = flag("--append-system-prompt-file"), flag("--plugin-dir")
+    skills = {path.parent.name: path.read_text() for path in Path(plugin).glob("skills/*/SKILL.md")} if plugin else {}
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "argv": ARGV,
+            "system_prompt": Path(prompt_file).read_text() if prompt_file else "",
+            "skills": skills,
+        }) + "\n")
+
+if "--input-format" not in ARGV:
+    print(json.dumps(result("FORK SUMMARY: the user likes tea")))
+    sys.exit(0)
+
+PROJECT.mkdir(parents=True, exist_ok=True)
+# comment: like the real CLI, the conversation file is named after its id.
+TRANSCRIPT = PROJECT / f"{flag('--session-id') or flag('--resume') or uuid.uuid4()}.jsonl"
+
+while line := sys.stdin.readline():
+    message = json.loads(line)
+    if message.get("type") != "user":
+        continue
+    content = message["message"]["content"]
+    if not content.startswith("/compact"):
+        emit({"type": "user", "message": message["message"], "isReplay": True})
+    record("user", content)
+    if content.startswith("/compact"):
+        emit(result(""))
+    elif content.startswith("crash") and not (HOME / "crashed-once").exists():
+        (HOME / "crashed-once").write_text("")
+        sys.stderr.write("fake claude crashed\n")
+        sys.exit(3)
+    elif content.startswith("fail"):
+        emit({**result("max turns reached", "error_max_turns"), "is_error": True})
+    elif content.startswith("big"):
+        emit({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_big", "content": "x" * 200_000}]}})
+        emit(result("big done"))
+    elif content.startswith("slow"):
+        emit({"type": "stream_event", "event": {"type": "content_block_delta",
+              "delta": {"type": "text_delta", "text": "working"}}})
+        interrupt = json.loads(sys.stdin.readline() or "{}")
+        emit({"type": "control_response", "response": {"request_id": interrupt.get("request_id")}})
+        emit(result("", "error_during_execution"))
+    else:
+        reply = f"echo: {content}"
+        emit({"type": "stream_event", "event": {"type": "content_block_delta",
+              "delta": {"type": "text_delta", "text": reply}}})
+        emit({"type": "assistant", "message": {"content": [{"type": "text", "text": reply}]}})
+        record("assistant", [{"type": "text", "text": reply}])
+        emit(result(reply))

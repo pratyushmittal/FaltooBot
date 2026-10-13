@@ -56,7 +56,6 @@ class Config:
     google_places_api_key: str = ""
     openai_websocket: bool = False
     openrouter_api_key: str = ""
-    llm_backend: str = DEFAULT_BACKEND
     claude_binary: str = "claude"
     claude_model: str = CLAUDE_MODEL
     claude_effort: str = DEFAULT_CLAUDE_EFFORT
@@ -375,9 +374,10 @@ def build_config() -> Config:
         openai_websocket=bool(openai["websocket"]),
         openrouter_api_key=str(openrouter["api_key"])
         or os.environ.get("OPENROUTER_API_KEY", ""),
-        llm_backend=str(data["llm_backend"]),
         claude_binary=str(claude["binary"]),
-        claude_model=str(claude["model"]),
+        # comment: `faltoochat --claude-model` sets this so sub-agents can pick a cheaper model.
+        claude_model=os.environ.get("FALTOOBOT_CLAUDE_MODEL", "").strip()
+        or str(claude["model"]),
         claude_effort=str(claude["effort"]),
         claude_permission_mode=str(claude["permission_mode"]),
         claude_idle_timeout=int(claude["idle_timeout"]),
@@ -398,10 +398,14 @@ def _render_config_status_value(key: str, value: Any) -> str | bool | list[str]:
 def _session_status_lines(
     session_id: str | None,
     workspace: Path | str | None,
+    backend: str | None = None,
 ) -> list[str]:
     lines: list[str] = []
     if session_id is not None:
         lines.append(f"• session_id={json.dumps(session_id)}")
+    if backend is not None:
+        # comment: a session keeps its backend until a hand-off, whatever llm_backend says.
+        lines.append(f"• backend={json.dumps(backend)}")
     if workspace is not None:
         lines.append(f"• workspace={json.dumps(str(workspace))}")
     return lines
@@ -413,6 +417,7 @@ def config_status_text(
     *,
     session_id: str | None = None,
     workspace: Path | str | None = None,
+    backend: str | None = None,
 ) -> str:
     try:
         version_text = package_version("faltoobot")
@@ -433,7 +438,7 @@ def config_status_text(
     add_entries("", data)
 
     lines = ["Faltoobot status", "", f"Version: {version_text}"]
-    session_lines = _session_status_lines(session_id, workspace)
+    session_lines = _session_status_lines(session_id, workspace, backend)
     if session_lines:
         lines.extend(["", "Session", *session_lines])
     lines.extend(["", "Config status"])

@@ -79,7 +79,7 @@ def config_sets_backend(ctx: dict[str, Any], backend: str) -> None:
 @given("the Claude bridge is faked")
 def fake_claude_bridge(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_stream_reply(
-        session: Any, messages_json: Any, *, config: Any, instructions: str
+        session: Any, messages_json: Any, *, config: Any, **_: Any
     ):
         ctx["calls"].append("claude")
         messages_json["messages"].append(
@@ -169,7 +169,8 @@ def run_migrations(ctx: dict[str, Any]) -> None:
 def saved_keys(ctx: dict[str, Any]) -> None:
     saved = json.loads(ctx["session"].messages_path.read_text(encoding="utf-8"))
     assert saved["backend"] in config_module.BACKEND_OPTIONS
-    assert "claude_session_id" not in saved
+    # comment: no Claude conversation exists yet for these sessions.
+    assert not saved.get("claude_session_id")
 
 
 @then("the session file's modification time is unchanged")

@@ -17,11 +17,13 @@ from typing import Any, NoReturn
 from rich.console import Console
 from rich.text import Text
 
-from faltoobot import notify_queue
+from faltoobot import claude_cli, handoff, notify_queue
 from faltoobot.changelog import record_update
 from faltoobot.cli import browser as browser_runtime
+from faltoobot.sessions import get_dir_chat_key
 from faltoobot.config import (
     APP_LABEL,
+    BACKEND_OPTIONS,
     Config,
     build_config,
     ensure_config_file,
@@ -592,6 +594,38 @@ def run_notify_command(args: argparse.Namespace) -> str:
     return notification_id
 
 
+def _hand_off_chat_keys(args: argparse.Namespace) -> list[str]:
+    if args.all_whatsapp:
+        return handoff.whatsapp_chat_keys()
+    if args.workspace:
+        return [get_dir_chat_key(Path(args.workspace))]
+    return [str(args.chat)]
+
+
+async def _hand_off_chats(args: argparse.Namespace) -> None:
+    for chat_key in _hand_off_chat_keys(args):
+        try:
+            result = await handoff.hand_off(
+                chat_key, to=args.to, dry_run=args.dry_run, verify=not args.no_verify
+            )
+        except Exception as error:  # comment: one failing chat must not stop a batch.
+            console.print(f"{chat_key}: failed: {error}")
+            continue
+        console.print(f"{chat_key}: document {result.document}")
+        if result.verification:
+            console.print(result.verification)
+    # comment: the recap turns start Claude processes; close them before exiting.
+    await claude_cli.stop_all()
+
+
+def run_hand_off_command(args: argparse.Namespace) -> None:
+    # comment: the CLI cannot take the WhatsApp service's per-chat locks.
+    console.print(
+        "Stop the WhatsApp service first if it is running: `faltoobot whatsapp` restarts it."
+    )
+    asyncio.run(_hand_off_chats(args))
+
+
 def parse_args() -> argparse.Namespace:
     # comment: keep the service entrypoint hidden from public help while still accepting it.
     if sys.argv[1:2] == [SERVICE_COMMAND]:
@@ -606,7 +640,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login}",
+        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login,hand-off}",
     )
 
     sub.add_parser(
@@ -634,6 +668,24 @@ def parse_args() -> argparse.Namespace:
         help="identifier explaining why this notification was sent",
     )
     sub.add_parser("codex-login", help="sign in to Codex / ChatGPT OAuth")
+    hand_off = sub.add_parser(
+        "hand-off", help="move chats to another model backend through a summary"
+    )
+    target = hand_off.add_mutually_exclusive_group(required=True)
+    target.add_argument("--chat", help="chat key to hand off")
+    target.add_argument("--workspace", help="coding workspace to hand off")
+    target.add_argument(
+        "--all-whatsapp", action="store_true", help="hand off every WhatsApp chat"
+    )
+    hand_off.add_argument(
+        "--to", choices=BACKEND_OPTIONS, required=True, help="target backend"
+    )
+    hand_off.add_argument(
+        "--dry-run", action="store_true", help="only write the document and transcript"
+    )
+    hand_off.add_argument(
+        "--no-verify", action="store_true", help="skip the new backend's recap turn"
+    )
     return parser.parse_args()
 
 
@@ -656,6 +708,8 @@ def handle_command(args: argparse.Namespace, config: Config | None = None) -> No
         run_notify_command(args)
     elif args.command == "codex-login":
         run_openai_login(console)
+    elif args.command == "hand-off":
+        run_hand_off_command(args)
     else:
         # comment: argparse keeps this unreachable unless the command table changes unexpectedly.
         raise SystemExit(f"unknown command: {args.command}")

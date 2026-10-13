@@ -6,7 +6,7 @@ import tempfile
 import traceback
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, AsyncIterator, Iterable
 from uuid import uuid4
 
 from rich.markup import escape
@@ -27,7 +27,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from faltoobot import notify_queue, post_response_hooks, sessions
+from faltoobot import claude_cli, notify_queue, post_response_hooks, sessions
 from faltoobot.changelog import available_update_notice, consume_changelog_update
 from faltoobot.config import load_textual_theme, save_textual_theme
 from faltoobot.faltoochat.git import get_workspace_label
@@ -436,7 +436,23 @@ class FaltooChatApp(App[None]):
         if self._binding_errors:
             self.push_screen(BindingsErrorModal(self._binding_errors))
         self.set_interval(1.0, self._poll_notifications)
+        claude_cli.set_handler(self._render_claude_turn, chat_key=self.session.chat_key)
         self.set_interval(COMPOSER_TITLE_REFRESH_SECONDS, self.refresh_composer_title)
+
+    async def on_unmount(self) -> None:
+        claude_cli.set_handler(None, chat_key=self.session.chat_key)
+        await claude_cli.stop_all()
+
+    async def _render_claude_turn(
+        self, session: sessions.Session, events: claude_cli.TurnEvents
+    ) -> None:
+        """Render a turn Claude started by itself, e.g. after background work finished."""
+        if session.session_id != self.session.session_id:
+            # comment: drain a previous session's turn without drawing it here.
+            async for _ in events:
+                pass
+            return
+        await self._stream_events(self.transcript, events=events)
 
     async def _show_available_update_notice(self) -> None:
         text = await asyncio.to_thread(
@@ -513,10 +529,9 @@ class FaltooChatApp(App[None]):
         *,
         recent_limit: int | None = None,
     ) -> None:
-        messages_json = sessions.get_messages(self.session)
         transcript = self.transcript
         blocks = []
-        messages = messages_json["messages"]
+        messages = sessions.get_messages_or_claude_transcript(self.session)
         if recent_limit is not None and len(messages) > recent_limit:
             blocks.append(
                 Static(
@@ -559,13 +574,17 @@ class FaltooChatApp(App[None]):
         self,
         transcript: VerticalScroll,
         against: post_response_hooks.HookDiffScope | None = None,
+        *,
+        events: AsyncIterator[Any] | None = None,
     ) -> None:
         block: Markdown | None = None
         answer_stream: Any | None = None
         raw_text = ""
         transcript.anchor()
 
-        async for event in sessions.get_answer_streaming(self.session, against=against):
+        if events is None:
+            events = sessions.get_answer_streaming(self.session, against=against)
+        async for event in events:
             is_new, classes, text = get_event_text(event)
             if not text:
                 if is_new:
@@ -663,11 +682,16 @@ class FaltooChatApp(App[None]):
             return
         # comment: when idle, keep the usual Ctrl+C exits app behavior.
         if worker is None:
-            self.exit()
+            self.run_worker(self._interrupt_claude_or_exit(), exclusive=False)
             return
         self.composer.border_subtitle = "cancelling..."
         worker.cancel()
         sessions.record_interrupted_response(self.session)
+
+    async def _interrupt_claude_or_exit(self) -> None:
+        # comment: a turn Claude started by itself has no stream worker to cancel.
+        if not await claude_cli.interrupt(self.session):
+            self.exit()
 
     async def _show_retry_error(self, error: Exception, *, retry: bool = True) -> None:
         message = str(error).strip() or repr(error)
@@ -930,7 +954,10 @@ async def _run_one_shot(session: sessions.Session, prompt: str) -> str:
     stored = await sessions.append_user_turn(session, question=prompt)
     if not stored:
         return ""
-    return await sessions.get_answer(session)
+    answer = await sessions.get_answer(session)
+    # comment: Claude may take more turns once its background work finishes.
+    later = await claude_cli.finish_session(session)
+    return "\n\n".join(text for text in [answer, *later] if text.strip())
 
 
 def _workspace_from_args(workspace: str | None) -> Path:
@@ -995,6 +1022,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source",
         help="notification source to use with --notify",
+    )
+    parser.add_argument(
+        "--claude-model",
+        help="Claude model alias for this run; ignored by OpenAI sessions",
     )
     return parser.parse_args()
 
@@ -1068,6 +1099,9 @@ def _session_from_args(args: argparse.Namespace) -> sessions.Session:
 def main() -> int:
     args = parse_args()
     _validate_notify_args(args)
+    if args.claude_model:
+        # comment: must be set before any build_config() call in this process.
+        os.environ["FALTOOBOT_CLAUDE_MODEL"] = args.claude_model
     session = _session_from_args(args)
     configure_logging(
         session.chat_root.parent.parent / "faltoochat.log",

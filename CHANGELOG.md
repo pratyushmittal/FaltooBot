@@ -2,6 +2,17 @@
 
 All notable changes to `faltoobot` will be documented in this file.
 
+## Unreleased
+
+### Added
+- Chats can run on Claude with a Claude subscription. Faltoobot drives the official `claude` CLI, so Claude keeps its own tools, skills and memory. Set `llm_backend = "claude"` for new sessions.
+- `/handoff <openai|claude>` in WhatsApp and the terminal, and `faltoobot hand-off`, move a chat to the other backend with a summary; the new backend gets the full previous history to search when something was missed.
+- When Claude finishes background work after its answer, its follow-up reply now reaches the chat.
+
+### Changed
+- Existing sessions keep the backend they started with; changing `llm_backend` only affects new sessions.
+- `/status` shows the session's backend.
+
 ## 7.7.2 — 2026-10-01
 
 ### Fixed

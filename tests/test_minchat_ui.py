@@ -222,6 +222,7 @@ async def test_minchat_shows_slash_command_suggestions(
         assert option_list.display
         assert [str(option.prompt) for option in option_list.options] == [
             "/compact — compact this session history",
+            "/handoff — hand this session to another backend",
             "/name — name the current session",
             "/reset — start a fresh session",
             "/resume — resume another session",

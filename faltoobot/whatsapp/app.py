@@ -4,6 +4,7 @@ import signal
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from neonize.aioze.client import NewAClient
@@ -17,7 +18,7 @@ from neonize.aioze.events import (
 )
 from neonize.utils.jid import Jid2String, build_jid
 
-from faltoobot import notify_queue
+from faltoobot import claude_cli, notify_queue
 from faltoobot.config import (
     Config,
     build_config,
@@ -63,7 +64,8 @@ async def _stop_response(session: Session) -> bool:
         chat.debounce_timer = None
     task = chat.response_task
     if task is None or task.done():
-        return timer is not None
+        # comment: a turn Claude started by itself has no response task to cancel.
+        return await claude_cli.interrupt(session) or timer is not None
     task.cancel()
     try:
         await task
@@ -104,7 +106,25 @@ async def on_exit() -> None:
             chat.debounce_timer.cancel()
     for task in list(tasks):
         task.cancel()
+    await claude_cli.stop_all()
     await client.stop()
+
+
+async def _deliver_claude_turn(session: Session, events: claude_cli.TurnEvents) -> None:
+    """Send the reply of a turn Claude started by itself, e.g. after background work."""
+    answer = ""
+    async for event in events:
+        if event.type == "response.completed":
+            answer = str(getattr(event.response, "output_text", ""))  # type: ignore
+    if not answer.strip() or answer.strip() == "[noreply]":
+        return
+    user, server = session.chat_key.split("@", 1)
+    await runtime.send_text(
+        client,
+        chat=build_jid(user, server),
+        text=answer,
+        workspace=Path(get_messages(session)["workspace"]),
+    )
 
 
 async def _process_notification_for_chat(
@@ -331,6 +351,7 @@ async def main(this_config: Config | None = None) -> None:
     notifications_stop = asyncio.Event()
     whatsapp_connected = asyncio.Event()
     notify_task = asyncio.create_task(_start_polling_notifications())
+    claude_cli.set_handler(_deliver_claude_turn)
 
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
