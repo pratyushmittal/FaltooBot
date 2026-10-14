@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,16 @@ def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 @given("the machine has python3 but no python command")
 def no_python(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    original_run = tools.subprocess.run
+
+    def run_without_python(command: Any, *args: Any, **kwargs: Any) -> Any:
+        # GitHub's /etc/profile can re-add a hosted Python even after PATH is replaced.
+        # Simulate command discovery directly so this machine-state scenario is stable.
+        if command == ["/bin/bash", "-lc", "command -v python"]:
+            return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=b"")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(tools.subprocess, "run", run_without_python)
 
 
 @given("the machine has a python command")
