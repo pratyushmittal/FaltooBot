@@ -302,12 +302,19 @@ def get_messages(session: Session) -> MessagesJson:
     if not payload:
         get_session(chat_key=session.chat_key, session_id=session.session_id)
         payload = json.loads(messages_path.read_text(encoding="utf-8"))
-    return _normalized_messages_json(
+    messages_json = _normalized_messages_json(
         session.chat_key,
         session.session_id,
         session.session_dir,
         payload,
     )
+    if ensure_function_call_outputs(messages_json["messages"]):
+        # comment: interrupted processes can leave a saved tool call without its output.
+        # Repair it at point-of-use so the next model request does not fail, even when the
+        # periodic doctor has not run since the interruption.
+        set_messages(session, messages_json)
+        logger.warning("Repaired missing function call output in session history")
+    return messages_json
 
 
 def _ensure_claude_session_id(session: Session, messages_json: MessagesJson) -> None:
