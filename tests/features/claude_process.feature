@@ -79,3 +79,9 @@ Feature: Driving the claude process
     When I ask "hello", another Claude run in the workspace writes a newer conversation, and I ask "again"
     Then claude was started twice, the second time resuming the same conversation
     And the displayed history shows "echo: hello" and not the other conversation
+
+  Scenario: Asking again with nothing pending is a quiet no-op
+    Given a Claude session
+    When I ask "hello" and then ask for an answer with nothing pending
+    Then the last reply is empty
+    And the history holds only user turns and 1 turn markers
