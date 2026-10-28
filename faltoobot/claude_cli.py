@@ -585,6 +585,14 @@ async def _run_turn(  # noqa: PLR0913
             if persist:
                 persist()
 
+    if not prompt:
+        # comment: an earlier turn already answered everything, e.g. a WhatsApp notification.
+        logger.info("Nothing pending for Claude in %s", session.chat_key)
+        yield event(
+            "response.completed",
+            response=SimpleNamespace(output=[], output_text="", usage=None),
+        )
+        return
     # comment: callers run one turn per session at a time (WhatsApp chat lock, TUI queue).
     proc = await _get_process(session, messages_json, config)
     turn = _Turn(echoed=echoed)
@@ -594,11 +602,11 @@ async def _run_turn(  # noqa: PLR0913
             proc, {"type": "user", "message": {"role": "user", "content": prompt}}
         )
         # comment: no idle timeout; Claude may run a silent tool for a long time.
-        async for event in _turn_events(turn):
-            if event.type == "response.completed":
-                completed = event
+        async for item in _turn_events(turn):
+            if item.type == "response.completed":
+                completed = item
                 break
-            yield event
+            yield item
     except (asyncio.CancelledError, GeneratorExit):
         # comment: GeneratorExit when the consumer was cancelled between two events.
         await _interrupt(proc, turn)
@@ -619,13 +627,10 @@ def stream_reply(
     config: Config,
     persist: Persist,
 ) -> TurnEvents:
-    prompt = render_prompt(pending_items(messages_json["messages"]))
-    if not prompt:
-        raise ValueError("No pending user message for Claude.")
     return _run_turn(
         session,
         messages_json,
-        prompt=prompt,
+        prompt=render_prompt(pending_items(messages_json["messages"])),
         config=config,
         persist=persist,
     )

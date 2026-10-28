@@ -371,3 +371,20 @@ def own_history(ctx: Any, text: str) -> None:
         item["content"][0]["text"] for item in items if item.get("role") == "assistant"
     ]
     assert text in answers and "OTHER" not in answers
+
+
+@when(
+    parsers.parse('I ask "{question}" and then ask for an answer with nothing pending')
+)
+def ask_with_nothing_pending(ctx: Any, question: str) -> None:
+    async def steps() -> None:
+        ctx["replies"] = [await _ask(ctx, question)]
+        # comment: an earlier turn already answered everything, e.g. a WhatsApp notification.
+        ctx["replies"].append(await sessions.get_answer(ctx["session"]))
+
+    _run(ctx, steps)
+
+
+@then("the last reply is empty")
+def last_reply_empty(ctx: Any) -> None:
+    assert ctx["replies"][-1] == ""
