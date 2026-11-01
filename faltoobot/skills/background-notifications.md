@@ -19,10 +19,12 @@ Use `faltoobot notify "{chat_key}" ...` when a normal script already has the fin
 
 Use `faltoochat --notify` for one-shot sub-agent tasks so the result, stderr, and sub-agent follow-up id are sent back to this chat.
 
+For recurring cron monitors, default to `--new-session` on every run. Keep deduplication, last-seen items, and checkpoints in workspace state files instead of accumulating them in LLM history. Reuse a `--session-id` only when the task explicitly depends on conversational continuity; long-lived monitor sessions can grow large, slow requests, and replay stale research context.
+
 Send a morning news digest every day at 8 AM:
 
 ```cron
-0 8 * * * cd /path/to/project && faltoochat "Prepare a morning news digest" --workspace=./morning-news --notify="{chat_key}" --source="cron:morning-news"
+0 8 * * * cd /path/to/project && faltoochat "Prepare a morning news digest" --workspace=./morning-news --new-session --notify="{chat_key}" --source="cron:morning-news"
 ```
 
 Spawned subtasks for PRs, reviews, and other coding tasks should prefer background/async execution instead of blocking the main thread.
