@@ -54,7 +54,7 @@ def test_neonize_send_response_preserves_nul_bytes() -> None:
     response.SendResponse.SetInParent()
     payload = response.SerializePartialToString()
     raw = ctypes.create_string_buffer(payload)
-    buffer = Bytes(ctypes.cast(raw, ctypes.c_char_p), len(payload))
+    buffer = Bytes(ctypes.cast(raw, ctypes.c_void_p), len(payload))
 
     assert (
         Neonize_pb2.SendMessageReturnFunction.FromString(buffer.get_bytes()) == response
