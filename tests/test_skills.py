@@ -319,3 +319,17 @@ def test_bundled_skills_do_not_reference_removed_python_shell_tool() -> None:
 
     assert "run_in_python_shell" not in text
     assert "uv run --with" in text
+
+
+def test_background_notification_skill_uses_fresh_cron_sessions() -> None:
+    content = (
+        Path(__file__).parents[1]
+        / "faltoobot"
+        / "skills"
+        / "background-notifications.md"
+    ).read_text(encoding="utf-8")
+
+    assert "default to `--new-session` on every run" in content
+    cron_example = next(line for line in content.splitlines() if "0 8 * * *" in line)
+    assert "--new-session" in cron_example
+    assert "workspace state files" in content

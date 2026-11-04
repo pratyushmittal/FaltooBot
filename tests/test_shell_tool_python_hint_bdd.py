@@ -19,8 +19,12 @@ def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @given("the machine has python3 but no python command")
-def no_python(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+def no_python(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = ctx["tmp_path"] / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").write_text("#!/bin/sh\n")
+    (bin_dir / "python3").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
 
 
 @given("the machine has a python command")
@@ -29,7 +33,7 @@ def has_python(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir.mkdir()
     (bin_dir / "python").write_text("#!/bin/sh\n")
     (bin_dir / "python").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("PATH", str(bin_dir))
 
 
 @when("the assistant gets the shell tool")
