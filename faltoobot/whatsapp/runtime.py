@@ -521,6 +521,7 @@ TRANSIENT_ANSWER_ERROR_NAMES = {
 TRANSIENT_ANSWER_ERROR_TEXT = (
     "connection reset",
     "incomplete chunked read",
+    "currently overloaded",
     "peer closed connection",
 )
 
