@@ -2854,23 +2854,25 @@ async def test_send_text_uses_lid_mentions_for_groups(
 
 
 @pytest.mark.anyio
-async def test_send_text_renders_text_and_table_as_whatsapp_rich_message(
+async def test_table_reply_is_sent_as_bullets_without_forwarded_metadata(
     tmp_path: Path,
 ) -> None:
+    # Given a bot reply with text, a Markdown table, and an image
     client = FakePresenceClient()
     event = fake_event()
     image = tmp_path / "chart.png"
     image.write_bytes(png_bytes())
 
+    # When it is sent on WhatsApp
     await runtime.send_text(
         cast(NewAClient, client),
         chat=build_jid("123", "s.whatsapp.net"),
         text=(
             "Current status:\n\n"
-            "| Name | Status |\n"
-            "| --- | --- |\n"
-            "| | Ready |\n"
-            "| Faltoobot | Running |\n\n"
+            "| Name | Status | Owner |\n"
+            "| --- | --- | --- |\n"
+            "| | Ready | |\n"
+            "| Faltoobot | Running | Rajat |\n\n"
             "Everything is operating normally.\n\n"
             "![Chart](chart.png)"
         ),
@@ -2878,23 +2880,61 @@ async def test_send_text_renders_text_and_table_as_whatsapp_rich_message(
         workspace=tmp_path,
     )
 
-    sent = client.sent_interactive_messages[0]
-    rich_response = sent.botForwardedMessage.message.richResponseMessage
-    assert rich_response.submessages[0].messageText == "Current status:"
-    table = rich_response.submessages[1].tableMetadata
-    assert [list(row.items) for row in table.rows] == [
-        ["Name", "Status"],
-        ["", "Ready"],
-        ["Faltoobot", "Running"],
-    ]
-    assert rich_response.submessages[2].messageText == (
+    # Then the table becomes plain-text bullets in a normal reply, not a rich message
+    assert client.replies == [
+        "Current status:\n\n"
+        "• Status: Ready\n\n"
+        "*Faltoobot*\n"
+        "• Status: Running\n"
+        "• Owner: Rajat\n\n"
         "Everything is operating normally."
-    )
-    assert rich_response.contextInfo.stanzaID == event.Info.ID
-    assert client.sent_messages == []
+    ]
     assert client.sent_images == [
         {"file": str(image), "caption": "Chart", "quoted": None}
     ]
+
+
+TABLE = "| Year | Gold |\n| --- | --- |\n| 2021 | $1,800 |"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"```markdown\n{TABLE}\n```", "*2021*\n• Gold: $1,800"),
+        (f"```\n{TABLE}\n```", "*2021*\n• Gold: $1,800"),
+        (f"```python\n{TABLE}\n```", f"```python\n{TABLE}\n```"),
+        (
+            f"Example:\n\n```markdown\n{TABLE}\n```",
+            f"Example:\n\n```markdown\n{TABLE}\n```",
+        ),
+        ("```markdown\n# Heading\n```", "```markdown\n# Heading\n```"),
+        ("| Year | Gold |\n| --- | --- |", "• Year\n• Gold"),
+        ("| Name | Gold |\n| --- | --- |\n| **Gold** | Yes |", "*Gold*\n• Gold: Yes"),
+        ("| Item |\n| --- |\n| Gold |", "• Item: Gold"),
+        ("| Name | |\n| --- | --- |\n| Gold | Yes |", "*Gold*\n• Column 2: Yes"),
+        (
+            f"```\nx\n```\n\n```\n{TABLE}\n```",
+            f"```\nx\n```\n\n```\n{TABLE}\n```",
+        ),
+    ],
+)
+async def test_table_reply_edge_cases_are_sent_as_whatsapp_text(
+    tmp_path: Path, text: str, expected: str
+) -> None:
+    # Given a bot reply with a fenced, partial, or unusual Markdown table
+    client = FakePresenceClient()
+
+    # When it is sent on WhatsApp
+    await runtime.send_text(
+        cast(NewAClient, client),
+        chat=build_jid("123", "s.whatsapp.net"),
+        text=text,
+        workspace=tmp_path,
+    )
+
+    # Then whole-reply table fences become bullets and real code stays untouched
+    assert client.sent_messages == [expected]
 
 
 @pytest.mark.anyio
@@ -2913,27 +2953,6 @@ async def test_send_text_keeps_malformed_markdown_table_as_text(
 
     assert client.sent_interactive_messages == []
     assert client.sent_messages == [text]
-
-
-@pytest.mark.anyio
-async def test_send_text_propagates_rich_table_send_failures(tmp_path: Path) -> None:
-    class FailingRichClient(FakePresenceClient):
-        async def send_interactive_message(
-            self, chat: Neonize_pb2.JID, message: Any
-        ) -> str:
-            raise RuntimeError("send failed")
-
-    client = FailingRichClient()
-
-    with pytest.raises(RuntimeError, match="send failed"):
-        await runtime.send_text(
-            cast(NewAClient, client),
-            chat=build_jid("123", "s.whatsapp.net"),
-            text="| Name | Status |\n| --- | --- |\n| Faltoobot | Ready |",
-            workspace=tmp_path,
-        )
-
-    assert client.sent_messages == []
 
 
 @pytest.mark.anyio
