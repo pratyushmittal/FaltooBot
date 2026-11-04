@@ -1,3 +1,4 @@
+import json
 import hashlib
 import logging
 from collections.abc import Sequence
@@ -1101,3 +1102,33 @@ async def test_automatic_compaction_restores_coding_guidance(
     monkeypatch.setattr(sessions, "_get_streaming_reply", compacting_reply)
     async for _ in sessions._get_answer_streaming(session):
         pass
+
+
+def test_get_messages_repairs_and_persists_missing_function_call_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    session = sessions.get_session(chat_key="sub-agent@test")
+    payload = sessions.get_messages(session)
+    payload["messages"] = [
+        {
+            "type": "function_call",
+            "id": "fc_interrupted",
+            "call_id": "call_interrupted",
+            "name": "run_shell_call",
+            "arguments": "{}",
+        }
+    ]
+    sessions.set_messages(session, payload)
+
+    repaired = sessions.get_messages(session)
+
+    assert repaired["messages"][-1] == {
+        "id": "fco_call_interrupted",
+        "type": "function_call_output",
+        "call_id": "call_interrupted",
+        "output": sessions.MISSING_FUNCTION_CALL_OUTPUT,
+        "status": "completed",
+    }
+    saved = json.loads(session.messages_path.read_text(encoding="utf-8"))
+    assert saved["messages"] == repaired["messages"]
