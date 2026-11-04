@@ -298,3 +298,50 @@ def test_summarize_session_health_counts_large_incomplete_and_unreadable(
         "doctor:incomplete-session-histories=1",
         "doctor:unreadable-session-histories=1",
     ]
+
+
+def test_summarize_notify_queue_health_reports_stalled_delivery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = make_config(tmp_path)
+    pending = config.root / "notify-queue" / "pending"
+    processing = config.root / "notify-queue" / "processing"
+    pending.mkdir(parents=True)
+    processing.mkdir(parents=True)
+    old_pending = pending / "old.json"
+    fresh_pending = pending / "fresh.json"
+    old_processing = processing / "old.json"
+    for path in (old_pending, fresh_pending, old_processing):
+        path.write_text("{}\n", encoding="utf-8")
+    now = 10_000.0
+    os.utime(old_pending, (now - 900, now - 900))
+    os.utime(fresh_pending, (now - 30, now - 30))
+    os.utime(old_processing, (now - 600, now - 600))
+    monkeypatch.setattr(doctor.time, "time", lambda: now)
+
+    stale_seconds = 300
+    expected_pending = 2
+    expected_oldest_seconds = 900
+    summary = doctor.summarize_notify_queue_health(config, stale_seconds=stale_seconds)
+
+    assert summary.pending == expected_pending
+    assert summary.processing == 1
+    assert summary.stale_pending == 1
+    assert summary.stale_processing == 1
+    assert summary.oldest_pending_seconds == expected_oldest_seconds
+    assert summary.has_issues is True
+    assert doctor.format_notify_queue_health_summary(summary) == [
+        "doctor:notify-queue-pending=2",
+        "doctor:notify-queue-processing=1",
+        "doctor:notify-queue-oldest-pending-seconds=900",
+        "doctor:notify-queue-stale-pending=1",
+        "doctor:notify-queue-stale-processing=1",
+    ]
+
+
+def test_summarize_notify_queue_health_is_clean_without_queue(tmp_path: Path) -> None:
+    summary = doctor.summarize_notify_queue_health(make_config(tmp_path))
+
+    assert summary.pending == 0
+    assert summary.processing == 0
+    assert summary.has_issues is False

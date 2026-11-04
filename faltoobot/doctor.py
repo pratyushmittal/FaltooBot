@@ -257,6 +257,70 @@ def inspect_cron_health(
     return deduped
 
 
+NOTIFY_QUEUE_STALE_SECONDS = 5 * 60
+
+
+@dataclass(frozen=True, slots=True)
+class NotifyQueueHealthSummary:
+    pending: int = 0
+    processing: int = 0
+    stale_pending: int = 0
+    stale_processing: int = 0
+    oldest_pending_seconds: int = 0
+
+    @property
+    def has_issues(self) -> bool:
+        return self.stale_pending > 0 or self.stale_processing > 0
+
+
+def summarize_notify_queue_health(
+    config: Config, *, stale_seconds: int = NOTIFY_QUEUE_STALE_SECONDS
+) -> NotifyQueueHealthSummary:
+    """Return privacy-safe queue counters and detect delivery stalls."""
+    now = time.time()
+
+    def ages(directory: Path) -> list[float]:
+        values: list[float] = []
+        try:
+            paths = directory.glob("*.json")
+            for path in paths:
+                try:
+                    values.append(max(0.0, now - path.stat().st_mtime))
+                except OSError:
+                    continue
+        except OSError:
+            return []
+        return values
+
+    root = config.root / "notify-queue"
+    pending_ages = ages(root / "pending")
+    processing_ages = ages(root / "processing")
+    return NotifyQueueHealthSummary(
+        pending=len(pending_ages),
+        processing=len(processing_ages),
+        stale_pending=sum(age >= stale_seconds for age in pending_ages),
+        stale_processing=sum(age >= stale_seconds for age in processing_ages),
+        oldest_pending_seconds=int(max(pending_ages, default=0.0)),
+    )
+
+
+def format_notify_queue_health_summary(summary: NotifyQueueHealthSummary) -> list[str]:
+    """Format non-sensitive notification delivery diagnostics."""
+    lines = [
+        f"doctor:notify-queue-pending={summary.pending}",
+        f"doctor:notify-queue-processing={summary.processing}",
+    ]
+    if summary.oldest_pending_seconds:
+        lines.append(
+            f"doctor:notify-queue-oldest-pending-seconds={summary.oldest_pending_seconds}"
+        )
+    if summary.stale_pending:
+        lines.append(f"doctor:notify-queue-stale-pending={summary.stale_pending}")
+    if summary.stale_processing:
+        lines.append(f"doctor:notify-queue-stale-processing={summary.stale_processing}")
+    return lines
+
+
 LARGE_SESSION_HISTORY_BYTES = 25 * 1024 * 1024
 LARGE_SESSION_HISTORY_MESSAGES = 500
 

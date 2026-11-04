@@ -625,6 +625,7 @@ def run_hand_off_command(args: argparse.Namespace) -> None:
     )
     asyncio.run(_hand_off_chats(args))
 
+
 def run_doctor_command(
     config: Config | None = None, *, heal: bool = True
 ) -> tuple[list[str], list[str]]:
@@ -639,8 +640,10 @@ def run_doctor_command(
         console.print("[dim]Doctor healers: no changes.[/]")
 
     from faltoobot.doctor import (
+        format_notify_queue_health_summary,
         format_session_health_summary,
         inspect_cron_health,
+        summarize_notify_queue_health,
         summarize_session_health,
     )
 
@@ -648,9 +651,20 @@ def run_doctor_command(
     for line in format_session_health_summary(summarize_session_health(config)):
         console.print(f"- {line}")
 
+    queue_summary = summarize_notify_queue_health(config)
+    console.print("[cyan]Notification queue health:[/]")
+    for line in format_notify_queue_health_summary(queue_summary):
+        console.print(f"- {line}")
+
     issues = [issue.render() for issue in inspect_cron_health(config)]
+    if queue_summary.has_issues:
+        issues.append(
+            "notify-queue: stale items indicate WhatsApp delivery is stalled "
+            f"(pending={queue_summary.stale_pending}, "
+            f"processing={queue_summary.stale_processing})"
+        )
     if issues:
-        console.print("[yellow]Cron health warnings:[/]")
+        console.print("[yellow]Health warnings:[/]")
         for issue in issues:
             console.print(f"- {issue}")
     else:
