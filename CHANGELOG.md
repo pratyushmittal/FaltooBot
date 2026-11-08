@@ -13,6 +13,12 @@ All notable changes to `faltoobot` will be documented in this file.
 - Existing sessions keep the backend they started with; changing `llm_backend` only affects new sessions.
 - `/status` shows the session's backend.
 
+## 7.7.3 — 2026-11-09
+
+### Fixed
+- Updated the WhatsApp client dependency so Faltoobot can reconnect after WhatsApp rejects the older client protocol.
+- Published the dependency fix under a new Faltoobot version so `faltoobot update` actually installs it for existing 7.7.2 users.
+
 ## 7.7.2 — 2026-10-01
 
 ### Fixed
