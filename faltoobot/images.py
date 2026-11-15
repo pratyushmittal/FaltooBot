@@ -162,6 +162,35 @@ def _shrink_until_within_limit(base64_image_str: str) -> str | None:
     return f"data:image/jpeg;base64,{encoded}"
 
 
+INLINE_IMAGE_HISTORY_PLACEHOLDER = (
+    "Image loaded successfully. Re-run load_image with the original path if visual "
+    "inspection is needed again."
+)
+
+
+def discard_inline_images_from_completed_tool_outputs(history: MessageHistory) -> int:
+    """Drop replayable inline image bytes after a completed assistant response."""
+    changed = 0
+    for item in history:
+        if item.get("type") != "function_call_output":
+            continue
+        output = item.get("output")
+        if not isinstance(output, list):
+            continue
+        if not output or not all(
+            isinstance(part, dict)
+            and part.get("type") == "input_image"
+            and isinstance(part.get("image_url"), str)
+            and part["image_url"].startswith("data:image/")
+            for part in output
+        ):
+            # Mixed multimodal outputs may contain durable text or file references.
+            continue
+        item["output"] = INLINE_IMAGE_HISTORY_PLACEHOLDER
+        changed += 1
+    return changed
+
+
 def resize_inline_images_in_history(history: MessageHistory) -> int:
     """Shrink inline images saved in load_image tool output history."""
     changed = 0

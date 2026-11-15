@@ -49,7 +49,11 @@ from faltoobot.gpt_utils import (
     get_streaming_reply,
     trim_input,
 )
-from faltoobot.images import inline_image_item, upload_attachment
+from faltoobot.images import (
+    discard_inline_images_from_completed_tool_outputs,
+    inline_image_item,
+    upload_attachment,
+)
 from faltoobot.instructions import get_system_instructions
 from faltoobot.openai_auth import inlines_uploads, uses_chatgpt_oauth, uses_openrouter
 from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
@@ -814,8 +818,27 @@ async def _get_answer_streaming(
             image_markdown = _append_generated_image_messages(
                 messages_json["messages"], output, workspace
             )
-            if image_markdown and getattr(config, "openai_websocket", False):
-                # Middle insertions invalidate the websocket's cached history prefix.
+            final_assistant_message = any(
+                getattr(item, "type", None) == "message"
+                and getattr(item, "role", None) == "assistant"
+                for item in output
+            )
+            discarded_inline_images = (
+                discard_inline_images_from_completed_tool_outputs(
+                    messages_json["messages"]
+                )
+                if final_assistant_message
+                else 0
+            )
+            if discarded_inline_images:
+                logger.info(
+                    "Discarded inline image bytes from completed tool history; images=%s",
+                    discarded_inline_images,
+                )
+            if (image_markdown or discarded_inline_images) and getattr(
+                config, "openai_websocket", False
+            ):
+                # Middle mutations invalidate the websocket's cached history prefix.
                 invalidate_websocket_history(
                     messages_json["id"], len(messages_json["messages"])
                 )
