@@ -10,7 +10,7 @@ from PIL import Image
 
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
-from faltoobot import sessions
+from faltoobot import images, sessions
 from faltoobot.prompts.coding_agent import DEVELOPER_PROMPT
 from faltoobot.gpt_utils import MessageHistory, _to_message_item, get_tools_definition
 
@@ -1101,3 +1101,53 @@ async def test_automatic_compaction_restores_coding_guidance(
     monkeypatch.setattr(sessions, "_get_streaming_reply", compacting_reply)
     async for _ in sessions._get_answer_streaming(session):
         pass
+
+
+@pytest.mark.anyio
+async def test_completed_answer_discards_inline_load_image_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sessions, "app_root", lambda: tmp_path / ".faltoobot")
+    monkeypatch.setattr(sessions, "build_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(sessions, "get_system_instructions", lambda *_: "system prompt")
+    session = sessions.get_session(chat_key="code@test")
+    messages_json = sessions.get_messages(session)
+    messages_json["messages"].extend(
+        [
+            {
+                "type": "function_call",
+                "name": "load_image",
+                "call_id": "call_image",
+                "arguments": '{"image_path":"page.png"}',
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_image",
+                "output": [
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,AAAABBBB",
+                        "detail": "auto",
+                    }
+                ],
+            },
+        ]
+    )
+    sessions.set_messages(session, messages_json)
+
+    async def fake_get_streaming_reply(**kwargs: Any):
+        reply = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "looks good"}],
+        }
+        kwargs["input"].append(_to_message_item(reply))
+        yield FakeCompletedEvent([reply], {})
+
+    monkeypatch.setattr(sessions, "_get_streaming_reply", fake_get_streaming_reply)
+
+    async for _ in sessions._get_answer_streaming(session):
+        pass
+
+    output = sessions.get_messages(session)["messages"][2]["output"]
+    assert output == images.INLINE_IMAGE_HISTORY_PLACEHOLDER
