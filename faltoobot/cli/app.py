@@ -496,6 +496,14 @@ def run_doctor(config: Config) -> list[str]:
     return doctor_main(config)
 
 
+def run_doctor_command(config: Config | None = None) -> list[str]:
+    """Run safe local repairs without upgrading or restarting the service."""
+    changes = run_doctor(config or build_config())
+    summary = ", ".join(changes) if changes else "none"
+    console.print(f"[green]Doctor complete.[/] repairs: {summary}")
+    return changes
+
+
 def _run_migrations(
     config: Config,
     *,
@@ -640,13 +648,14 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{update,whatsapp,whatsapp-login,logs,browser,notify,codex-login,hand-off}",
+        metavar="{update,doctor,whatsapp,whatsapp-login,logs,browser,notify,codex-login,hand-off}",
     )
 
     sub.add_parser(
         "update",
         help="upgrade faltoobot, refresh crontab PATH, and run setup tasks",
     )
+    sub.add_parser("doctor", help="repair local Faltoobot state without upgrading")
     sub.add_parser(
         "whatsapp", help="run update, refresh the WhatsApp service, and follow logs"
     )
@@ -689,13 +698,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def handle_command(args: argparse.Namespace, config: Config | None = None) -> None:
+def handle_command(  # noqa: C901
+    args: argparse.Namespace, config: Config | None = None
+) -> None:
     # comment: the public `whatsapp` command manages updates, service install/start, and log
     # following. The OS service itself needs a separate hidden entrypoint that only runs the bot.
     if args.command == SERVICE_COMMAND:
         _run_whatsapp_service(config or build_config())
     elif args.command == "update":
         run_update_command(config)
+    elif args.command == "doctor":
+        run_doctor_command(config)
     elif args.command == "whatsapp":
         run_whatsapp_command(config)
     elif args.command == "whatsapp-login":

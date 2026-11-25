@@ -339,6 +339,37 @@ def test_run_update_command_creates_default_config(tmp_path: Path, monkeypatch) 
     assert result == config
 
 
+def test_run_doctor_command_reports_repairs(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    config = make_config(tmp_path)
+    monkeypatch.setattr(cli, "run_doctor", lambda current: ["doctor:repair"])
+
+    assert cli.run_doctor_command(config) == ["doctor:repair"]
+
+    assert "Doctor complete. repairs: doctor:repair" in capsys.readouterr().out
+
+
+def test_handle_doctor_command(tmp_path: Path, monkeypatch) -> None:
+    config = make_config(tmp_path)
+    calls: list[Config | None] = []
+    monkeypatch.setattr(
+        cli, "run_doctor_command", lambda current: calls.append(current)
+    )
+
+    cli.handle_command(cli.argparse.Namespace(command="doctor"), config)
+
+    assert calls == [config]
+
+
+def test_parse_args_accepts_doctor(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "argv", ["faltoobot", "doctor"])
+
+    args = cli.parse_args()
+
+    assert args.command == "doctor"
+
+
 def test_handle_whatsapp_login_command(tmp_path: Path, monkeypatch) -> None:
     config = make_config(tmp_path)
     calls: list[Config] = []

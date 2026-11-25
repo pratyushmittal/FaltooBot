@@ -8,6 +8,10 @@ Faltoobot now has a small public CLI surface.
 
 Upgrades the uv-installed tool, ensures config exists, and runs migrations.
 
+### `faltoobot doctor`
+
+Runs safe local state repairs without upgrading Faltoobot or restarting the WhatsApp service. This is suitable for cron and monitor setup checks.
+
 ### `faltoobot whatsapp`
 
 The main happy-path command. It:
